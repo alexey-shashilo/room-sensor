@@ -3,10 +3,6 @@
 #include "platform_time.h"
 #include <string.h>
 
-#ifdef VEML7700_UNIT_TEST
-#include "veml7700_test.h"
-#endif
-
 #define VEML7700_ALS_CONF_MASK ((3U << 11U) | (0xFU << 6U) | (3U << 4U) | (1U << 1U) | 1U)
 
 typedef struct
@@ -31,7 +27,6 @@ static const RangeEntry s_ranges[VEML7700_RANGE_COUNT] = {
 };
 
 #ifdef VEML7700_UNIT_TEST
-/* exposed for host-side tests */
 uint8_t   VEML7700_UT_GetRangeCount(void)       { return VEML7700_RANGE_COUNT; }
 uint8_t   VEML7700_UT_GetRangeGain(uint8_t i)   { return (uint8_t)s_ranges[i].gain; }
 uint8_t   VEML7700_UT_GetRangeIt(uint8_t i)     { return (uint8_t)s_ranges[i].it; }
@@ -76,7 +71,6 @@ static bool VEML7700_ApplyIndex(VEML7700_HandleTypeDef *dev, uint8_t idx)
     uint16_t readback = (uint16_t)rx[1] << 8U | (uint16_t)rx[0];
     if ((readback & VEML7700_ALS_CONF_MASK) != (conf & VEML7700_ALS_CONF_MASK))
     {
-        dev->counters.config_error++;
         return false;
     }
 
@@ -120,6 +114,13 @@ static bool VEML7700_SetLessSensitive(VEML7700_HandleTypeDef *dev)
     if (!VEML7700_ApplyIndex(dev, dev->range_index - 1U)) return false;
     VEML7700_EnterSettling(dev);
     return true;
+}
+
+static void VEML7700_FinalizeAttempt(VEML7700_HandleTypeDef *dev, VEML7700_Sample *sample)
+{
+    dev->last_attempt = *sample;
+    if (sample->valid)
+        dev->last_valid = *sample;
 }
 
 bool VEML7700_Probe(const I2cBus *bus)
@@ -168,9 +169,8 @@ bool VEML7700_ReadWithAutoRange(VEML7700_HandleTypeDef *dev, VEML7700_Sample *sa
 
     uint16_t raw = (uint16_t)rx[1] << 8U | (uint16_t)rx[0];
     sample->als_raw = raw;
-    dev->last_attempt = *sample;
 
-    /* --- SETTLING CHECK FIRST: no autorange decisions on stale data --- */
+    /* --- Settling check first: no autorange decisions on stale data --- */
     if (dev->range_state == VEML7700_RANGE_SETTLING)
     {
         sample->settling = true;
@@ -178,110 +178,112 @@ bool VEML7700_ReadWithAutoRange(VEML7700_HandleTypeDef *dev, VEML7700_Sample *sa
         if (elapsed < dev->settle_duration_ms)
         {
             dev->counters.read_success++;
+            VEML7700_FinalizeAttempt(dev, sample);
             return true;
         }
         VEML7700_ExitSettling(dev);
     }
 
-    /* --- SATURATION --- */
+    /* --- Saturation --- */
     if (raw >= VEML7700_RANGE_SATURATION)
     {
         sample->saturated = true;
         if (VEML7700_SetLessSensitive(dev))
             sample->range_changed = true;
         dev->counters.read_success++;
+        VEML7700_FinalizeAttempt(dev, sample);
         return true;
     }
 
-    /* --- LOW threshold: need more sensitivity --- */
-    if (raw < VEML7700_RANGE_LOW)
+    /* --- Hysteresis and range-change decision --- */
     {
-        if (dev->pending_adjust != VEML7700_ADJUST_MORE)
+        bool should_change = false;
+
+        if (raw < VEML7700_RANGE_LOW)
         {
-            dev->pending_adjust = VEML7700_ADJUST_MORE;
-            dev->range_consecutive = 1;
+            if (dev->pending_adjust != VEML7700_ADJUST_MORE)
+            {
+                dev->pending_adjust = VEML7700_ADJUST_MORE;
+                dev->range_consecutive = 1;
+            }
+            else
+            {
+                dev->range_consecutive++;
+            }
+
+            if (dev->range_consecutive >= VEML7700_RANGE_CONVERGE)
+            {
+                if (VEML7700_SetMoreSensitive(dev))
+                {
+                    sample->range_changed = true;
+                    sample->settling = true;
+                    sample->valid = false;
+                    should_change = true;
+                }
+                else
+                {
+                    /* at max sensitivity — reset and compute lux below */
+                    dev->range_consecutive = 0;
+                    dev->pending_adjust = VEML7700_ADJUST_NONE;
+                }
+            }
+        }
+        else if (raw > VEML7700_RANGE_HIGH)
+        {
+            if (dev->pending_adjust != VEML7700_ADJUST_LESS)
+            {
+                dev->pending_adjust = VEML7700_ADJUST_LESS;
+                dev->range_consecutive = 1;
+            }
+            else
+            {
+                dev->range_consecutive++;
+            }
+
+            if (dev->range_consecutive >= VEML7700_RANGE_CONVERGE)
+            {
+                if (VEML7700_SetLessSensitive(dev))
+                {
+                    sample->range_changed = true;
+                    sample->settling = true;
+                    sample->valid = false;
+                    should_change = true;
+                }
+                else
+                {
+                    /* at min sensitivity — reset and compute lux below */
+                    dev->range_consecutive = 0;
+                    dev->pending_adjust = VEML7700_ADJUST_NONE;
+                }
+            }
         }
         else
         {
-            dev->range_consecutive++;
-        }
-
-        if (dev->range_consecutive >= VEML7700_RANGE_CONVERGE)
-        {
-            if (VEML7700_SetMoreSensitive(dev))
-            {
-                sample->range_changed = true;
-                sample->settling = true;
-                dev->counters.read_success++;
-                return true;
-            }
-            /* already at max sensitivity — fall through to compute lux */
             dev->range_consecutive = 0;
             dev->pending_adjust = VEML7700_ADJUST_NONE;
         }
-        else
+
+        if (should_change)
         {
             dev->counters.read_success++;
+            VEML7700_FinalizeAttempt(dev, sample);
             return true;
         }
     }
-    /* --- HIGH threshold: need less sensitivity --- */
-    else if (raw > VEML7700_RANGE_HIGH)
-    {
-        if (dev->pending_adjust != VEML7700_ADJUST_LESS)
-        {
-            dev->pending_adjust = VEML7700_ADJUST_LESS;
-            dev->range_consecutive = 1;
-        }
-        else
-        {
-            dev->range_consecutive++;
-        }
 
-        if (dev->range_consecutive >= VEML7700_RANGE_CONVERGE)
-        {
-            if (VEML7700_SetLessSensitive(dev))
-            {
-                sample->range_changed = true;
-                sample->settling = true;
-                dev->counters.read_success++;
-                return true;
-            }
-            /* already at min sensitivity — fall through to compute lux */
-            dev->range_consecutive = 0;
-            dev->pending_adjust = VEML7700_ADJUST_NONE;
-        }
-        else
-        {
-            dev->counters.read_success++;
-            return true;
-        }
-    }
-    /* --- Normal range: reset hysteresis --- */
-    else
-    {
-        dev->range_consecutive = 0;
-        dev->pending_adjust = VEML7700_ADJUST_NONE;
-    }
-
-    /* --- Compute valid lux --- */
+    /* --- Compute valid lux (current config unchanged) --- */
     sample->lux = (float)raw * dev->resolution;
     sample->valid = true;
 
-    dev->last_valid = *sample;
     dev->counters.read_success++;
-
+    VEML7700_FinalizeAttempt(dev, sample);
     return true;
 }
 
 bool VEML7700_GetDiagnostics(const VEML7700_HandleTypeDef *dev, VEML7700_Sample *diag)
 {
     if ((dev == NULL) || (diag == NULL)) return false;
-    /* return last_attempt always — caller checks valid/settling/saturated */
     *diag = dev->last_attempt;
-    diag->valid = dev->last_valid.valid;
-    if (diag->valid)
-        diag->lux = dev->last_valid.lux;
     return true;
 }
 
