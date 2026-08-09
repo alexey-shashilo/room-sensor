@@ -1,15 +1,23 @@
 #include "veml7700.h"
-#include "veml7700_test.h"
 #include "i2c_bus.h"
 #include "platform_time.h"
 #include <string.h>
 
+#ifdef VEML7700_UNIT_TEST
+#include "veml7700_test.h"
+#endif
+
 #define VEML7700_ALS_CONF_MASK ((3U << 11U) | (0xFU << 6U) | (3U << 4U) | (1U << 1U) | 1U)
 
-float VEML7700_ItMs(VEML7700_IntegrationTime it);
+typedef struct
+{
+    VEML7700_Gain gain;
+    VEML7700_IntegrationTime it;
+    float sensitivity;
+    float resolution;
+} RangeEntry;
 
-static const VEML7700_RangeEntry s_ranges[VEML7700_RANGE_COUNT] = {
-    /* 0  — least sensitive */
+static const RangeEntry s_ranges[VEML7700_RANGE_COUNT] = {
     { VEML7700_GAIN_1_8, VEML7700_IT_25_MS,   3.125f,  1.843200f },
     { VEML7700_GAIN_1_8, VEML7700_IT_50_MS,   6.25f,   0.921600f },
     { VEML7700_GAIN_1_4, VEML7700_IT_50_MS,  12.5f,    0.460800f },
@@ -20,8 +28,30 @@ static const VEML7700_RangeEntry s_ranges[VEML7700_RANGE_COUNT] = {
     { VEML7700_GAIN_2,   VEML7700_IT_200_MS, 400.0f,   0.014400f },
     { VEML7700_GAIN_2,   VEML7700_IT_400_MS, 800.0f,   0.007200f },
     { VEML7700_GAIN_2,   VEML7700_IT_800_MS, 1600.0f,  0.003600f },
-    /* 9  — most sensitive */
 };
+
+#ifdef VEML7700_UNIT_TEST
+/* exposed for host-side tests */
+uint8_t   VEML7700_UT_GetRangeCount(void)       { return VEML7700_RANGE_COUNT; }
+uint8_t   VEML7700_UT_GetRangeGain(uint8_t i)   { return (uint8_t)s_ranges[i].gain; }
+uint8_t   VEML7700_UT_GetRangeIt(uint8_t i)     { return (uint8_t)s_ranges[i].it; }
+float     VEML7700_UT_GetRangeSens(uint8_t i)   { return s_ranges[i].sensitivity; }
+float     VEML7700_UT_GetRangeRes(uint8_t i)    { return s_ranges[i].resolution; }
+#endif
+
+static float VEML7700_ItMs(VEML7700_IntegrationTime it)
+{
+    switch (it)
+    {
+        case VEML7700_IT_25_MS:  return 25.0f;
+        case VEML7700_IT_50_MS:  return 50.0f;
+        case VEML7700_IT_100_MS: return 100.0f;
+        case VEML7700_IT_200_MS: return 200.0f;
+        case VEML7700_IT_400_MS: return 400.0f;
+        case VEML7700_IT_800_MS: return 800.0f;
+        default:                 return 0.0f;
+    }
+}
 
 static uint16_t VEML7700_BuildConf(VEML7700_Gain g, VEML7700_IntegrationTime it, VEML7700_Persistence p)
 {
@@ -34,7 +64,7 @@ static bool VEML7700_ApplyIndex(VEML7700_HandleTypeDef *dev, uint8_t idx)
 {
     if (idx >= VEML7700_RANGE_COUNT) return false;
 
-    const VEML7700_RangeEntry *r = &s_ranges[idx];
+    const RangeEntry *r = &s_ranges[idx];
     uint16_t conf = VEML7700_BuildConf(r->gain, r->it, dev->persistence);
 
     uint8_t tx[3] = {VEML7700_REG_ALS_CONF, (uint8_t)(conf & 0xFFU), (uint8_t)(conf >> 8U)};
@@ -64,14 +94,16 @@ static bool VEML7700_ApplyIndex(VEML7700_HandleTypeDef *dev, uint8_t idx)
 static void VEML7700_EnterSettling(VEML7700_HandleTypeDef *dev)
 {
     dev->range_state = VEML7700_RANGE_SETTLING;
-    dev->range_consecutive = 0U;
+    dev->range_consecutive = 0;
+    dev->pending_adjust = VEML7700_ADJUST_NONE;
     dev->settle_start_ms = Platform_GetTickMs();
 }
 
-static bool VEML7700_IsSettlingDone(const VEML7700_HandleTypeDef *dev)
+static void VEML7700_ExitSettling(VEML7700_HandleTypeDef *dev)
 {
-    uint32_t elapsed = Platform_GetTickMs() - dev->settle_start_ms;
-    return (elapsed >= dev->settle_duration_ms);
+    dev->range_state = VEML7700_RANGE_STABLE;
+    dev->range_consecutive = 0;
+    dev->pending_adjust = VEML7700_ADJUST_NONE;
 }
 
 static bool VEML7700_SetMoreSensitive(VEML7700_HandleTypeDef *dev)
@@ -90,27 +122,6 @@ static bool VEML7700_SetLessSensitive(VEML7700_HandleTypeDef *dev)
     return true;
 }
 
-/* exposed for testing only */
-uint8_t VEML7700_GetRangeCount(void) { return VEML7700_RANGE_COUNT; }
-const VEML7700_RangeEntry *VEML7700_GetRangeEntry(uint8_t idx)
-{
-    if (idx >= VEML7700_RANGE_COUNT) return NULL;
-    return &s_ranges[idx];
-}
-float VEML7700_ItMs(VEML7700_IntegrationTime it)
-{
-    switch (it)
-    {
-        case VEML7700_IT_25_MS:  return 25.0f;
-        case VEML7700_IT_50_MS:  return 50.0f;
-        case VEML7700_IT_100_MS: return 100.0f;
-        case VEML7700_IT_200_MS: return 200.0f;
-        case VEML7700_IT_400_MS: return 400.0f;
-        case VEML7700_IT_800_MS: return 800.0f;
-        default:                 return 0.0f;
-    }
-}
-
 bool VEML7700_Probe(const I2cBus *bus)
 {
     if (bus == NULL) return false;
@@ -126,7 +137,6 @@ bool VEML7700_Init(VEML7700_HandleTypeDef *dev, const I2cBus *bus)
     dev->persistence = VEML7700_PERS_1;
 
     if (I2cBus_Probe(bus, VEML7700_I2C_ADDR) != DRIVER_STATUS_OK) return false;
-
     if (!VEML7700_ApplyIndex(dev, 4U))
     {
         dev->counters.config_error++;
@@ -158,66 +168,107 @@ bool VEML7700_ReadWithAutoRange(VEML7700_HandleTypeDef *dev, VEML7700_Sample *sa
 
     uint16_t raw = (uint16_t)rx[1] << 8U | (uint16_t)rx[0];
     sample->als_raw = raw;
+    dev->last_attempt = *sample;
 
+    /* --- SETTLING CHECK FIRST: no autorange decisions on stale data --- */
+    if (dev->range_state == VEML7700_RANGE_SETTLING)
+    {
+        sample->settling = true;
+        uint32_t elapsed = Platform_GetTickMs() - dev->settle_start_ms;
+        if (elapsed < dev->settle_duration_ms)
+        {
+            dev->counters.read_success++;
+            return true;
+        }
+        VEML7700_ExitSettling(dev);
+    }
+
+    /* --- SATURATION --- */
     if (raw >= VEML7700_RANGE_SATURATION)
     {
         sample->saturated = true;
-        sample->settling = false;
         if (VEML7700_SetLessSensitive(dev))
             sample->range_changed = true;
         dev->counters.read_success++;
         return true;
     }
 
-    if (dev->range_state == VEML7700_RANGE_SETTLING)
-    {
-        sample->settling = true;
-        if (!VEML7700_IsSettlingDone(dev))
-        {
-            dev->counters.read_success++;
-            return true;
-        }
-        dev->range_state = VEML7700_RANGE_STABLE;
-        dev->range_consecutive = 0U;
-    }
-
+    /* --- LOW threshold: need more sensitivity --- */
     if (raw < VEML7700_RANGE_LOW)
     {
-        dev->range_consecutive++;
+        if (dev->pending_adjust != VEML7700_ADJUST_MORE)
+        {
+            dev->pending_adjust = VEML7700_ADJUST_MORE;
+            dev->range_consecutive = 1;
+        }
+        else
+        {
+            dev->range_consecutive++;
+        }
+
         if (dev->range_consecutive >= VEML7700_RANGE_CONVERGE)
         {
             if (VEML7700_SetMoreSensitive(dev))
             {
                 sample->range_changed = true;
                 sample->settling = true;
+                dev->counters.read_success++;
+                return true;
             }
+            /* already at max sensitivity — fall through to compute lux */
+            dev->range_consecutive = 0;
+            dev->pending_adjust = VEML7700_ADJUST_NONE;
+        }
+        else
+        {
             dev->counters.read_success++;
             return true;
         }
     }
+    /* --- HIGH threshold: need less sensitivity --- */
     else if (raw > VEML7700_RANGE_HIGH)
     {
-        dev->range_consecutive++;
+        if (dev->pending_adjust != VEML7700_ADJUST_LESS)
+        {
+            dev->pending_adjust = VEML7700_ADJUST_LESS;
+            dev->range_consecutive = 1;
+        }
+        else
+        {
+            dev->range_consecutive++;
+        }
+
         if (dev->range_consecutive >= VEML7700_RANGE_CONVERGE)
         {
             if (VEML7700_SetLessSensitive(dev))
             {
                 sample->range_changed = true;
                 sample->settling = true;
+                dev->counters.read_success++;
+                return true;
             }
+            /* already at min sensitivity — fall through to compute lux */
+            dev->range_consecutive = 0;
+            dev->pending_adjust = VEML7700_ADJUST_NONE;
+        }
+        else
+        {
             dev->counters.read_success++;
             return true;
         }
     }
+    /* --- Normal range: reset hysteresis --- */
     else
     {
-        dev->range_consecutive = 0U;
+        dev->range_consecutive = 0;
+        dev->pending_adjust = VEML7700_ADJUST_NONE;
     }
 
+    /* --- Compute valid lux --- */
     sample->lux = (float)raw * dev->resolution;
     sample->valid = true;
 
-    dev->last_sample = *sample;
+    dev->last_valid = *sample;
     dev->counters.read_success++;
 
     return true;
@@ -226,7 +277,11 @@ bool VEML7700_ReadWithAutoRange(VEML7700_HandleTypeDef *dev, VEML7700_Sample *sa
 bool VEML7700_GetDiagnostics(const VEML7700_HandleTypeDef *dev, VEML7700_Sample *diag)
 {
     if ((dev == NULL) || (diag == NULL)) return false;
-    *diag = dev->last_sample;
+    /* return last_attempt always — caller checks valid/settling/saturated */
+    *diag = dev->last_attempt;
+    diag->valid = dev->last_valid.valid;
+    if (diag->valid)
+        diag->lux = dev->last_valid.lux;
     return true;
 }
 

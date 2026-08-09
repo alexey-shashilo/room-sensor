@@ -4,6 +4,13 @@ set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS ON)
 
+option(BUILD_HOST_TESTS "Build host-side unit tests" OFF)
+
+if(BUILD_HOST_TESTS)
+    add_subdirectory(test)
+    return()
+endif()
+
 if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE "Debug")
 endif()

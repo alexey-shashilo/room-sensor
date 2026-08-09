@@ -53,6 +53,13 @@ typedef enum
     VEML7700_RANGE_SETTLING
 } VEML7700_RangeState;
 
+typedef enum
+{
+    VEML7700_ADJUST_NONE = 0,
+    VEML7700_ADJUST_MORE,
+    VEML7700_ADJUST_LESS
+} VEML7700_AdjustDirection;
+
 typedef struct
 {
     uint16_t als_raw;
@@ -87,11 +94,13 @@ typedef struct
 
     uint8_t  range_index;
     VEML7700_RangeState range_state;
+    VEML7700_AdjustDirection pending_adjust;
     uint8_t  range_consecutive;
     uint32_t settle_start_ms;
     uint32_t settle_duration_ms;
 
-    VEML7700_Sample last_sample;
+    VEML7700_Sample last_valid;
+    VEML7700_Sample last_attempt;
     VEML7700_DriverStats counters;
 } VEML7700_HandleTypeDef;
 
