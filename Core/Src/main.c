@@ -25,6 +25,7 @@
 #include "app.h"
 #include "i2c_bus.h"
 #include "i2c_bus_stm32.h"
+#include "platform_time.h"
 
 /* USER CODE END Includes */
 

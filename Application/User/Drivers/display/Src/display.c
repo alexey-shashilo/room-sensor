@@ -1,10 +1,7 @@
 #include "display.h"
 #include "i2c_bus.h"
+#include "platform_time.h"
 #include <string.h>
-
-/* HAL_Delay is needed during init — the BSP layer provides it.
-   In a portable driver this would go through platform/timer.h */
-extern void HAL_Delay(uint32_t Delay);
 
 #define DISPLAY_I2C_TIMEOUT_MS  100U
 
@@ -110,10 +107,10 @@ static DriverStatus Display_WriteCmd(Display_HandleTypeDef *dev, uint8_t cmd)
 
 static bool Display_InitSequence(Display_HandleTypeDef *dev)
 {
-    if (Display_WriteCmd(dev, DISPLAY_CMD_OFF) != DRIVER_OK) return false;
-    HAL_Delay(10);
+    if (Display_WriteCmd(dev, DISPLAY_CMD_OFF) != DRIVER_STATUS_OK) return false;
+    Platform_DelayMs(10);
 
-#define CMD(n) do { if (Display_WriteCmd(dev, (n)) != DRIVER_OK) return false; } while(0)
+#define CMD(n) do { if (Display_WriteCmd(dev, (n)) != DRIVER_STATUS_OK) return false; } while(0)
 
     CMD(DISPLAY_CMD_CLOCKDIV);   CMD(REG_CLOCKDIV_ARG);
     CMD(DISPLAY_CMD_MULTIPLEX);  CMD(REG_MUX_ARG);
@@ -139,12 +136,12 @@ bool Display_Probe(void *i2c_bus, uint8_t *out_addr)
     if ((i2c_bus == NULL) || (out_addr == NULL)) return false;
     const I2cBus *bus = (const I2cBus *)i2c_bus;
 
-    if (I2cBus_Probe(bus, DISPLAY_I2C_ADDR_PRIMARY) == DRIVER_OK)
+    if (I2cBus_Probe(bus, DISPLAY_I2C_ADDR_PRIMARY) == DRIVER_STATUS_OK)
     {
         *out_addr = DISPLAY_I2C_ADDR_PRIMARY;
         return true;
     }
-    if (I2cBus_Probe(bus, DISPLAY_I2C_ADDR_ALT) == DRIVER_OK)
+    if (I2cBus_Probe(bus, DISPLAY_I2C_ADDR_ALT) == DRIVER_STATUS_OK)
     {
         *out_addr = DISPLAY_I2C_ADDR_ALT;
         return true;
@@ -162,7 +159,7 @@ bool Display_Init(Display_HandleTypeDef *dev, void *i2c_bus, uint8_t i2c_addr, D
     dev->controller = controller;
     dev->column_offset = (controller == DISPLAY_CONTROLLER_SH1106) ? 2U : 0U;
 
-    HAL_Delay(10);
+    Platform_DelayMs(10);
 
     if (!Display_InitSequence(dev))
     {
@@ -193,16 +190,16 @@ void Display_Update(Display_HandleTypeDef *dev)
 
     for (uint8_t page = 0U; page < DISPLAY_PAGES; page++)
     {
-        if (Display_WriteCmd(dev, DISPLAY_CMD_PAGE | page) != DRIVER_OK) return;
-        if (Display_WriteCmd(dev, DISPLAY_CMD_SETLOWCOL | low_col) != DRIVER_OK) return;
-        if (Display_WriteCmd(dev, DISPLAY_CMD_SETHIGHCOL | high_col) != DRIVER_OK) return;
+        if (Display_WriteCmd(dev, DISPLAY_CMD_PAGE | page) != DRIVER_STATUS_OK) return;
+        if (Display_WriteCmd(dev, DISPLAY_CMD_SETLOWCOL | low_col) != DRIVER_STATUS_OK) return;
+        if (Display_WriteCmd(dev, DISPLAY_CMD_SETHIGHCOL | high_col) != DRIVER_STATUS_OK) return;
 
         data_buf[0] = DISPLAY_DATA_CTRL;
         for (uint8_t x = 0U; x < DISPLAY_WIDTH; x++)
         {
             data_buf[x + 1] = dev->buffer[page * DISPLAY_WIDTH + x];
         }
-        if (I2cBus_Write(bus, dev->i2c_addr, data_buf, DISPLAY_WIDTH + 1U) != DRIVER_OK)
+        if (I2cBus_Write(bus, dev->i2c_addr, data_buf, DISPLAY_WIDTH + 1U) != DRIVER_STATUS_OK)
         {
             dev->counters.read_error_count++;
             return;

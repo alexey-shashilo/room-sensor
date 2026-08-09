@@ -21,19 +21,19 @@ struct I2cBus
 
 static inline DriverStatus I2cBus_Write(const I2cBus *bus, uint16_t addr, const uint8_t *data, size_t size)
 {
-    if (bus == NULL) return DRIVER_ERROR_ARGUMENT;
+    if (bus == NULL) return DRIVER_STATUS_INVALID_ARG;
     return bus->write(bus->context, addr, data, size);
 }
 
 static inline DriverStatus I2cBus_ReadMem(const I2cBus *bus, uint16_t addr, uint8_t reg, uint8_t *data, size_t size)
 {
-    if (bus == NULL) return DRIVER_ERROR_ARGUMENT;
+    if (bus == NULL) return DRIVER_STATUS_INVALID_ARG;
     return bus->read_mem(bus->context, addr, reg, data, size);
 }
 
 static inline DriverStatus I2cBus_Probe(const I2cBus *bus, uint16_t addr)
 {
-    if (bus == NULL) return DRIVER_ERROR_ARGUMENT;
+    if (bus == NULL) return DRIVER_STATUS_INVALID_ARG;
     return bus->probe(bus->context, addr);
 }
 

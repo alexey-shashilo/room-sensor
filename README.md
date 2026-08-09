@@ -21,27 +21,65 @@ Firmware for NUCLEO-G474RE with VEML7700 ambient light sensor and SH1106/SSD1306
 ## Build & Flash
 
 ```bash
-# Configure
 cmake -B build/Debug -G Ninja -DCMAKE_BUILD_TYPE=Debug
-
-# Build
 cmake --build build/Debug --target room_sensor
-
-# Flash (STM32CubeProgrammer)
-STM32_Programmer_CLI -c port=SWD mode=UR \
-  -w build/Debug/room_sensor.elf -rst
+STM32_Programmer_CLI -c port=SWD mode=UR -w build/Debug/room_sensor.elf -rst
 ```
 
 ## Architecture
 
 ```
 Application/User/
-├── App/                   # Application logic, lifecycle, scheduling
+├── App/              # Application logic, scheduler, device lifecycle
 ├── Drivers/
-│   ├── display/           # OLED driver (SH1106 + SSD1306)
-│   └── veml7700/          # Ambient light sensor driver
-├── Platform/              # I2C bus abstraction (portable)
-└── Common/                # Shared types and status structs
+│   ├── display/      # OLED driver (SH1106 + SSD1306)
+│   └── veml7700/     # Ambient light sensor driver with autoranging
+├── Platform/         # I2C bus + time abstraction (portable)
+└── Common/           # Shared types, DeviceState, DeviceRuntime
+```
+
+## Device State Machine
+
+```mermaid
+stateDiagram-v2
+    [*] --> UNKNOWN
+    UNKNOWN --> PROBING
+    PROBING --> INITIALIZING: device found
+    PROBING --> NOT_FOUND: absent
+    INITIALIZING --> READY: success
+    INITIALIZING --> ERROR: failure
+    READY --> ERROR: 3+ consecutive I2C failures
+    ERROR --> RECOVERING: retry timer
+    RECOVERING --> PROBING
+    NOT_FOUND --> PROBING: retry timer
+```
+
+## Cooperative Scheduler
+
+| Period | Task |
+|--------|------|
+| 500 ms | VEML7700 light measurement |
+| 500 ms | OLED display update |
+| 5000 ms | Device retry (probe/reinit) |
+| 10000 ms | UART diagnostic log |
+
+## Error & Recovery
+
+- Consecutive-error threshold: 3
+- Recovery interval: 5 seconds
+- Recovery increments `recovery_count` in `DeviceRuntime`
+- One device failure does not affect the other (degraded mode)
+- OLED shows `Light: N/A` when VEML is unavailable
+- OLED shows `Light: ---` during recovery
+
+## UART Diagnostics
+
+Every 10 seconds via VCP (115200 baud):
+
+```
+APP uptime=10000
+LIGHT state=4 lux=32 ops=20 err=0 consec=0 rec=0
+DISPLAY state=4 ops=21 err=0 consec=0 rec=0
 ```
 
 ## Pin Configuration (room_sensor.ioc)
@@ -53,9 +91,10 @@ Application/User/
 
 ## Features
 
-- I2C bus abstraction — drivers do not depend on stm32g4xx_hal.h
-- Cooperative scheduling (no blocking HAL_Delay in main loop)
-- Device state machine with automatic retry/reconnect
-- Runtime SH1106/SSD1306 selection via DisplayController enum
-- VEML datasheet-compliant register encoding with read-back verification
+- I2C bus abstraction (portable between G4/H7)
+- Platform time abstraction (portable)
+- Device state machine with degraded mode and auto-recovery
+- VEML7700 autoranging (gain + integration time)
+- Cooperative scheduler (no blocking HAL_Delay in main loop)
 - No exported globals — App_GetStatus() provides runtime status
+- 0 errors, 0 warnings build
