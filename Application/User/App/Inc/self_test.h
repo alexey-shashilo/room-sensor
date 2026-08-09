@@ -17,6 +17,9 @@ typedef struct
 {
     SelfTestResult platform;
     SelfTestResult i2c;
+    SelfTestResult storage;
+    SelfTestResult config;
+    SelfTestResult identity;
     SelfTestResult light_sensor;
     SelfTestResult display;
 } SelfTestReport;

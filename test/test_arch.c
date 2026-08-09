@@ -57,7 +57,7 @@ int main(void)
         check(cfg->light_period_ms == 500U, "light_period_ms = 500");
         check(cfg->display_period_ms == 500U, "display_period_ms = 500");
         check(cfg->retry_period_ms == 5000U, "retry_period_ms = 5000");
-        check(cfg->diag_period_ms == 10000U, "diag_period_ms = 10000");
+        check(cfg->diagnostics_period_ms == 10000U, "diagnostics_period_ms = 10000");
     }
 
     /* --- Summary --- */

@@ -5,11 +5,18 @@
 #include "display.h"
 #include "platform_time.h"
 #include "platform_watchdog.h"
+#include "storage.h"
+#include "device_identity.h"
+#include "communication.h"
+#include "communication_port.h"
 #include <stdio.h>
+
+/* Forward declarations for Telemetry_CreateSnapshot */
+RoomState s_room;
+SystemHealthState s_health;
 
 #define WATCHDOG_TIMEOUT_MS 4000U
 
-static RoomState               s_room;
 static VEML7700_HandleTypeDef s_veml;
 static Display_HandleTypeDef  s_display;
 
@@ -25,13 +32,15 @@ static uint32_t s_last_light_ms = 0;
 static uint32_t s_last_display_ms = 0;
 static uint32_t s_last_retry_ms = 0;
 static uint32_t s_last_diag_ms = 0;
+static uint32_t s_last_telemetry_ms = 0;
 static uint32_t s_start_ms = 0;
 
-static SystemHealthState s_health = SYSTEM_HEALTH_BOOTING;
 static ResetCause        s_reset_cause = RESET_CAUSE_UNKNOWN;
 static bool              s_watchdog_active = false;
 
 static SelfTestReport    s_self_test;
+static DeviceIdentity    s_device_id;
+static bool              s_config_from_flash = false;
 
 static void DeviceRuntime_Init(DeviceRuntime *rt, DeviceState initial)
 {
@@ -96,7 +105,8 @@ static void App_DoReadLight(void)
     {
         if (sample.valid)
         {
-            RoomState_UpdateIlluminance(&s_room, sample.lux, true);
+            float calibrated = sample.lux * Config_Get()->light_calibration_factor;
+            RoomState_UpdateIlluminance(&s_room, calibrated, true);
             DeviceRuntime_RecordSuccess(&s_light_rt);
         }
         else
@@ -270,13 +280,29 @@ static const char *SelfTestResultStr(SelfTestResult r)
 
 static void App_PrintBootDiag(void)
 {
+    char short_id[16];
+    DeviceIdentity_GetShortId(&s_device_id, short_id, sizeof(short_id));
+
     printf("BOOT Reset=%s\r\n", ResetCauseStr(s_reset_cause));
 
-    printf("SELFTEST Platform=%s I2C=%s VEML=%s Display=%s\r\n",
+    printf("SELFTEST Platform=%s I2C=%s Storage=%s Config=%s ID=%s VEML=%s Disp=%s\r\n",
            SelfTestResultStr(s_self_test.platform),
            SelfTestResultStr(s_self_test.i2c),
+           SelfTestResultStr(s_self_test.storage),
+           SelfTestResultStr(s_self_test.config),
+           SelfTestResultStr(s_self_test.identity),
            SelfTestResultStr(s_self_test.light_sensor),
            SelfTestResultStr(s_self_test.display));
+
+    printf("CONFIG %s seq=%u calib=%.3f ID=%s\r\n",
+           s_config_from_flash ? "persisted" : "defaults",
+           (unsigned)Config_Get()->version,
+           (double)Config_Get()->light_calibration_factor,
+           short_id);
+
+    printf("TELEMETRY schema=%u period=%lu\r\n",
+           (unsigned)TELEMETRY_SCHEMA_VERSION,
+           (unsigned long)Config_Get()->telemetry_period_ms);
 
     printf("WDG active=%d\r\n", (int)s_watchdog_active);
     printf("Health=%d\r\n", (int)s_health);
@@ -292,8 +318,10 @@ static void App_UpdateHealth(void)
 
     bool veml_ready = (s_light_rt.state == DEVICE_STATE_READY);
     bool disp_ready = (s_disp_rt.state == DEVICE_STATE_READY);
+    bool storage_ok = (s_self_test.storage == SELF_TEST_PASS);
+    bool config_ok  = (s_self_test.config == SELF_TEST_PASS);
 
-    if (veml_ready && disp_ready)
+    if (veml_ready && disp_ready && storage_ok && config_ok)
         s_health = SYSTEM_HEALTH_OK;
     else
         s_health = SYSTEM_HEALTH_DEGRADED;
@@ -302,8 +330,6 @@ static void App_UpdateHealth(void)
 RoomSensor_Status App_Init(void)
 {
     if (s_i2c_bus == NULL) return ROOM_SENSOR_ERROR;
-
-    Config_LoadDefaults();
 
     s_reset_cause = Platform_GetResetCause();
     Platform_ClearResetFlags();
@@ -315,6 +341,32 @@ RoomSensor_Status App_Init(void)
 
     RoomState_Init(&s_room);
     SelfTest_Init(&s_self_test);
+
+    /* Initialize storage */
+    Storage_Init();
+
+    /* Load config — fall back to defaults */
+    if (Config_Load())
+        s_config_from_flash = true;
+    else
+        Config_LoadDefaults();
+
+    /* Device identity */
+    if (!DeviceIdentity_Load(&s_device_id))
+        DeviceIdentity_Generate(&s_device_id);
+
+    /* Save defaults if nothing was persisted */
+    if (!s_config_from_flash)
+        Config_Save();
+
+    /* Initialize communication (debug UART port) */
+    Communication_Init();
+    {
+        CommunicationPort debug_port;
+        extern void CommunicationDebug_Init(CommunicationPort *port);
+        CommunicationDebug_Init(&debug_port);
+        Communication_SetPort(&debug_port);
+    }
 
     App_DoRetry();
 
@@ -353,15 +405,18 @@ void App_Run(void)
             App_DoUpdateDisplay();
     }
 
-    if ((now - s_last_diag_ms) >= cfg->diag_period_ms)
+    if ((now - s_last_diag_ms) >= cfg->diagnostics_period_ms)
     {
         s_last_diag_ms = now;
         App_UpdateHealth();
 
+        CommunicationRuntime cr;
+        Communication_GetRuntime(&cr);
+
         printf("APP uptime=%lu\r\n"
                "LIGHT state=%d room_lux=%.0f ops=%lu err=%lu consec=%lu rec=%lu\r\n"
                "DISPLAY state=%d ops=%lu err=%lu consec=%lu rec=%lu\r\n"
-               "HEALTH=%d WDG=%d RESET=%s\r\n",
+               "HEALTH=%d WDG=%d CFG=%s COMM=%d sent=%lu failed=%lu\r\n",
                (unsigned long)(now - s_start_ms),
                (int)s_light_rt.state,
                (double)s_room.illuminance_lux,
@@ -375,8 +430,22 @@ void App_Run(void)
                (unsigned long)s_disp_rt.consecutive_errors,
                (unsigned long)s_disp_rt.recovery_count,
                (int)s_health, (int)s_watchdog_active,
-               ResetCauseStr(s_reset_cause));
+               s_config_from_flash ? "persisted" : "defaults",
+               (int)cr.state,
+               (unsigned long)cr.send_successes,
+               (unsigned long)cr.send_failures);
     }
+
+    if ((now - s_last_telemetry_ms) >= cfg->telemetry_period_ms)
+    {
+        s_last_telemetry_ms = now;
+
+        TelemetrySnapshot snap;
+        Telemetry_CreateSnapshot(&snap);
+        Communication_SubmitSnapshot(&snap);
+    }
+
+    Communication_Run();
 
     Platform_WatchdogRefresh();
 }

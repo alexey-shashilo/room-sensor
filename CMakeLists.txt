@@ -33,12 +33,19 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/App/Src/room_state.c
     ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/App/Src/config.c
     ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/App/Src/self_test.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/App/Src/device_identity.c
     ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/Drivers/veml7700/Src/veml7700.c
     ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/Drivers/display/Src/display.c
     ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/Platform/Src/i2c_bus_stm32.c
     ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/Platform/Src/platform_time_stm32.c
     ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/Platform/Src/platform_watchdog_stm32.c
     ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/Platform/Src/platform_reset_stm32.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/Platform/Src/platform_flash_stm32.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/Storage/Src/storage.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/Telemetry/Src/telemetry.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/Telemetry/Src/telemetry_serializer.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/Communication/Src/communication.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/Communication/Src/communication_debug.c
 )
 
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
@@ -46,6 +53,9 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/Drivers/veml7700/Inc
     ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/Drivers/display/Inc
     ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/Platform/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/Storage/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/Telemetry/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/Communication/Inc
     ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/Common/Inc
 )
 
