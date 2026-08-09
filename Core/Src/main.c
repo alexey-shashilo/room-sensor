@@ -23,6 +23,8 @@
 /* USER CODE BEGIN Includes */
 
 #include "app.h"
+#include "i2c_bus.h"
+#include "i2c_bus_stm32.h"
 
 /* USER CODE END Includes */
 
@@ -98,7 +100,16 @@ int main(void)
   BSP_LED_Init(LED_GREEN);
   BSP_LED_On(LED_GREEN);
 
-  App_SetI2C(&hi2c1);
+  {
+      I2cBus i2c_bus;
+      I2cBus_Stm32_Init(&i2c_bus, &hi2c1, 100U);
+      App_SetI2C(&i2c_bus);
+  }
+
+  if (App_Init() != ROOM_SENSOR_OK)
+  {
+      BSP_LED_Off(LED_GREEN);
+  }
 
   /* USER CODE END 2 */
 
@@ -126,8 +137,6 @@ int main(void)
     /* USER CODE BEGIN 3 */
 
     App_Run();
-
-    HAL_Delay(500);
 
   }
   /* USER CODE END 3 */

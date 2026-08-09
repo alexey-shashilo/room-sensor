@@ -2,18 +2,25 @@
 #define APP_H
 
 #include "room_sensor_types.h"
-#include "stm32g4xx_hal.h"
+
+#include <stdbool.h>
+#include <stdint.h>
+
+typedef struct
+{
+    float  illuminance_lux;
+    bool   illuminance_valid;
+
+    DeviceState veml7700_state;
+    DeviceState display_state;
+
+    DeviceCounters veml7700_counters;
+    DeviceCounters display_counters;
+} App_Status;
 
 RoomSensor_Status App_Init(void);
 void               App_Run(void);
-void               App_SetI2C(I2C_HandleTypeDef *hi2c);
-I2C_HandleTypeDef *App_GetI2C(void);
-
-extern bool    g_veml7700_present;
-extern float   g_last_lux;
-extern uint8_t g_veml7700_initialized;
-extern bool    g_ssd1306_present;
-extern uint8_t g_ssd1306_initialized;
-extern uint8_t g_ssd1306_addr;
+void               App_GetStatus(App_Status *status);
+void               App_SetI2C(void *bus);
 
 #endif

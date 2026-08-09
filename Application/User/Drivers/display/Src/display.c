@@ -1,0 +1,289 @@
+#include "display.h"
+#include "i2c_bus.h"
+#include <string.h>
+
+/* HAL_Delay is needed during init — the BSP layer provides it.
+   In a portable driver this would go through platform/timer.h */
+extern void HAL_Delay(uint32_t Delay);
+
+#define DISPLAY_I2C_TIMEOUT_MS  100U
+
+#define DISPLAY_I2C_ADDR_PRIMARY   (0x3CU << 1U)
+#define DISPLAY_I2C_ADDR_ALT       (0x3DU << 1U)
+
+#define FONT_WIDTH       5U
+#define FONT_HEIGHT      8U
+#define FONT_CHAR_SPACING 6U
+
+#define REG_CLOCKDIV_ARG     0x80U
+#define REG_MUX_ARG          0x3FU
+#define REG_DISPLAYOFFSET_ARG 0x00U
+#define REG_CHARGEPUMP_ARG   0x14U
+#define REG_SEGREMAP_REMAP   0x01U
+#define REG_COMPINS_ARG      0x12U
+#define REG_CONTRAST_ARG     0x7FU
+#define REG_PRECHARGE_ARG    0xF1U
+#define REG_VCOMDETECT_ARG   0x40U
+
+/* Control byte: 0x00 = command, 0x40 = data */
+#define DISPLAY_CMD_CTRL  0x00U
+#define DISPLAY_DATA_CTRL 0x40U
+
+/* Command set */
+#define DISPLAY_CMD_OFF         0xAEU
+#define DISPLAY_CMD_ON          0xAFU
+#define DISPLAY_CMD_CLOCKDIV    0xD5U
+#define DISPLAY_CMD_MULTIPLEX   0xA8U
+#define DISPLAY_CMD_OFFSET      0xD3U
+#define DISPLAY_CMD_STARTLINE   0x40U
+#define DISPLAY_CMD_CHARGEPUMP  0x8DU
+#define DISPLAY_CMD_SEGREMAP    0xA0U
+#define DISPLAY_CMD_COMSCANDEC  0xC8U
+#define DISPLAY_CMD_COMPINS     0xDAU
+#define DISPLAY_CMD_CONTRAST    0x81U
+#define DISPLAY_CMD_PRECHARGE   0xD9U
+#define DISPLAY_CMD_VCOMDETECT  0xDBU
+#define DISPLAY_CMD_ALLON_RESUME 0xA4U
+#define DISPLAY_CMD_NORMAL      0xA6U
+#define DISPLAY_CMD_PAGE        0xB0U
+#define DISPLAY_CMD_SETLOWCOL   0x00U
+#define DISPLAY_CMD_SETHIGHCOL  0x10U
+
+static const uint8_t s_font[96][FONT_WIDTH] =
+{
+    {0x00, 0x00, 0x00, 0x00, 0x00},{0x00, 0x00, 0x5F, 0x00, 0x00},
+    {0x00, 0x07, 0x00, 0x07, 0x00},{0x14, 0x7F, 0x14, 0x7F, 0x14},
+    {0x24, 0x2A, 0x7F, 0x2A, 0x12},{0x23, 0x13, 0x08, 0x64, 0x62},
+    {0x36, 0x49, 0x55, 0x22, 0x50},{0x00, 0x05, 0x03, 0x00, 0x00},
+    {0x00, 0x1C, 0x22, 0x41, 0x00},{0x00, 0x41, 0x22, 0x1C, 0x00},
+    {0x08, 0x2A, 0x1C, 0x2A, 0x08},{0x08, 0x08, 0x3E, 0x08, 0x08},
+    {0x00, 0x50, 0x30, 0x00, 0x00},{0x08, 0x08, 0x08, 0x08, 0x08},
+    {0x00, 0x60, 0x60, 0x00, 0x00},{0x20, 0x10, 0x08, 0x04, 0x02},
+    {0x3E, 0x51, 0x49, 0x45, 0x3E},{0x00, 0x42, 0x7F, 0x40, 0x00},
+    {0x42, 0x61, 0x51, 0x49, 0x46},{0x21, 0x41, 0x45, 0x4B, 0x31},
+    {0x18, 0x14, 0x12, 0x7F, 0x10},{0x27, 0x45, 0x45, 0x45, 0x39},
+    {0x3C, 0x4A, 0x49, 0x49, 0x30},{0x01, 0x71, 0x09, 0x05, 0x03},
+    {0x36, 0x49, 0x49, 0x49, 0x36},{0x06, 0x49, 0x49, 0x29, 0x1E},
+    {0x00, 0x36, 0x36, 0x00, 0x00},{0x00, 0x56, 0x36, 0x00, 0x00},
+    {0x00, 0x08, 0x14, 0x22, 0x41},{0x14, 0x14, 0x14, 0x14, 0x14},
+    {0x41, 0x22, 0x14, 0x08, 0x00},{0x02, 0x01, 0x51, 0x09, 0x06},
+    {0x32, 0x49, 0x79, 0x41, 0x3E},{0x7E, 0x11, 0x11, 0x11, 0x7E},
+    {0x7F, 0x49, 0x49, 0x49, 0x36},{0x3E, 0x41, 0x41, 0x41, 0x22},
+    {0x7F, 0x41, 0x41, 0x22, 0x1C},{0x7F, 0x49, 0x49, 0x49, 0x41},
+    {0x7F, 0x09, 0x09, 0x01, 0x01},{0x3E, 0x41, 0x41, 0x51, 0x32},
+    {0x7F, 0x08, 0x08, 0x08, 0x7F},{0x00, 0x41, 0x7F, 0x41, 0x00},
+    {0x20, 0x40, 0x41, 0x3F, 0x01},{0x7F, 0x08, 0x14, 0x22, 0x41},
+    {0x7F, 0x40, 0x40, 0x40, 0x40},{0x7F, 0x02, 0x04, 0x02, 0x7F},
+    {0x7F, 0x04, 0x08, 0x10, 0x7F},{0x3E, 0x41, 0x41, 0x41, 0x3E},
+    {0x7F, 0x09, 0x09, 0x09, 0x06},{0x3E, 0x41, 0x51, 0x21, 0x5E},
+    {0x7F, 0x09, 0x19, 0x29, 0x46},{0x46, 0x49, 0x49, 0x49, 0x31},
+    {0x01, 0x01, 0x7F, 0x01, 0x01},{0x3F, 0x40, 0x40, 0x40, 0x3F},
+    {0x1F, 0x20, 0x40, 0x20, 0x1F},{0x7F, 0x20, 0x18, 0x20, 0x7F},
+    {0x63, 0x14, 0x08, 0x14, 0x63},{0x03, 0x04, 0x78, 0x04, 0x03},
+    {0x61, 0x51, 0x49, 0x45, 0x43},{0x00, 0x00, 0x7F, 0x41, 0x41},
+    {0x02, 0x04, 0x08, 0x10, 0x20},{0x41, 0x41, 0x7F, 0x00, 0x00},
+    {0x04, 0x02, 0x01, 0x02, 0x04},{0x40, 0x40, 0x40, 0x40, 0x40},
+    {0x00, 0x01, 0x02, 0x04, 0x00},{0x20, 0x54, 0x54, 0x54, 0x78},
+    {0x7F, 0x48, 0x44, 0x44, 0x38},{0x38, 0x44, 0x44, 0x44, 0x20},
+    {0x38, 0x44, 0x44, 0x48, 0x7F},{0x38, 0x54, 0x54, 0x54, 0x18},
+    {0x08, 0x7E, 0x09, 0x01, 0x02},{0x08, 0x14, 0x54, 0x54, 0x3C},
+    {0x7F, 0x08, 0x04, 0x04, 0x78},{0x00, 0x44, 0x7D, 0x40, 0x00},
+    {0x20, 0x40, 0x44, 0x3D, 0x00},{0x7F, 0x10, 0x28, 0x44, 0x00},
+    {0x00, 0x41, 0x7F, 0x40, 0x00},{0x7C, 0x04, 0x18, 0x04, 0x78},
+    {0x7C, 0x08, 0x04, 0x04, 0x78},{0x38, 0x44, 0x44, 0x44, 0x38},
+    {0x7C, 0x14, 0x14, 0x14, 0x08},{0x08, 0x14, 0x14, 0x18, 0x7C},
+    {0x7C, 0x08, 0x04, 0x04, 0x08},{0x48, 0x54, 0x54, 0x54, 0x20},
+    {0x04, 0x3F, 0x44, 0x40, 0x20},{0x3C, 0x40, 0x40, 0x20, 0x7C},
+    {0x1C, 0x20, 0x40, 0x20, 0x1C},{0x3C, 0x40, 0x30, 0x40, 0x3C},
+    {0x44, 0x28, 0x10, 0x28, 0x44},{0x0C, 0x50, 0x50, 0x50, 0x3C},
+    {0x44, 0x64, 0x54, 0x4C, 0x44},{0x00, 0x08, 0x36, 0x41, 0x00},
+    {0x00, 0x00, 0x7F, 0x00, 0x00},{0x00, 0x41, 0x36, 0x08, 0x00},
+    {0x08, 0x04, 0x08, 0x10, 0x08},
+};
+
+static DriverStatus Display_WriteCmd(Display_HandleTypeDef *dev, uint8_t cmd)
+{
+    const I2cBus *bus = (const I2cBus *)dev->i2c_bus;
+    uint8_t tx[2] = {DISPLAY_CMD_CTRL, cmd};
+    return I2cBus_Write(bus, dev->i2c_addr, tx, 2U);
+}
+
+static bool Display_InitSequence(Display_HandleTypeDef *dev)
+{
+    if (Display_WriteCmd(dev, DISPLAY_CMD_OFF) != DRIVER_OK) return false;
+    HAL_Delay(10);
+
+#define CMD(n) do { if (Display_WriteCmd(dev, (n)) != DRIVER_OK) return false; } while(0)
+
+    CMD(DISPLAY_CMD_CLOCKDIV);   CMD(REG_CLOCKDIV_ARG);
+    CMD(DISPLAY_CMD_MULTIPLEX);  CMD(REG_MUX_ARG);
+    CMD(DISPLAY_CMD_OFFSET);     CMD(REG_DISPLAYOFFSET_ARG);
+    CMD(DISPLAY_CMD_STARTLINE);
+    CMD(DISPLAY_CMD_CHARGEPUMP); CMD(REG_CHARGEPUMP_ARG);
+    CMD(DISPLAY_CMD_SEGREMAP | REG_SEGREMAP_REMAP);
+    CMD(DISPLAY_CMD_COMSCANDEC);
+    CMD(DISPLAY_CMD_COMPINS);    CMD(REG_COMPINS_ARG);
+    CMD(DISPLAY_CMD_CONTRAST);   CMD(REG_CONTRAST_ARG);
+    CMD(DISPLAY_CMD_PRECHARGE);  CMD(REG_PRECHARGE_ARG);
+    CMD(DISPLAY_CMD_VCOMDETECT); CMD(REG_VCOMDETECT_ARG);
+    CMD(DISPLAY_CMD_ALLON_RESUME);
+    CMD(DISPLAY_CMD_NORMAL);
+    CMD(DISPLAY_CMD_ON);
+
+#undef CMD
+    return true;
+}
+
+bool Display_Probe(void *i2c_bus, uint8_t *out_addr)
+{
+    if ((i2c_bus == NULL) || (out_addr == NULL)) return false;
+    const I2cBus *bus = (const I2cBus *)i2c_bus;
+
+    if (I2cBus_Probe(bus, DISPLAY_I2C_ADDR_PRIMARY) == DRIVER_OK)
+    {
+        *out_addr = DISPLAY_I2C_ADDR_PRIMARY;
+        return true;
+    }
+    if (I2cBus_Probe(bus, DISPLAY_I2C_ADDR_ALT) == DRIVER_OK)
+    {
+        *out_addr = DISPLAY_I2C_ADDR_ALT;
+        return true;
+    }
+    return false;
+}
+
+bool Display_Init(Display_HandleTypeDef *dev, void *i2c_bus, uint8_t i2c_addr, DisplayController controller)
+{
+    if ((dev == NULL) || (i2c_bus == NULL)) return false;
+
+    memset(dev, 0, sizeof(*dev));
+    dev->i2c_bus = i2c_bus;
+    dev->i2c_addr = i2c_addr;
+    dev->controller = controller;
+    dev->column_offset = (controller == DISPLAY_CONTROLLER_SH1106) ? 2U : 0U;
+
+    HAL_Delay(10);
+
+    if (!Display_InitSequence(dev))
+    {
+        dev->counters.init_error_count++;
+        return false;
+    }
+
+    dev->initialized = 1U;
+    Display_Clear(dev);
+    Display_Update(dev);
+    return true;
+}
+
+void Display_Clear(Display_HandleTypeDef *dev)
+{
+    if (dev == NULL) return;
+    memset(dev->buffer, 0x00, sizeof(dev->buffer));
+}
+
+void Display_Update(Display_HandleTypeDef *dev)
+{
+    if ((dev == NULL) || (dev->initialized == 0U)) return;
+
+    const I2cBus *bus = (const I2cBus *)dev->i2c_bus;
+    uint8_t data_buf[DISPLAY_WIDTH + 1];
+    uint8_t low_col  = dev->column_offset & 0x0FU;
+    uint8_t high_col = (dev->column_offset >> 4U) & 0x0FU;
+
+    for (uint8_t page = 0U; page < DISPLAY_PAGES; page++)
+    {
+        if (Display_WriteCmd(dev, DISPLAY_CMD_PAGE | page) != DRIVER_OK) return;
+        if (Display_WriteCmd(dev, DISPLAY_CMD_SETLOWCOL | low_col) != DRIVER_OK) return;
+        if (Display_WriteCmd(dev, DISPLAY_CMD_SETHIGHCOL | high_col) != DRIVER_OK) return;
+
+        data_buf[0] = DISPLAY_DATA_CTRL;
+        for (uint8_t x = 0U; x < DISPLAY_WIDTH; x++)
+        {
+            data_buf[x + 1] = dev->buffer[page * DISPLAY_WIDTH + x];
+        }
+        if (I2cBus_Write(bus, dev->i2c_addr, data_buf, DISPLAY_WIDTH + 1U) != DRIVER_OK)
+        {
+            dev->counters.read_error_count++;
+            return;
+        }
+    }
+    dev->counters.read_success_count++;
+}
+
+void Display_DrawPixel(Display_HandleTypeDef *dev, uint8_t x, uint8_t y, uint8_t color)
+{
+    if (dev == NULL) return;
+    if ((x >= DISPLAY_WIDTH) || (y >= DISPLAY_HEIGHT)) return;
+
+    if (color)
+    {
+        dev->buffer[x + (y / 8U) * DISPLAY_WIDTH] |= (1U << (y % 8U));
+    }
+    else
+    {
+        dev->buffer[x + (y / 8U) * DISPLAY_WIDTH] &= ~(1U << (y % 8U));
+    }
+}
+
+void Display_DrawChar(Display_HandleTypeDef *dev, uint8_t x, uint8_t y, char ch)
+{
+    if (dev == NULL) return;
+
+    uint8_t idx = (uint8_t)ch;
+    if ((idx < 32U) || (idx > 127U)) idx = (uint8_t)'?';
+    idx -= 32U;
+
+    for (uint8_t i = 0U; i < FONT_WIDTH; i++)
+    {
+        uint8_t line = s_font[idx][i];
+        for (uint8_t j = 0U; j < FONT_HEIGHT; j++)
+        {
+            uint8_t pixel = (line & (1U << j)) ? 1U : 0U;
+            Display_DrawPixel(dev, x + i, y + j, pixel);
+        }
+    }
+}
+
+void Display_DrawString(Display_HandleTypeDef *dev, uint8_t x, uint8_t y, const char *str)
+{
+    if (dev == NULL) return;
+
+    while (*str != '\0')
+    {
+        Display_DrawChar(dev, x, y, *str);
+        x += FONT_CHAR_SPACING;
+        if (x + FONT_CHAR_SPACING >= DISPLAY_WIDTH)
+        {
+            x = 0U;
+            y += FONT_HEIGHT;
+        }
+        str++;
+    }
+}
+
+void Display_TestPattern(Display_HandleTypeDef *dev)
+{
+    if (dev == NULL) return;
+
+    Display_Clear(dev);
+    memset(dev->buffer, 0xFF, sizeof(dev->buffer));
+
+    for (uint8_t y = 0U; y < DISPLAY_HEIGHT; y++)
+    {
+        for (uint8_t x = 0U; x < DISPLAY_WIDTH; x++)
+        {
+            if (((x / 8U) + (y / 8U)) & 1U) continue;
+            uint8_t page = y / 8U;
+            dev->buffer[x + page * DISPLAY_WIDTH] &= ~(1U << (y % 8U));
+        }
+    }
+
+    Display_Update(dev);
+}
+
+bool Display_IsInitialized(const Display_HandleTypeDef *dev)
+{
+    if (dev == NULL) return false;
+    return (dev->initialized != 0U);
+}
