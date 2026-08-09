@@ -4,6 +4,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include "room_sensor_types.h"
+#include "i2c_bus.h"
 
 #define DISPLAY_WIDTH     128U
 #define DISPLAY_HEIGHT    64U
@@ -17,23 +18,23 @@ typedef enum
 
 typedef struct
 {
-    void *i2c_bus;
+    const I2cBus *bus;
     uint8_t i2c_addr;
     uint8_t initialized;
+    uint8_t addr_valid;
     DisplayController controller;
     uint8_t column_offset;
     uint8_t buffer[DISPLAY_WIDTH * DISPLAY_PAGES];
-    DeviceCounters counters;
 } Display_HandleTypeDef;
 
-bool Display_Probe(void *i2c_bus, uint8_t *out_addr);
-bool Display_Init(Display_HandleTypeDef *dev, void *i2c_bus, uint8_t i2c_addr, DisplayController controller);
-void Display_Clear(Display_HandleTypeDef *dev);
-void Display_Update(Display_HandleTypeDef *dev);
-void Display_DrawPixel(Display_HandleTypeDef *dev, uint8_t x, uint8_t y, uint8_t color);
-void Display_DrawChar(Display_HandleTypeDef *dev, uint8_t x, uint8_t y, char ch);
-void Display_DrawString(Display_HandleTypeDef *dev, uint8_t x, uint8_t y, const char *str);
-void Display_TestPattern(Display_HandleTypeDef *dev);
-bool Display_IsInitialized(const Display_HandleTypeDef *dev);
+bool         Display_Probe(const I2cBus *bus, uint8_t *out_addr);
+bool         Display_Init(Display_HandleTypeDef *dev, const I2cBus *bus, uint8_t i2c_addr, DisplayController controller);
+void         Display_Clear(Display_HandleTypeDef *dev);
+DriverStatus Display_Update(Display_HandleTypeDef *dev);
+void         Display_DrawPixel(Display_HandleTypeDef *dev, uint8_t x, uint8_t y, uint8_t color);
+void         Display_DrawChar(Display_HandleTypeDef *dev, uint8_t x, uint8_t y, char ch);
+void         Display_DrawString(Display_HandleTypeDef *dev, uint8_t x, uint8_t y, const char *str);
+void         Display_TestPattern(Display_HandleTypeDef *dev);
+bool         Display_IsInitialized(const Display_HandleTypeDef *dev);
 
 #endif

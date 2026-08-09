@@ -4,12 +4,12 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include "room_sensor_types.h"
+#include "i2c_bus.h"
 
 #define VEML7700_I2C_ADDR       (0x10U << 1U)
 
 #define VEML7700_REG_ALS_CONF   0x00U
 #define VEML7700_REG_ALS        0x04U
-#define VEML7700_REG_WH         0x01U
 
 #define VEML7700_GAIN_BITS_POS  11U
 #define VEML7700_IT_BITS_POS    6U
@@ -17,10 +17,10 @@
 
 typedef enum
 {
-    VEML7700_GAIN_1   = 0U,
-    VEML7700_GAIN_2   = 1U,
-    VEML7700_GAIN_1_8 = 2U,
-    VEML7700_GAIN_1_4 = 3U
+    VEML7700_GAIN_1   = 0U,  /* least sensitive (×1) */
+    VEML7700_GAIN_2   = 1U,  /* ×2 */
+    VEML7700_GAIN_1_8 = 2U,  /* ×1/8 — physically least sensitive */
+    VEML7700_GAIN_1_4 = 3U   /* ×1/4 */
 } VEML7700_Gain;
 
 typedef enum
@@ -46,21 +46,9 @@ typedef enum
 #define VEML7700_RANGE_HIGH_THRESHOLD   12000U
 #define VEML7700_RANGE_SATURATION       64000U
 
-typedef struct
-{
-    VEML7700_Gain            gain;
-    VEML7700_IntegrationTime integration_time;
-
-    uint16_t als_conf_value;
-    float    resolution;            
-    uint16_t max_raw;            
-} VEML7700_RangeConfig;
-
 typedef enum
 {
     VEML7700_RANGE_STABLE = 0,
-    VEML7700_RANGE_INCREASING,
-    VEML7700_RANGE_DECREASING,
     VEML7700_RANGE_SETTLING
 } VEML7700_RangeState;
 
@@ -77,7 +65,14 @@ typedef struct
 
 typedef struct
 {
-    void *i2c_bus;
+    uint32_t read_success_count;
+    uint32_t read_error_count;
+    uint32_t config_error_count;
+} VEML7700_DriverStats;
+
+typedef struct
+{
+    const I2cBus *bus;
     uint8_t initialized;
 
     VEML7700_Gain gain;
@@ -93,12 +88,11 @@ typedef struct
     uint32_t last_it_ms;
 
     VEML7700_Sample last_sample;
-
-    DeviceCounters counters;
+    VEML7700_DriverStats counters;
 } VEML7700_HandleTypeDef;
 
-bool VEML7700_Init(VEML7700_HandleTypeDef *dev, void *i2c_bus);
-bool VEML7700_Probe(VEML7700_HandleTypeDef *dev, void *i2c_bus);
+bool VEML7700_Probe(const I2cBus *bus);
+bool VEML7700_Init(VEML7700_HandleTypeDef *dev, const I2cBus *bus);
 bool VEML7700_ReadWithAutoRange(VEML7700_HandleTypeDef *dev, VEML7700_Sample *sample);
 bool VEML7700_GetDiagnostics(const VEML7700_HandleTypeDef *dev, VEML7700_Sample *diag);
 bool VEML7700_IsInitialized(const VEML7700_HandleTypeDef *dev);

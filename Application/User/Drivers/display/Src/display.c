@@ -3,8 +3,6 @@
 #include "platform_time.h"
 #include <string.h>
 
-#define DISPLAY_I2C_TIMEOUT_MS  100U
-
 #define DISPLAY_I2C_ADDR_PRIMARY   (0x3CU << 1U)
 #define DISPLAY_I2C_ADDR_ALT       (0x3DU << 1U)
 
@@ -22,11 +20,9 @@
 #define REG_PRECHARGE_ARG    0xF1U
 #define REG_VCOMDETECT_ARG   0x40U
 
-/* Control byte: 0x00 = command, 0x40 = data */
 #define DISPLAY_CMD_CTRL  0x00U
 #define DISPLAY_DATA_CTRL 0x40U
 
-/* Command set */
 #define DISPLAY_CMD_OFF         0xAEU
 #define DISPLAY_CMD_ON          0xAFU
 #define DISPLAY_CMD_CLOCKDIV    0xD5U
@@ -98,11 +94,10 @@ static const uint8_t s_font[96][FONT_WIDTH] =
     {0x08, 0x04, 0x08, 0x10, 0x08},
 };
 
-static DriverStatus Display_WriteCmd(Display_HandleTypeDef *dev, uint8_t cmd)
+static DriverStatus Display_WriteCmd(const Display_HandleTypeDef *dev, uint8_t cmd)
 {
-    const I2cBus *bus = (const I2cBus *)dev->i2c_bus;
     uint8_t tx[2] = {DISPLAY_CMD_CTRL, cmd};
-    return I2cBus_Write(bus, dev->i2c_addr, tx, 2U);
+    return I2cBus_Write(dev->bus, dev->i2c_addr, tx, 2U);
 }
 
 static bool Display_InitSequence(Display_HandleTypeDef *dev)
@@ -131,10 +126,9 @@ static bool Display_InitSequence(Display_HandleTypeDef *dev)
     return true;
 }
 
-bool Display_Probe(void *i2c_bus, uint8_t *out_addr)
+bool Display_Probe(const I2cBus *bus, uint8_t *out_addr)
 {
-    if ((i2c_bus == NULL) || (out_addr == NULL)) return false;
-    const I2cBus *bus = (const I2cBus *)i2c_bus;
+    if ((bus == NULL) || (out_addr == NULL)) return false;
 
     if (I2cBus_Probe(bus, DISPLAY_I2C_ADDR_PRIMARY) == DRIVER_STATUS_OK)
     {
@@ -149,23 +143,20 @@ bool Display_Probe(void *i2c_bus, uint8_t *out_addr)
     return false;
 }
 
-bool Display_Init(Display_HandleTypeDef *dev, void *i2c_bus, uint8_t i2c_addr, DisplayController controller)
+bool Display_Init(Display_HandleTypeDef *dev, const I2cBus *bus, uint8_t i2c_addr, DisplayController controller)
 {
-    if ((dev == NULL) || (i2c_bus == NULL)) return false;
+    if ((dev == NULL) || (bus == NULL)) return false;
 
     memset(dev, 0, sizeof(*dev));
-    dev->i2c_bus = i2c_bus;
+    dev->bus = bus;
     dev->i2c_addr = i2c_addr;
+    dev->addr_valid = 1U;
     dev->controller = controller;
     dev->column_offset = (controller == DISPLAY_CONTROLLER_SH1106) ? 2U : 0U;
 
     Platform_DelayMs(10);
 
-    if (!Display_InitSequence(dev))
-    {
-        dev->counters.init_error_count++;
-        return false;
-    }
+    if (!Display_InitSequence(dev)) return false;
 
     dev->initialized = 1U;
     Display_Clear(dev);
@@ -179,33 +170,33 @@ void Display_Clear(Display_HandleTypeDef *dev)
     memset(dev->buffer, 0x00, sizeof(dev->buffer));
 }
 
-void Display_Update(Display_HandleTypeDef *dev)
+DriverStatus Display_Update(Display_HandleTypeDef *dev)
 {
-    if ((dev == NULL) || (dev->initialized == 0U)) return;
+    if (dev == NULL) return DRIVER_STATUS_INVALID_ARG;
+    if (dev->initialized == 0U) return DRIVER_STATUS_NOT_READY;
 
-    const I2cBus *bus = (const I2cBus *)dev->i2c_bus;
     uint8_t data_buf[DISPLAY_WIDTH + 1];
     uint8_t low_col  = dev->column_offset & 0x0FU;
     uint8_t high_col = (dev->column_offset >> 4U) & 0x0FU;
 
     for (uint8_t page = 0U; page < DISPLAY_PAGES; page++)
     {
-        if (Display_WriteCmd(dev, DISPLAY_CMD_PAGE | page) != DRIVER_STATUS_OK) return;
-        if (Display_WriteCmd(dev, DISPLAY_CMD_SETLOWCOL | low_col) != DRIVER_STATUS_OK) return;
-        if (Display_WriteCmd(dev, DISPLAY_CMD_SETHIGHCOL | high_col) != DRIVER_STATUS_OK) return;
+        DriverStatus s;
+        s = Display_WriteCmd(dev, DISPLAY_CMD_PAGE | page);
+        if (s != DRIVER_STATUS_OK) return s;
+        s = Display_WriteCmd(dev, DISPLAY_CMD_SETLOWCOL | low_col);
+        if (s != DRIVER_STATUS_OK) return s;
+        s = Display_WriteCmd(dev, DISPLAY_CMD_SETHIGHCOL | high_col);
+        if (s != DRIVER_STATUS_OK) return s;
 
         data_buf[0] = DISPLAY_DATA_CTRL;
         for (uint8_t x = 0U; x < DISPLAY_WIDTH; x++)
-        {
             data_buf[x + 1] = dev->buffer[page * DISPLAY_WIDTH + x];
-        }
-        if (I2cBus_Write(bus, dev->i2c_addr, data_buf, DISPLAY_WIDTH + 1U) != DRIVER_STATUS_OK)
-        {
-            dev->counters.read_error_count++;
-            return;
-        }
+
+        s = I2cBus_Write(dev->bus, dev->i2c_addr, data_buf, DISPLAY_WIDTH + 1U);
+        if (s != DRIVER_STATUS_OK) return s;
     }
-    dev->counters.read_success_count++;
+    return DRIVER_STATUS_OK;
 }
 
 void Display_DrawPixel(Display_HandleTypeDef *dev, uint8_t x, uint8_t y, uint8_t color)
@@ -214,13 +205,9 @@ void Display_DrawPixel(Display_HandleTypeDef *dev, uint8_t x, uint8_t y, uint8_t
     if ((x >= DISPLAY_WIDTH) || (y >= DISPLAY_HEIGHT)) return;
 
     if (color)
-    {
         dev->buffer[x + (y / 8U) * DISPLAY_WIDTH] |= (1U << (y % 8U));
-    }
     else
-    {
         dev->buffer[x + (y / 8U) * DISPLAY_WIDTH] &= ~(1U << (y % 8U));
-    }
 }
 
 void Display_DrawChar(Display_HandleTypeDef *dev, uint8_t x, uint8_t y, char ch)
@@ -245,16 +232,11 @@ void Display_DrawChar(Display_HandleTypeDef *dev, uint8_t x, uint8_t y, char ch)
 void Display_DrawString(Display_HandleTypeDef *dev, uint8_t x, uint8_t y, const char *str)
 {
     if (dev == NULL) return;
-
-    while (*str != '\0')
+    while (*str)
     {
         Display_DrawChar(dev, x, y, *str);
         x += FONT_CHAR_SPACING;
-        if (x + FONT_CHAR_SPACING >= DISPLAY_WIDTH)
-        {
-            x = 0U;
-            y += FONT_HEIGHT;
-        }
+        if (x + FONT_CHAR_SPACING >= DISPLAY_WIDTH) { x = 0; y += FONT_HEIGHT; }
         str++;
     }
 }
@@ -262,20 +244,16 @@ void Display_DrawString(Display_HandleTypeDef *dev, uint8_t x, uint8_t y, const 
 void Display_TestPattern(Display_HandleTypeDef *dev)
 {
     if (dev == NULL) return;
-
     Display_Clear(dev);
     memset(dev->buffer, 0xFF, sizeof(dev->buffer));
 
     for (uint8_t y = 0U; y < DISPLAY_HEIGHT; y++)
-    {
         for (uint8_t x = 0U; x < DISPLAY_WIDTH; x++)
         {
             if (((x / 8U) + (y / 8U)) & 1U) continue;
             uint8_t page = y / 8U;
             dev->buffer[x + page * DISPLAY_WIDTH] &= ~(1U << (y % 8U));
         }
-    }
-
     Display_Update(dev);
 }
 

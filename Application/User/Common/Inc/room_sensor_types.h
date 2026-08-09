@@ -39,13 +39,6 @@ typedef enum
 
 typedef struct
 {
-    uint32_t init_error_count;
-    uint32_t read_success_count;
-    uint32_t read_error_count;
-} DeviceCounters;
-
-typedef struct
-{
     DeviceState state;
 
     uint32_t init_attempts;

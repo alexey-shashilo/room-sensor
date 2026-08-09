@@ -2,6 +2,7 @@
 #define APP_H
 
 #include "room_sensor_types.h"
+#include "i2c_bus.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -20,6 +21,6 @@ typedef struct
 RoomSensor_Status App_Init(void);
 void               App_Run(void);
 void               App_GetStatus(AppStatus *status);
-void               App_SetI2C(void *bus);
+void               App_SetI2C(const I2cBus *bus);
 
 #endif
