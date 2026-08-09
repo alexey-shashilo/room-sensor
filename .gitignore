@@ -1,0 +1,37 @@
+build/
+STM32CubeIDE/Debug/
+STM32CubeIDE/Application/
+STM32CubeIDE/makefile*
+STM32CubeIDE/*.ld
+STM32CubeIDE/*.launch
+STM32CubeIDE/*.defs
+STM32CubeIDE/*.init
+EWARM/
+*.o
+*.d
+*.su
+*.elf
+*.hex
+*.bin
+*.map
+*.list
+*.ioc_bkp
+.mxproject
+.project
+.cproject
+.settings/
+CMakeFiles/
+cmake-build-*/
+out/
+# CMSIS — only keep Device/ST and Include/Core needed for compilation
+Drivers/CMSIS/DSP/
+Drivers/CMSIS/NN/
+Drivers/CMSIS/RTOS/
+Drivers/CMSIS/RTOS2/
+Drivers/CMSIS/docs/
+# CubeMX generated copies
+STM32CubeIDE/
+# Backup / unused files
+*.old
+*.bak
+ssd1306new.*
