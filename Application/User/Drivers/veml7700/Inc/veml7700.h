@@ -17,10 +17,10 @@
 
 typedef enum
 {
-    VEML7700_GAIN_1   = 0U,  /* least sensitive (×1) */
-    VEML7700_GAIN_2   = 1U,  /* ×2 */
-    VEML7700_GAIN_1_8 = 2U,  /* ×1/8 — physically least sensitive */
-    VEML7700_GAIN_1_4 = 3U   /* ×1/4 */
+    VEML7700_GAIN_1   = 0U,
+    VEML7700_GAIN_2   = 1U,
+    VEML7700_GAIN_1_8 = 2U,
+    VEML7700_GAIN_1_4 = 3U
 } VEML7700_Gain;
 
 typedef enum
@@ -41,10 +41,11 @@ typedef enum
     VEML7700_PERS_8 = 3U
 } VEML7700_Persistence;
 
-#define VEML7700_RANGE_CONVERGE_SAMPLES 3U
-#define VEML7700_RANGE_LOW_THRESHOLD    80U
-#define VEML7700_RANGE_HIGH_THRESHOLD   12000U
-#define VEML7700_RANGE_SATURATION       64000U
+#define VEML7700_RANGE_COUNT       10U
+#define VEML7700_RANGE_CONVERGE    3U
+#define VEML7700_RANGE_LOW         80U
+#define VEML7700_RANGE_HIGH        12000U
+#define VEML7700_RANGE_SATURATION  64000U
 
 typedef enum
 {
@@ -61,13 +62,15 @@ typedef struct
     float resolution;
     bool valid;
     bool range_changed;
+    bool saturated;
+    bool settling;
 } VEML7700_Sample;
 
 typedef struct
 {
-    uint32_t read_success_count;
-    uint32_t read_error_count;
-    uint32_t config_error_count;
+    uint32_t read_success;
+    uint32_t read_error;
+    uint32_t config_error;
 } VEML7700_DriverStats;
 
 typedef struct
@@ -82,10 +85,11 @@ typedef struct
     uint16_t als_conf_value;
     float    resolution;
 
+    uint8_t  range_index;
     VEML7700_RangeState range_state;
     uint8_t  range_consecutive;
-    uint32_t range_settle_until_ms;
-    uint32_t last_it_ms;
+    uint32_t settle_start_ms;
+    uint32_t settle_duration_ms;
 
     VEML7700_Sample last_sample;
     VEML7700_DriverStats counters;

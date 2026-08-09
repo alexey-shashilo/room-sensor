@@ -101,6 +101,10 @@ static void App_DoReadLight(void)
             s_lux_valid = true;
             DeviceRuntime_RecordSuccess(&s_light_rt);
         }
+        else
+        {
+            s_lux_valid = false;
+        }
         return;
     }
 
@@ -159,6 +163,10 @@ static void App_DoUpdateDisplay(void)
     {
         snprintf(buf, sizeof(buf), "Light: %.0f lx", (double)s_lux);
         Display_DrawString(&s_display, 0, 16, buf);
+    }
+    else if (s_light_rt.state == DEVICE_STATE_READY)
+    {
+        Display_DrawString(&s_display, 0, 16, "Light: ---");
     }
     else if (s_light_rt.state == DEVICE_STATE_RECOVERING ||
              s_light_rt.state == DEVICE_STATE_INITIALIZING ||
