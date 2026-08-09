@@ -1,14 +1,12 @@
 #include "app.h"
+#include "room_state.h"
+#include "config.h"
 #include "veml7700.h"
 #include "display.h"
 #include "platform_time.h"
 #include <stdio.h>
 
-#define PERIOD_LIGHT_MS     500U
-#define PERIOD_DISPLAY_MS   500U
-#define PERIOD_RETRY_MS     5000U
-#define PERIOD_DIAG_MS      10000U
-
+static RoomState            s_room;
 static VEML7700_HandleTypeDef s_veml;
 static Display_HandleTypeDef  s_display;
 
@@ -16,9 +14,6 @@ static const I2cBus *s_i2c_bus = NULL;
 
 static DeviceRuntime s_light_rt = { .state = DEVICE_STATE_UNKNOWN };
 static DeviceRuntime s_disp_rt  = { .state = DEVICE_STATE_UNKNOWN };
-
-static float   s_lux = 0.0f;
-static bool    s_lux_valid = false;
 
 static uint8_t s_display_addr = 0U;
 static bool    s_display_addr_valid = false;
@@ -54,11 +49,6 @@ static void DeviceRuntime_RecordFailure(DeviceRuntime *rt)
     rt->operation_failures++;
     rt->consecutive_errors++;
     rt->last_failure_ms = Platform_GetTickMs();
-}
-
-static void App_InvalidateLux(void)
-{
-    s_lux_valid = false;
 }
 
 void App_SetI2C(const I2cBus *bus)
@@ -97,13 +87,12 @@ static void App_DoReadLight(void)
     {
         if (sample.valid)
         {
-            s_lux = sample.lux;
-            s_lux_valid = true;
+            RoomState_UpdateIlluminance(&s_room, sample.lux, true);
             DeviceRuntime_RecordSuccess(&s_light_rt);
         }
         else
         {
-            s_lux_valid = false;
+            RoomState_UpdateIlluminance(&s_room, s_room.illuminance_lux, false);
         }
         return;
     }
@@ -155,13 +144,14 @@ static void App_DoInitDisplay(void)
 static void App_DoUpdateDisplay(void)
 {
     char buf[22];
+    const RoomState *room = RoomState_Get(&s_room);
 
     Display_Clear(&s_display);
     Display_DrawString(&s_display, 0, 0, "Room Sensor");
 
-    if (s_light_rt.state == DEVICE_STATE_READY && s_lux_valid)
+    if (s_light_rt.state == DEVICE_STATE_READY && room->illuminance_valid)
     {
-        snprintf(buf, sizeof(buf), "Light: %.0f lx", (double)s_lux);
+        snprintf(buf, sizeof(buf), "Light: %.0f lx", (double)room->illuminance_lux);
         Display_DrawString(&s_display, 0, 16, buf);
     }
     else if (s_light_rt.state == DEVICE_STATE_READY)
@@ -212,9 +202,9 @@ static void App_DoRetry(void)
     }
 
     if (s_light_rt.state != DEVICE_STATE_READY)
-        App_InvalidateLux();
+        RoomState_UpdateIlluminance(&s_room, s_room.illuminance_lux, false);
     else if (s_veml.initialized == 0U)
-        App_InvalidateLux();
+        RoomState_UpdateIlluminance(&s_room, s_room.illuminance_lux, false);
 
     switch (s_disp_rt.state)
     {
@@ -249,10 +239,14 @@ RoomSensor_Status App_Init(void)
 {
     if (s_i2c_bus == NULL) return ROOM_SENSOR_ERROR;
 
+    Config_LoadDefaults();
+
     s_start_ms = Platform_GetTickMs();
 
     DeviceRuntime_Init(&s_light_rt, DEVICE_STATE_NOT_FOUND);
     DeviceRuntime_Init(&s_disp_rt, DEVICE_STATE_NOT_FOUND);
+
+    RoomState_Init(&s_room);
 
     App_DoRetry();
 
@@ -261,36 +255,38 @@ RoomSensor_Status App_Init(void)
 
 void App_Run(void)
 {
+    const RoomSensorConfig *cfg = Config_Get();
     uint32_t now = Platform_GetTickMs();
 
-    if ((now - s_last_retry_ms) >= PERIOD_RETRY_MS)
+    if ((now - s_last_retry_ms) >= cfg->retry_period_ms)
     {
         s_last_retry_ms = now;
         App_DoRetry();
     }
 
-    if ((now - s_last_light_ms) >= PERIOD_LIGHT_MS)
+    if ((now - s_last_light_ms) >= cfg->light_period_ms)
     {
         s_last_light_ms = now;
         if (s_light_rt.state == DEVICE_STATE_READY)
             App_DoReadLight();
     }
 
-    if ((now - s_last_display_ms) >= PERIOD_DISPLAY_MS)
+    if ((now - s_last_display_ms) >= cfg->display_period_ms)
     {
         s_last_display_ms = now;
         if (s_disp_rt.state == DEVICE_STATE_READY)
             App_DoUpdateDisplay();
     }
 
-    if ((now - s_last_diag_ms) >= PERIOD_DIAG_MS)
+    if ((now - s_last_diag_ms) >= cfg->diag_period_ms)
     {
         s_last_diag_ms = now;
         printf("APP uptime=%lu\r\n"
-               "LIGHT state=%d lux=%.0f ops=%lu err=%lu consec=%lu rec=%lu\r\n"
+               "LIGHT state=%d room_lux=%.0f ops=%lu err=%lu consec=%lu rec=%lu\r\n"
                "DISPLAY state=%d ops=%lu err=%lu consec=%lu rec=%lu\r\n",
                (unsigned long)(now - s_start_ms),
-               (int)s_light_rt.state, (double)s_lux,
+               (int)s_light_rt.state,
+               (double)s_room.illuminance_lux,
                (unsigned long)s_light_rt.operation_successes,
                (unsigned long)s_light_rt.operation_failures,
                (unsigned long)s_light_rt.consecutive_errors,
@@ -309,7 +305,5 @@ void App_GetStatus(AppStatus *status)
 
     status->light_sensor = s_light_rt;
     status->display = s_disp_rt;
-    status->illuminance_lux = s_lux;
-    status->illuminance_valid = s_lux_valid && (s_light_rt.state == DEVICE_STATE_READY);
     status->uptime_ms = Platform_GetTickMs() - s_start_ms;
 }

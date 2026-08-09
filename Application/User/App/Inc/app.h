@@ -12,9 +12,6 @@ typedef struct
     DeviceRuntime light_sensor;
     DeviceRuntime display;
 
-    float  illuminance_lux;
-    bool   illuminance_valid;
-
     uint32_t uptime_ms;
 } AppStatus;
 

@@ -30,13 +30,35 @@ STM32_Programmer_CLI -c port=SWD mode=UR -w build/Debug/room_sensor.elf -rst
 
 ```
 Application/User/
-├── App/              # Application logic, scheduler, device lifecycle
+├── App/            # Application logic, scheduler, device lifecycle
+│   ├── app.c/h         — main loop, scheduling, runtime
+│   ├── room_state.c/h  — measured room environment (illuminance, temp, etc.)
+│   └── config.c/h      — compile-time defaults, scheduler periods
 ├── Drivers/
-│   ├── display/      # OLED driver (SH1106 + SSD1306)
-│   └── veml7700/     # Ambient light sensor driver with autoranging
-├── Platform/         # I2C bus + time abstraction (portable)
-└── Common/           # Shared types, DeviceState, DeviceRuntime
+│   ├── display/         — OLED driver (SH1106 + SSD1306)
+│   └── veml7700/        — Ambient light sensor driver with autoranging
+├── Platform/           — I2C bus + time abstraction (portable G4 ↔ H7)
+└── Common/             — Shared types, DeviceState, DeviceRuntime
 ```
+
+### Data flow
+
+```
+Driver → DeviceRuntime → RoomState → Display / UART
+         (state machine)  (physical    (output)
+                          environment)
+```
+
+- **Driver** handles I2C communication and autoranging
+- **DeviceRuntime** tracks state machine, errors, recovery
+- **RoomState** holds measured physical values (illuminance, future: temp, humidity, etc.)
+- **Config** holds all scheduler periods and tunable constants in one place
+- **App** reads RoomState for display and diagnostics
+
+### AppStatus vs RoomState
+
+- `AppStatus` — firmware runtime: device states, counters, uptime
+- `RoomState` — physical environment: illuminance, temperature, humidity (future)
 
 ## Device State Machine
 
@@ -56,12 +78,12 @@ stateDiagram-v2
 
 ## Cooperative Scheduler
 
-| Period | Task |
-|--------|------|
-| 500 ms | VEML7700 light measurement |
-| 500 ms | OLED display update |
-| 5000 ms | Device retry (probe/reinit) |
-| 10000 ms | UART diagnostic log |
+| Period | Task | Source |
+|--------|------|--------|
+| 500 ms | VEML7700 light measurement | `Config_Get().light_period_ms` |
+| 500 ms | OLED display update | `Config_Get().display_period_ms` |
+| 5000 ms | Device retry (probe/reinit) | `Config_Get().retry_period_ms` |
+| 10000 ms | UART diagnostic log | `Config_Get().diag_period_ms` |
 
 ## Error & Recovery
 
@@ -70,7 +92,7 @@ stateDiagram-v2
 - Recovery increments `recovery_count` in `DeviceRuntime`
 - One device failure does not affect the other (degraded mode)
 - OLED shows `Light: N/A` when VEML is unavailable
-- OLED shows `Light: ---` during recovery
+- OLED shows `Light: ---` during recovery/settling
 
 ## UART Diagnostics
 
@@ -78,9 +100,20 @@ Every 10 seconds via VCP (115200 baud):
 
 ```
 APP uptime=10000
-LIGHT state=4 lux=32 ops=20 err=0 consec=0 rec=0
+LIGHT state=4 room_lux=30 ops=20 err=0 consec=0 rec=0
 DISPLAY state=4 ops=21 err=0 consec=0 rec=0
 ```
+
+## Adding a New Sensor
+
+1. Add driver to `Drivers/`
+2. Add field(s) to `RoomState` in `room_state.h`
+3. Add `RoomState_Update*()` in `room_state.c`
+4. Add `App_DoProbe*`, `App_DoInit*`, `App_DoRead*` in `app.c`
+5. Add scheduler task in `App_Run()`
+6. Display or log from `RoomState_Get()`
+
+The architecture does not change for additional sensors.
 
 ## Pin Configuration (room_sensor.ioc)
 
@@ -88,13 +121,3 @@ DISPLAY state=4 ops=21 err=0 consec=0 rec=0
 |--------|------|----------|
 | I2C1_SCL | PB8 | AF4 |
 | I2C1_SDA | PB9 | AF4 |
-
-## Features
-
-- I2C bus abstraction (portable between G4/H7)
-- Platform time abstraction (portable)
-- Device state machine with degraded mode and auto-recovery
-- VEML7700 autoranging (gain + integration time)
-- Cooperative scheduler (no blocking HAL_Delay in main loop)
-- No exported globals — App_GetStatus() provides runtime status
-- 0 errors, 0 warnings build
