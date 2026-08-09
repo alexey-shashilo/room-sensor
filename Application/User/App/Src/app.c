@@ -4,9 +4,12 @@
 #include "veml7700.h"
 #include "display.h"
 #include "platform_time.h"
+#include "platform_watchdog.h"
 #include <stdio.h>
 
-static RoomState            s_room;
+#define WATCHDOG_TIMEOUT_MS 4000U
+
+static RoomState               s_room;
 static VEML7700_HandleTypeDef s_veml;
 static Display_HandleTypeDef  s_display;
 
@@ -23,6 +26,12 @@ static uint32_t s_last_display_ms = 0;
 static uint32_t s_last_retry_ms = 0;
 static uint32_t s_last_diag_ms = 0;
 static uint32_t s_start_ms = 0;
+
+static SystemHealthState s_health = SYSTEM_HEALTH_BOOTING;
+static ResetCause        s_reset_cause = RESET_CAUSE_UNKNOWN;
+static bool              s_watchdog_active = false;
+
+static SelfTestReport    s_self_test;
 
 static void DeviceRuntime_Init(DeviceRuntime *rt, DeviceState initial)
 {
@@ -235,11 +244,69 @@ static void App_DoRetry(void)
         App_DoInitDisplay();
 }
 
+static const char *ResetCauseStr(ResetCause c)
+{
+    switch (c)
+    {
+        case RESET_CAUSE_POWER_ON:  return "POWER_ON";
+        case RESET_CAUSE_SOFTWARE:  return "SOFTWARE";
+        case RESET_CAUSE_WATCHDOG:  return "WATCHDOG";
+        case RESET_CAUSE_BROWNOUT:  return "BROWNOUT";
+        case RESET_CAUSE_EXTERNAL:  return "EXTERNAL";
+        default:                    return "UNKNOWN";
+    }
+}
+
+static const char *SelfTestResultStr(SelfTestResult r)
+{
+    switch (r)
+    {
+        case SELF_TEST_PASS:    return "PASS";
+        case SELF_TEST_FAIL:    return "FAIL";
+        case SELF_TEST_SKIPPED: return "SKIPPED";
+        default:                return "NOT_RUN";
+    }
+}
+
+static void App_PrintBootDiag(void)
+{
+    printf("BOOT Reset=%s\r\n", ResetCauseStr(s_reset_cause));
+
+    printf("SELFTEST Platform=%s I2C=%s VEML=%s Display=%s\r\n",
+           SelfTestResultStr(s_self_test.platform),
+           SelfTestResultStr(s_self_test.i2c),
+           SelfTestResultStr(s_self_test.light_sensor),
+           SelfTestResultStr(s_self_test.display));
+
+    printf("WDG active=%d\r\n", (int)s_watchdog_active);
+    printf("Health=%d\r\n", (int)s_health);
+}
+
+static void App_UpdateHealth(void)
+{
+    if (s_i2c_bus == NULL)
+    {
+        s_health = SYSTEM_HEALTH_FAULT;
+        return;
+    }
+
+    bool veml_ready = (s_light_rt.state == DEVICE_STATE_READY);
+    bool disp_ready = (s_disp_rt.state == DEVICE_STATE_READY);
+
+    if (veml_ready && disp_ready)
+        s_health = SYSTEM_HEALTH_OK;
+    else
+        s_health = SYSTEM_HEALTH_DEGRADED;
+}
+
 RoomSensor_Status App_Init(void)
 {
     if (s_i2c_bus == NULL) return ROOM_SENSOR_ERROR;
 
     Config_LoadDefaults();
+
+    s_reset_cause = Platform_GetResetCause();
+    Platform_ClearResetFlags();
 
     s_start_ms = Platform_GetTickMs();
 
@@ -247,8 +314,16 @@ RoomSensor_Status App_Init(void)
     DeviceRuntime_Init(&s_disp_rt, DEVICE_STATE_NOT_FOUND);
 
     RoomState_Init(&s_room);
+    SelfTest_Init(&s_self_test);
 
     App_DoRetry();
+
+    SelfTest_Run(&s_self_test, s_i2c_bus);
+    App_UpdateHealth();
+
+    s_watchdog_active = Platform_WatchdogInit(WATCHDOG_TIMEOUT_MS);
+
+    App_PrintBootDiag();
 
     return ROOM_SENSOR_OK;
 }
@@ -281,9 +356,12 @@ void App_Run(void)
     if ((now - s_last_diag_ms) >= cfg->diag_period_ms)
     {
         s_last_diag_ms = now;
+        App_UpdateHealth();
+
         printf("APP uptime=%lu\r\n"
                "LIGHT state=%d room_lux=%.0f ops=%lu err=%lu consec=%lu rec=%lu\r\n"
-               "DISPLAY state=%d ops=%lu err=%lu consec=%lu rec=%lu\r\n",
+               "DISPLAY state=%d ops=%lu err=%lu consec=%lu rec=%lu\r\n"
+               "HEALTH=%d WDG=%d RESET=%s\r\n",
                (unsigned long)(now - s_start_ms),
                (int)s_light_rt.state,
                (double)s_room.illuminance_lux,
@@ -295,8 +373,12 @@ void App_Run(void)
                (unsigned long)s_disp_rt.operation_successes,
                (unsigned long)s_disp_rt.operation_failures,
                (unsigned long)s_disp_rt.consecutive_errors,
-               (unsigned long)s_disp_rt.recovery_count);
+               (unsigned long)s_disp_rt.recovery_count,
+               (int)s_health, (int)s_watchdog_active,
+               ResetCauseStr(s_reset_cause));
     }
+
+    Platform_WatchdogRefresh();
 }
 
 void App_GetStatus(AppStatus *status)
@@ -305,5 +387,9 @@ void App_GetStatus(AppStatus *status)
 
     status->light_sensor = s_light_rt;
     status->display = s_disp_rt;
+    status->health = s_health;
+    status->reset_cause = s_reset_cause;
+    status->watchdog_active = s_watchdog_active;
+    status->self_test = s_self_test;
     status->uptime_ms = Platform_GetTickMs() - s_start_ms;
 }

@@ -32,10 +32,13 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/App/Src/app.c
     ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/App/Src/room_state.c
     ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/App/Src/config.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/App/Src/self_test.c
     ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/Drivers/veml7700/Src/veml7700.c
     ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/Drivers/display/Src/display.c
     ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/Platform/Src/i2c_bus_stm32.c
     ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/Platform/Src/platform_time_stm32.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/Platform/Src/platform_watchdog_stm32.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/Platform/Src/platform_reset_stm32.c
 )
 
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
