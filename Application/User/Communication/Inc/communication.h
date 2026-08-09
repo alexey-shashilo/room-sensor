@@ -21,9 +21,12 @@ typedef struct
 
     uint32_t send_successes;
     uint32_t send_failures;
+    uint32_t serialization_failures;
     uint32_t last_success_ms;
     uint32_t last_failure_ms;
 } CommunicationRuntime;
+
+#define COMM_RETRY_PERIOD_MS 1000U
 
 void Communication_Init(void);
 void Communication_SetPort(const CommunicationPort *port);

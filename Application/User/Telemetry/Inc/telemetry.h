@@ -26,6 +26,14 @@ typedef struct
     bool pending;
 } TelemetryBuffer;
 
-bool Telemetry_CreateSnapshot(TelemetrySnapshot *snapshot);
+typedef struct
+{
+    const uint8_t *device_id;
+    const RoomState *room;
+    SystemHealthState health;
+    uint32_t uptime_ms;
+} TelemetrySnapshotInput;
+
+bool Telemetry_CreateSnapshot(TelemetrySnapshot *snapshot, const TelemetrySnapshotInput *input);
 
 #endif

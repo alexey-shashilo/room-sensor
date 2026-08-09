@@ -7,13 +7,10 @@
 #include "platform_watchdog.h"
 #include "storage.h"
 #include "device_identity.h"
+#include "telemetry.h"
 #include "communication.h"
-#include "communication_port.h"
+#include "communication_debug.h"
 #include <stdio.h>
-
-/* Forward declarations for Telemetry_CreateSnapshot */
-RoomState s_room;
-SystemHealthState s_health;
 
 #define WATCHDOG_TIMEOUT_MS 4000U
 
@@ -35,12 +32,16 @@ static uint32_t s_last_diag_ms = 0;
 static uint32_t s_last_telemetry_ms = 0;
 static uint32_t s_start_ms = 0;
 
+static SystemHealthState s_health = SYSTEM_HEALTH_BOOTING;
 static ResetCause        s_reset_cause = RESET_CAUSE_UNKNOWN;
 static bool              s_watchdog_active = false;
 
 static SelfTestReport    s_self_test;
 static DeviceIdentity    s_device_id;
 static bool              s_config_from_flash = false;
+static bool              s_device_id_valid = false;
+
+static RoomState         s_room;
 
 static void DeviceRuntime_Init(DeviceRuntime *rt, DeviceState initial)
 {
@@ -352,8 +353,10 @@ RoomSensor_Status App_Init(void)
         Config_LoadDefaults();
 
     /* Device identity */
-    if (!DeviceIdentity_Load(&s_device_id))
-        DeviceIdentity_Generate(&s_device_id);
+    if (DeviceIdentity_Load(&s_device_id))
+        s_device_id_valid = true;
+    else
+        s_device_id_valid = DeviceIdentity_Generate(&s_device_id);
 
     /* Save defaults if nothing was persisted */
     if (!s_config_from_flash)
@@ -362,10 +365,9 @@ RoomSensor_Status App_Init(void)
     /* Initialize communication (debug UART port) */
     Communication_Init();
     {
-        CommunicationPort debug_port;
-        extern void CommunicationDebug_Init(CommunicationPort *port);
-        CommunicationDebug_Init(&debug_port);
-        Communication_SetPort(&debug_port);
+        static CommunicationPort s_debug_port;
+        CommunicationDebug_Init(&s_debug_port);
+        Communication_SetPort(&s_debug_port);
     }
 
     App_DoRetry();
@@ -440,9 +442,18 @@ void App_Run(void)
     {
         s_last_telemetry_ms = now;
 
-        TelemetrySnapshot snap;
-        Telemetry_CreateSnapshot(&snap);
-        Communication_SubmitSnapshot(&snap);
+        if (s_device_id_valid)
+        {
+            TelemetrySnapshotInput input;
+            input.device_id = s_device_id.device_uuid;
+            input.room = RoomState_Get(&s_room);
+            input.health = s_health;
+            input.uptime_ms = now;
+
+            TelemetrySnapshot snap;
+            if (Telemetry_CreateSnapshot(&snap, &input))
+                Communication_SubmitSnapshot(&snap);
+        }
     }
 
     Communication_Run();

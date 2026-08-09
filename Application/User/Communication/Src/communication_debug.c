@@ -1,4 +1,4 @@
-#include "communication_port.h"
+#include "communication_debug.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -11,6 +11,9 @@ static DebugPortContext s_debug_ctx;
 
 static CommunicationStatus DebugPort_Send(void *context, const uint8_t *data, size_t size)
 {
+    if ((data == NULL) || (size == 0))
+        return COMM_STATUS_INVALID_ARG;
+
     (void)context;
     s_debug_ctx.send_count++;
 

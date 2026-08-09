@@ -11,7 +11,8 @@ typedef enum
 {
     SERIALIZE_OK = 0,
     SERIALIZE_BUFFER_TOO_SMALL,
-    SERIALIZE_INVALID_ARG
+    SERIALIZE_INVALID_ARG,
+    SERIALIZE_ERROR
 } SerializeStatus;
 
 SerializeStatus Telemetry_Serialize(
