@@ -10,10 +10,10 @@ static DriverStatus I2cBus_Stm32_MapHAL(HAL_StatusTypeDef hal)
 {
     switch (hal)
     {
-        case HAL_OK:       return DRIVER_OK;
-        case HAL_TIMEOUT:  return DRIVER_ERROR_TIMEOUT;
-        case HAL_BUSY:     return DRIVER_ERROR_BUS;
-        default:           return DRIVER_ERROR_BUS;
+        case HAL_OK:       return DRIVER_STATUS_OK;
+        case HAL_TIMEOUT:  return DRIVER_STATUS_TIMEOUT;
+        case HAL_BUSY:     return DRIVER_STATUS_BUS_ERROR;
+        default:           return DRIVER_STATUS_BUS_ERROR;
     }
 }
 

@@ -21,14 +21,12 @@ add_executable(${CMAKE_PROJECT_NAME})
 
 add_subdirectory(cmake/stm32cubemx)
 
-target_link_directories(${CMAKE_PROJECT_NAME} PRIVATE
-)
-
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/App/Src/app.c
     ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/Drivers/veml7700/Src/veml7700.c
     ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/Drivers/display/Src/display.c
     ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/Platform/Src/i2c_bus_stm32.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/Platform/Src/platform_time_stm32.c
 )
 
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
@@ -37,9 +35,6 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/Drivers/display/Inc
     ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/Platform/Inc
     ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/Common/Inc
-)
-
-target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
 )
 
 list(REMOVE_ITEM CMAKE_C_IMPLICIT_LINK_LIBRARIES ob)

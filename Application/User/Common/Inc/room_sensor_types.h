@@ -20,27 +20,45 @@ typedef enum
     DEVICE_STATE_PROBING,
     DEVICE_STATE_INITIALIZING,
     DEVICE_STATE_READY,
-    DEVICE_STATE_ERROR
+    DEVICE_STATE_ERROR,
+    DEVICE_STATE_RECOVERING
 } DeviceState;
 
 typedef enum
 {
-    DRIVER_OK = 0,
-    DRIVER_ERROR_ARGUMENT,
-    DRIVER_ERROR_BUS,
-    DRIVER_ERROR_TIMEOUT,
-    DRIVER_ERROR_NOT_FOUND,
-    DRIVER_ERROR_VERIFY
+    DRIVER_STATUS_OK = 0,
+    DRIVER_STATUS_INVALID_ARG,
+    DRIVER_STATUS_BUS_ERROR,
+    DRIVER_STATUS_TIMEOUT,
+    DRIVER_STATUS_NOT_FOUND,
+    DRIVER_STATUS_VERIFY_ERROR,
+    DRIVER_STATUS_NOT_READY
 } DriverStatus;
+
+#define CONSECUTIVE_ERROR_THRESHOLD 3U
 
 typedef struct
 {
+    uint32_t init_error_count;
     uint32_t read_success_count;
     uint32_t read_error_count;
-    uint32_t init_error_count;
-    uint32_t recovery_count;
-    uint32_t last_success_ms;
-    uint32_t last_error_ms;
 } DeviceCounters;
+
+typedef struct
+{
+    DeviceState state;
+
+    uint32_t init_attempts;
+    uint32_t init_failures;
+
+    uint32_t operation_successes;
+    uint32_t operation_failures;
+
+    uint32_t recovery_count;
+    uint32_t consecutive_errors;
+
+    uint32_t last_success_ms;
+    uint32_t last_failure_ms;
+} DeviceRuntime;
 
 #endif
