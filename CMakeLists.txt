@@ -67,6 +67,16 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
 
 list(REMOVE_ITEM CMAKE_C_IMPLICIT_LINK_LIBRARIES ob)
 
+target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
+    ROOM_SENSOR_VERSION="0.2.0-dev"
+    ROOM_SENSOR_BUILD_TYPE="${CMAKE_BUILD_TYPE}"
+)
+
+string(TIMESTAMP BUILD_TIMESTAMP UTC)
+target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
+    ROOM_SENSOR_BUILD_TIMESTAMP="${BUILD_TIMESTAMP}"
+)
+
 target_link_libraries(${CMAKE_PROJECT_NAME}
     stm32cubemx
 )

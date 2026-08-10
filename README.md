@@ -1,5 +1,7 @@
 # Room Sensor
 
+[![CI](https://github.com/alexey-shashilo/room-sensor/actions/workflows/ci.yml/badge.svg)](https://github.com/alexey-shashilo/room-sensor/actions/workflows/ci.yml)
+
 Firmware for NUCLEO-G474RE with VEML7700 ambient light sensor and SH1106/SSD1306 OLED display.
 
 ## Hardware

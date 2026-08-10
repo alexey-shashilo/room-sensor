@@ -1,0 +1,166 @@
+name: Room Sensor CI
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - 'docs/**'
+      - '**.md'
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  BUILD_TYPE: Debug
+
+jobs:
+  host-tests:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install tools
+        run: sudo apt-get update && sudo apt-get install -y cmake gcc-multilib g++ libc6-dev
+
+      - name: Configure host tests
+        run: cmake -S . -B build-host -DBUILD_HOST_TESTS=ON -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }}
+
+      - name: Build host tests
+        run: cmake --build build-host --parallel $(nproc) 2>&1
+
+      - name: Run host tests
+        run: ctest --test-dir build-host --output-on-failure --timeout 30
+
+  sanitizers:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install tools
+        run: sudo apt-get update && sudo apt-get install -y cmake gcc-multilib g++
+
+      - name: Configure host tests (ASan + UBSan)
+        run: >
+          cmake -S . -B build-asan
+          -DBUILD_HOST_TESTS=ON
+          -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }}
+          -DCMAKE_C_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer -g"
+          -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
+
+      - name: Build with sanitizers
+        run: cmake --build build-asan --parallel $(nproc) 2>&1
+
+      - name: Run tests with sanitizers
+        run: ctest --test-dir build-asan --output-on-failure --timeout 30
+
+  static-analysis:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install cppcheck
+        run: sudo apt-get update && sudo apt-get install -y cppcheck cmake
+
+      - name: Configure host tests (for compile_commands.json)
+        run: cmake -S . -B build-host -DBUILD_HOST_TESTS=ON -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }}
+
+      - name: Run cppcheck on Application/User
+        run: >
+          cppcheck --quiet --error-exitcode=1
+          --enable=warning,performance,portability
+          --suppress=unmatchedSuppression
+          --inline-suppr
+          --std=c11
+          --language=c
+          -I Application/User/App/Inc
+          -I Application/User/Drivers/veml7700/Inc
+          -I Application/User/Drivers/display/Inc
+          -I Application/User/Platform/Inc
+          -I Application/User/Storage/Inc
+          -I Application/User/Telemetry/Inc
+          -I Application/User/Communication/Inc
+          -I Application/User/Command/Inc
+          -I Application/User/Common/Inc
+          --suppress=missingIncludeSystem
+          Application/User/
+
+  firmware-build:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install ARM GCC toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake gcc-arm-none-eabi binutils-arm-none-eabi
+
+      - name: Configure firmware
+        run: >
+          cmake -S . -B build-fw
+          -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }}
+          -DCMAKE_TOOLCHAIN_FILE=cmake/gcc-arm-none-eabi.cmake
+
+      - name: Build firmware
+        run: cmake --build build-fw --target room_sensor --parallel $(nproc) 2>&1
+
+      - name: Firmware size
+        run: arm-none-eabi-size build-fw/room_sensor.elf
+
+      - name: Generate artifacts
+        run: |
+          arm-none-eabi-objcopy -O binary build-fw/room_sensor.elf build-fw/room_sensor.bin
+          arm-none-eabi-objcopy -O ihex build-fw/room_sensor.elf build-fw/room_sensor.hex
+
+      - name: Upload firmware artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: room-sensor-firmware
+          path: |
+            build-fw/room_sensor.elf
+            build-fw/room_sensor.bin
+            build-fw/room_sensor.hex
+          if-no-files-found: error
+
+  policy-checks:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check no dynamic memory in Application/User
+        run: |
+          if grep -rn 'malloc\|calloc\|realloc\|free' Application/User/ --include='*.c' --include='*.h' | grep -v 'test/'; then
+            echo "ERROR: Dynamic memory found in Application/User"
+            exit 1
+          fi
+          echo "PASS: No dynamic memory in Application/User"
+
+      - name: Check no HAL_Delay in portable modules
+        run: |
+          BAD=$(grep -rln 'HAL_Delay' Application/User/App/ Application/User/Drivers/ Application/User/Communication/ Application/User/Command/ Application/User/Telemetry/ Application/User/Storage/ 2>/dev/null || true)
+          if [ -n "$BAD" ]; then
+            echo "ERROR: HAL_Delay found in portable modules:"
+            echo "$BAD"
+            exit 1
+          fi
+          echo "PASS: No HAL_Delay in portable modules"
+
+      - name: Check no stm32 HAL include in portable modules
+        run: |
+          BAD=$(grep -rln 'stm32g4xx_hal\.h' Application/User/App/ Application/User/Drivers/ Application/User/Communication/ Application/User/Command/ Application/User/Telemetry/ Application/User/Storage/ 2>/dev/null || true)
+          if [ -n "$BAD" ]; then
+            echo "ERROR: stm32g4xx_hal.h included in portable modules:"
+            echo "$BAD"
+            exit 1
+          fi
+          echo "PASS: No stm32 HAL include in portable modules"
+
+      - name: Check no secrets in telemetry/command responses
+        run: |
+          if grep -rn '"password"\|"token"\|"secret"\|"credential"' Application/User/Telemetry/ Application/User/Command/ --include='*.c' 2>/dev/null; then
+            echo "ERROR: Secrets may be serialized"
+            exit 1
+          fi
+          echo "PASS: No secrets serialized"
