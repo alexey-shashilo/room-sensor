@@ -113,13 +113,9 @@ else()
     )
 
     target_link_libraries(${CMAKE_PROJECT_NAME}
-    stm32cubemx
-)
+        stm32cubemx
+    )
 
     list(REMOVE_ITEM CMAKE_C_IMPLICIT_LINK_LIBRARIES ob)
 
-    string(TIMESTAMP BUILD_TIMESTAMP UTC)
-    target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
-        ROOM_SENSOR_BUILD_TIMESTAMP="${BUILD_TIMESTAMP}"
-    )
 endif()

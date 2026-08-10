@@ -1,9 +1,9 @@
 #include "platform_flash.h"
 #include "stm32g4xx_hal.h"
 
-#define FLASH_START_ADDR  0x0807C000U
+#define FLASH_START_ADDR  0x0807A000U
 #define STORAGE_PAGE_SIZE  0x1000U
-#define FLASH_TOTAL_SIZE   0x3000U
+#define FLASH_TOTAL_SIZE   0x6000U
 
 static uint32_t FlashAddr(uint32_t offset)
 {
@@ -16,7 +16,7 @@ const PlatformFlashInfo *Platform_FlashGetInfo(void)
         .start_address = FLASH_START_ADDR,
         .page_size     = STORAGE_PAGE_SIZE,
         .total_size    = FLASH_TOTAL_SIZE,
-        .page_count    = 3
+        .page_count    = 6
     };
     return &info;
 }

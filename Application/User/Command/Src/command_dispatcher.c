@@ -111,6 +111,8 @@ static void HandleSetConfig(const CommandRequest *req, CommandResponse *rsp, con
         return;
     }
 
+    /* Persist first, apply runtime only on success */
+    RoomSensorConfig saved_config = *svc->config;
     *(RoomSensorConfig *)svc->config = cfg;
 
     if (Config_Save())
@@ -120,6 +122,7 @@ static void HandleSetConfig(const CommandRequest *req, CommandResponse *rsp, con
     }
     else
     {
+        *(RoomSensorConfig *)svc->config = saved_config;
         CommandResponse_Init(rsp, req->request_id, COMMAND_STATUS_INTERNAL_ERROR);
         CommandResponse_Append(rsp, "\"error\":\"persist_failed\"");
     }
@@ -129,9 +132,16 @@ static void HandleSetConfig(const CommandRequest *req, CommandResponse *rsp, con
 static void HandleResetConfig(const CommandRequest *req, CommandResponse *rsp, const CommandServices *svc)
 {
     (void)svc;
-    Config_ResetToDefaults();
-    CommandResponse_Init(rsp, req->request_id, COMMAND_STATUS_OK);
-    CommandResponse_AppendJson(rsp, "result", "defaults_restored");
+    if (Config_ResetToDefaults())
+    {
+        CommandResponse_Init(rsp, req->request_id, COMMAND_STATUS_OK);
+        CommandResponse_AppendJson(rsp, "result", "defaults_restored");
+    }
+    else
+    {
+        CommandResponse_Init(rsp, req->request_id, COMMAND_STATUS_INTERNAL_ERROR);
+        CommandResponse_Append(rsp, "\"error\":\"persist_failed\"");
+    }
     CommandResponse_Finalize(rsp);
 }
 
@@ -205,11 +215,18 @@ static void HandleGetManifest(const CommandRequest *req, CommandResponse *rsp, c
     }
 
     CommandResponse_Init(rsp, req->request_id, COMMAND_STATUS_OK);
-    size_t copy = written;
-    if (copy > COMMAND_RESPONSE_MAX_SIZE)
-        copy = COMMAND_RESPONSE_MAX_SIZE;
-    memcpy(rsp->payload, buf, copy);
-    rsp->payload_size = copy;
+
+    /* Reject manifest that doesn't fit in response buffer */
+    if (written > COMMAND_RESPONSE_MAX_SIZE)
+    {
+        CommandResponse_Init(rsp, req->request_id, COMMAND_STATUS_INTERNAL_ERROR);
+        CommandResponse_Append(rsp, "\"error\":\"response_too_large\"");
+        CommandResponse_Finalize(rsp);
+        return;
+    }
+
+    memcpy(rsp->payload, buf, written);
+    rsp->payload_size = written;
 }
 
 static void HandleRegisterDevice(const CommandRequest *req, CommandResponse *rsp, const CommandServices *svc)
@@ -298,11 +315,22 @@ static void HandleFactoryReset(const CommandRequest *req, CommandResponse *rsp, 
 {
     (void)svc;
 
-    Provisioning_Clear();
-    Config_ResetToDefaults();
+    /* Registration first — if fails, don't touch config */
+    bool reg_cleared = Provisioning_Clear();
+    bool cfg_reset = false;
+    if (reg_cleared)
+        cfg_reset = Config_ResetToDefaults();
 
-    CommandResponse_Init(rsp, req->request_id, COMMAND_STATUS_OK);
-    CommandResponse_AppendJson(rsp, "result", "factory_reset_complete");
+    if (reg_cleared && cfg_reset)
+    {
+        CommandResponse_Init(rsp, req->request_id, COMMAND_STATUS_OK);
+        CommandResponse_AppendJson(rsp, "result", "factory_reset_complete");
+    }
+    else
+    {
+        CommandResponse_Init(rsp, req->request_id, COMMAND_STATUS_INTERNAL_ERROR);
+        CommandResponse_Append(rsp, "\"error\":\"factory_reset_incomplete\"");
+    }
     CommandResponse_Finalize(rsp);
 }
 
@@ -312,7 +340,13 @@ static void HandleGetProvisioningStatus(const CommandRequest *req, CommandRespon
     DeviceRegistration reg;
     ProvisioningStatus ps;
 
-    Provisioning_Load(&reg);
+    if (!Provisioning_Load(&reg))
+    {
+        CommandResponse_Init(rsp, req->request_id, COMMAND_STATUS_INTERNAL_ERROR);
+        CommandResponse_Append(rsp, "\"error\":\"cannot_read_registration\"");
+        CommandResponse_Finalize(rsp);
+        return;
+    }
     Provisioning_GetStatus(&reg, &ps);
 
     CommandResponse_Init(rsp, req->request_id, COMMAND_STATUS_OK);
@@ -322,6 +356,104 @@ static void HandleGetProvisioningStatus(const CommandRequest *req, CommandRespon
     CommandResponse_AppendJsonBool(rsp, "building_valid", ps.building_valid);
     CommandResponse_AppendJsonBool(rsp, "room_valid", ps.room_valid);
     CommandResponse_AppendJsonInt(rsp, "revision", ps.revision);
+    CommandResponse_Finalize(rsp);
+}
+
+static void HandleAssignLocation(const CommandRequest *req, CommandResponse *rsp, const CommandServices *svc)
+{
+    (void)svc;
+    DeviceRegistration current;
+
+    if (!Provisioning_Load(&current))
+    {
+        CommandResponse_Init(rsp, req->request_id, COMMAND_STATUS_INTERNAL_ERROR);
+        CommandResponse_Append(rsp, "\"error\":\"cannot_read_registration\"");
+        CommandResponse_Finalize(rsp);
+        return;
+    }
+
+    if (!current.registered || !current.installation_valid)
+    {
+        CommandResponse_Init(rsp, req->request_id, COMMAND_STATUS_INVALID_ARGUMENT);
+        CommandResponse_Append(rsp, "\"error\":\"device_not_registered\"");
+        CommandResponse_Finalize(rsp);
+        return;
+    }
+
+    /* Parse installation_id verification */
+    char hex[64];
+    if (!FindField((const uint8_t *)req->payload, req->payload_size, "installation_id", hex, sizeof(hex)))
+    {
+        CommandResponse_Init(rsp, req->request_id, COMMAND_STATUS_INVALID_ARGUMENT);
+        CommandResponse_Append(rsp, "\"error\":\"missing_installation_id\"");
+        CommandResponse_Finalize(rsp);
+        return;
+    }
+
+    EntityId inst;
+    if (!EntityId_Parse(&inst, hex, strlen(hex)))
+    {
+        CommandResponse_Init(rsp, req->request_id, COMMAND_STATUS_INVALID_ARGUMENT);
+        CommandResponse_Append(rsp, "\"error\":\"invalid_installation_id\"");
+        CommandResponse_Finalize(rsp);
+        return;
+    }
+
+    if (memcmp(current.installation_id.bytes, inst.bytes, 16) != 0)
+    {
+        CommandResponse_Init(rsp, req->request_id, COMMAND_STATUS_CONFLICT);
+        CommandResponse_Append(rsp, "\"error\":\"installation_mismatch\"");
+        CommandResponse_Finalize(rsp);
+        return;
+    }
+
+    /* Parse building/room IDs */
+    EntityId building, room;
+    bool has_building = false, has_room = false;
+
+    if (FindField((const uint8_t *)req->payload, req->payload_size, "building_id", hex, sizeof(hex)) &&
+        EntityId_Parse(&building, hex, strlen(hex)))
+        has_building = true;
+
+    if (FindField((const uint8_t *)req->payload, req->payload_size, "room_id", hex, sizeof(hex)) &&
+        EntityId_Parse(&room, hex, strlen(hex)))
+        has_room = true;
+
+    if (!has_building || !has_room)
+    {
+        CommandResponse_Init(rsp, req->request_id, COMMAND_STATUS_INVALID_ARGUMENT);
+        CommandResponse_Append(rsp, "\"error\":\"missing_building_or_room_id\"");
+        CommandResponse_Finalize(rsp);
+        return;
+    }
+
+    /* Check idempotency */
+    if (current.building_valid && current.room_valid &&
+        memcmp(current.building_id.bytes, building.bytes, 16) == 0 &&
+        memcmp(current.room_id.bytes, room.bytes, 16) == 0 &&
+        current.installation_valid)
+    {
+        CommandResponse_Init(rsp, req->request_id, COMMAND_STATUS_OK);
+        CommandResponse_AppendJson(rsp, "result", "already_assigned");
+        CommandResponse_Finalize(rsp);
+        return;
+    }
+
+    current.building_id = building;
+    current.room_id = room;
+    current.building_valid = true;
+    current.room_valid = true;
+
+    if (!Provisioning_Save(&current))
+    {
+        CommandResponse_Init(rsp, req->request_id, COMMAND_STATUS_INTERNAL_ERROR);
+        CommandResponse_Append(rsp, "\"error\":\"persist_failed\"");
+        CommandResponse_Finalize(rsp);
+        return;
+    }
+
+    CommandResponse_Init(rsp, req->request_id, COMMAND_STATUS_OK);
+    CommandResponse_AppendJson(rsp, "result", "location_assigned");
     CommandResponse_Finalize(rsp);
 }
 
@@ -356,6 +488,7 @@ bool CommandDispatcher_Dispatch(
         case COMMAND_UNREGISTER_DEVICE:    HandleUnregisterDevice(request, response, services); break;
         case COMMAND_FACTORY_RESET:        HandleFactoryReset(request, response, services); break;
         case COMMAND_GET_PROVISIONING_STATUS: HandleGetProvisioningStatus(request, response, services); break;
+        case COMMAND_ASSIGN_LOCATION:      HandleAssignLocation(request, response, services); break;
         default:                           HandleUnknown(request, response, services); break;
     }
     return true;

@@ -5,16 +5,19 @@
 #include <stddef.h>
 #include <stdbool.h>
 
-#define STORAGE_MAGIC              0x52534D43UL  /* "RSMC" */
+#define STORAGE_MAGIC                  0x52534D43UL
 #define STORAGE_RECORD_FORMAT_VERSION  1U
+#define STORAGE_PAYLOAD_MAX            256U
 
-#define RECORD_TYPE_INVALID   0U
-#define RECORD_TYPE_CONFIG    1U
-#define RECORD_TYPE_IDENTITY  2U
+/* Each slot occupies its own erase page (4096 bytes on G474).
+   Config: pages 0-1, Identity: pages 2-3, Registration: pages 4-5 */
+#define STORAGE_PAGE_SIZE      4096U
+
+/* Record types */
+#define RECORD_TYPE_INVALID     0U
+#define RECORD_TYPE_CONFIG      1U
+#define RECORD_TYPE_IDENTITY    2U
 #define RECORD_TYPE_REGISTRATION 3U
-
-#define STORAGE_SLOT_SIZE     2048U
-#define STORAGE_PAYLOAD_MAX   256U
 
 typedef struct
 {
@@ -46,6 +49,16 @@ typedef struct
     uint32_t slot_a_sequence;
     uint32_t slot_b_sequence;
 } StorageInfo;
+
+typedef struct
+{
+    uint32_t slot_a_page;
+    uint32_t slot_b_page;
+    uint32_t slot_a_offset;
+    uint32_t slot_b_offset;
+} StorageRecordLayout;
+
+const StorageRecordLayout *Storage_GetLayout(uint8_t record_type);
 
 bool Storage_Init(void);
 bool Storage_Read(uint8_t record_type, StoragePayload *payload);

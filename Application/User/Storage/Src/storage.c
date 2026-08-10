@@ -2,8 +2,6 @@
 #include "platform_flash.h"
 #include <string.h>
 
-#define PAGE_FOR_TYPE(t)  (((t) == RECORD_TYPE_IDENTITY) ? 1U : (((t) == RECORD_TYPE_REGISTRATION) ? 2U : 0U))
-
 static uint32_t Storage_Crc32(const uint8_t *data, size_t len)
 {
     uint32_t crc = 0xFFFFFFFFU;
@@ -21,8 +19,26 @@ static uint32_t Storage_Crc32(const uint8_t *data, size_t len)
     return crc ^ 0xFFFFFFFFU;
 }
 
+static const StorageRecordLayout s_layouts[4] = {
+    [0] = { .slot_a_page = 0, .slot_b_page = 1, .slot_a_offset = 0, .slot_b_offset = STORAGE_PAGE_SIZE },
+    [RECORD_TYPE_CONFIG]      = { .slot_a_page = 0, .slot_b_page = 1, .slot_a_offset = 0, .slot_b_offset = STORAGE_PAGE_SIZE },
+    [RECORD_TYPE_IDENTITY]    = { .slot_a_page = 2, .slot_b_page = 3, .slot_a_offset = 2 * STORAGE_PAGE_SIZE, .slot_b_offset = 3 * STORAGE_PAGE_SIZE },
+    [RECORD_TYPE_REGISTRATION] = { .slot_a_page = 4, .slot_b_page = 5, .slot_a_offset = 4 * STORAGE_PAGE_SIZE, .slot_b_offset = 5 * STORAGE_PAGE_SIZE },
+};
+
+const StorageRecordLayout *Storage_GetLayout(uint8_t record_type)
+{
+    if ((record_type != RECORD_TYPE_CONFIG) &&
+        (record_type != RECORD_TYPE_IDENTITY) &&
+        (record_type != RECORD_TYPE_REGISTRATION))
+        return NULL;
+    return &s_layouts[record_type];
+}
+
 static bool SlotReadRaw(uint32_t abs_offset, StorageRecordHeader *hdr, StoragePayload *payload)
 {
+    if (hdr == NULL) return false;
+
     memset(hdr, 0, sizeof(*hdr));
 
     if (Platform_FlashRead(abs_offset, hdr, STORAGE_HEADER_SIZE) != PLATFORM_FLASH_OK)
@@ -31,7 +47,7 @@ static bool SlotReadRaw(uint32_t abs_offset, StorageRecordHeader *hdr, StoragePa
     if (hdr->magic != STORAGE_MAGIC)
         return false;
 
-    if (hdr->record_format_version > STORAGE_RECORD_FORMAT_VERSION)
+    if (hdr->record_format_version != STORAGE_RECORD_FORMAT_VERSION)
         return false;
 
     uint16_t psize = hdr->payload_size;
@@ -68,11 +84,11 @@ static bool SlotReadRaw(uint32_t abs_offset, StorageRecordHeader *hdr, StoragePa
     return true;
 }
 
-static uint8_t SelectSlot(uint32_t base_offset, uint32_t *sequence_out)
+static uint8_t SelectSlot(const StorageRecordLayout *layout, uint32_t *sequence_out)
 {
     StorageRecordHeader hdr_a, hdr_b;
-    bool valid_a = SlotReadRaw(base_offset, &hdr_a, NULL);
-    bool valid_b = SlotReadRaw(base_offset + STORAGE_SLOT_SIZE, &hdr_b, NULL);
+    bool valid_a = SlotReadRaw(layout->slot_a_offset, &hdr_a, NULL);
+    bool valid_b = SlotReadRaw(layout->slot_b_offset, &hdr_b, NULL);
 
     if (!valid_a && !valid_b)
     {
@@ -80,23 +96,11 @@ static uint8_t SelectSlot(uint32_t base_offset, uint32_t *sequence_out)
         return 0xFF;
     }
 
-    if (valid_a && !valid_b)
-    {
-        *sequence_out = hdr_a.sequence;
-        return 0;
-    }
-
-    if (!valid_a && valid_b)
-    {
-        *sequence_out = hdr_b.sequence;
-        return 1;
-    }
+    if (valid_a && !valid_b) { *sequence_out = hdr_a.sequence; return 0; }
+    if (!valid_a && valid_b) { *sequence_out = hdr_b.sequence; return 1; }
 
     if ((int32_t)(hdr_a.sequence - hdr_b.sequence) >= 0)
-    {
-        *sequence_out = hdr_a.sequence;
-        return 0;
-    }
+    { *sequence_out = hdr_a.sequence; return 0; }
 
     *sequence_out = hdr_b.sequence;
     return 1;
@@ -111,19 +115,16 @@ bool Storage_Read(uint8_t record_type, StoragePayload *payload)
 {
     if (payload == NULL) return false;
 
-    uint32_t base_offset = 0;
-    if (record_type == RECORD_TYPE_IDENTITY)
-        base_offset = STORAGE_SLOT_SIZE * 2;
-    else if (record_type == RECORD_TYPE_REGISTRATION)
-        base_offset = STORAGE_SLOT_SIZE * 4;
+    const StorageRecordLayout *layout = Storage_GetLayout(record_type);
+    if (layout == NULL) return false;
 
     StorageRecordHeader hdr_a, hdr_b;
     bool valid_a = false, valid_b = false;
 
-    if (Platform_FlashRead(base_offset, &hdr_a, STORAGE_HEADER_SIZE) == PLATFORM_FLASH_OK)
+    if (Platform_FlashRead(layout->slot_a_offset, &hdr_a, STORAGE_HEADER_SIZE) == PLATFORM_FLASH_OK)
         valid_a = (hdr_a.magic == STORAGE_MAGIC && hdr_a.record_type == record_type);
 
-    if (Platform_FlashRead(base_offset + STORAGE_SLOT_SIZE, &hdr_b, STORAGE_HEADER_SIZE) == PLATFORM_FLASH_OK)
+    if (Platform_FlashRead(layout->slot_b_offset, &hdr_b, STORAGE_HEADER_SIZE) == PLATFORM_FLASH_OK)
         valid_b = (hdr_b.magic == STORAGE_MAGIC && hdr_b.record_type == record_type);
 
     uint8_t best_slot = 0xFF;
@@ -132,7 +133,7 @@ bool Storage_Read(uint8_t record_type, StoragePayload *payload)
     if (valid_a)
     {
         StoragePayload p;
-        if (SlotReadRaw(base_offset, &hdr_a, &p))
+        if (SlotReadRaw(layout->slot_a_offset, &hdr_a, &p))
         {
             best_slot = 0;
             best_seq = hdr_a.sequence;
@@ -142,7 +143,7 @@ bool Storage_Read(uint8_t record_type, StoragePayload *payload)
     if (valid_b)
     {
         StoragePayload p;
-        if (SlotReadRaw(base_offset + STORAGE_SLOT_SIZE, &hdr_b, &p))
+        if (SlotReadRaw(layout->slot_b_offset, &hdr_b, &p))
         {
             if ((best_slot == 0xFF) || ((int32_t)(hdr_b.sequence - best_seq) > 0))
             {
@@ -156,29 +157,26 @@ bool Storage_Read(uint8_t record_type, StoragePayload *payload)
         return false;
 
     if (best_slot == 0)
-        return SlotReadRaw(base_offset, &hdr_a, payload);
+        return SlotReadRaw(layout->slot_a_offset, &hdr_a, payload);
     else
-        return SlotReadRaw(base_offset + STORAGE_SLOT_SIZE, &hdr_b, payload);
+        return SlotReadRaw(layout->slot_b_offset, &hdr_b, payload);
 }
 
 bool Storage_Write(uint8_t record_type, const uint8_t *data, size_t size)
 {
     if (size > STORAGE_PAYLOAD_MAX) return false;
-    if ((record_type != RECORD_TYPE_CONFIG) && (record_type != RECORD_TYPE_IDENTITY) && (record_type != RECORD_TYPE_REGISTRATION))
-        return false;
+    if ((data == NULL) && (size > 0)) return false;
+
+    const StorageRecordLayout *layout = Storage_GetLayout(record_type);
+    if (layout == NULL) return false;
 
     uint32_t current_seq;
-    uint8_t active_slot;
-    
-    uint32_t base = (record_type == RECORD_TYPE_IDENTITY) ? STORAGE_SLOT_SIZE * 2 :
-                 (record_type == RECORD_TYPE_REGISTRATION) ? STORAGE_SLOT_SIZE * 4 : 0;
-    active_slot = SelectSlot(base, &current_seq);
+    uint8_t active_slot = SelectSlot(layout, &current_seq);
 
-    uint8_t write_slot;
-    if (active_slot == 0xFF)
-        write_slot = 0;
-    else
-        write_slot = (active_slot == 0) ? 1 : 0;
+    uint8_t write_slot = (active_slot == 0xFF) ? 0 : ((active_slot == 0) ? 1 : 0);
+
+    uint32_t write_page = (write_slot == 0) ? layout->slot_a_page : layout->slot_b_page;
+    uint32_t write_offset = (write_slot == 0) ? layout->slot_a_offset : layout->slot_b_offset;
 
     uint32_t next_seq = current_seq + 1;
     if (next_seq == 0) next_seq = 1;
@@ -206,53 +204,38 @@ bool Storage_Write(uint8_t record_type, const uint8_t *data, size_t size)
 
     size_t total = STORAGE_HEADER_SIZE + size;
     size_t aligned = (total + 7U) & ~7U;
-    if (aligned > STORAGE_SLOT_SIZE) aligned = STORAGE_SLOT_SIZE;
 
-    uint32_t base_offset = (record_type == RECORD_TYPE_IDENTITY) ? STORAGE_SLOT_SIZE * 2 :
-                              (record_type == RECORD_TYPE_REGISTRATION) ? STORAGE_SLOT_SIZE * 4 : 0;
-    uint32_t write_offset = base_offset + (uint32_t)write_slot * STORAGE_SLOT_SIZE;
-
-    if (Platform_FlashErase(PAGE_FOR_TYPE(record_type)) != PLATFORM_FLASH_OK)
+    /* Erase only the inactive slot page — old active slot remains intact */
+    if (Platform_FlashErase(write_page) != PLATFORM_FLASH_OK)
         return false;
 
     if (Platform_FlashWrite(write_offset, raw, aligned) != PLATFORM_FLASH_OK)
-    {
-        Platform_FlashErase(PAGE_FOR_TYPE(record_type));
         return false;
-    }
 
     uint8_t verify[STORAGE_HEADER_SIZE + STORAGE_PAYLOAD_MAX];
     if (Platform_FlashRead(write_offset, verify, total) != PLATFORM_FLASH_OK)
-    {
-        Platform_FlashErase(PAGE_FOR_TYPE(record_type));
         return false;
-    }
+
     if (memcmp(raw, verify, total) != 0)
-    {
-        Platform_FlashErase(PAGE_FOR_TYPE(record_type));
         return false;
-    }
 
     return true;
 }
 
 bool Storage_Format(void)
 {
-    if (Platform_FlashErase(0) != PLATFORM_FLASH_OK) return false;
-    if (Platform_FlashErase(1) != PLATFORM_FLASH_OK) return false;
+    for (uint32_t p = 0; p < 6; p++)
+    {
+        if (Platform_FlashErase(p) != PLATFORM_FLASH_OK)
+            return false;
+    }
     return true;
 }
 
 void Storage_GetInfo(StorageInfo *info)
 {
     if (info == NULL) return;
-    memset(info, 0, sizeof(*info));
-
-    StorageRecordHeader hdr_a, hdr_b;
-    info->slot_a_valid = SlotReadRaw(0, &hdr_a, NULL);
-    info->slot_b_valid = SlotReadRaw(STORAGE_SLOT_SIZE, &hdr_b, NULL);
-    info->slot_a_sequence = info->slot_a_valid ? hdr_a.sequence : 0;
-    info->slot_b_sequence = info->slot_b_valid ? hdr_b.sequence : 0;
+    Storage_GetPageInfo(RECORD_TYPE_CONFIG, info);
 }
 
 bool Storage_GetPageInfo(uint8_t record_type, StorageInfo *info)
@@ -260,11 +243,12 @@ bool Storage_GetPageInfo(uint8_t record_type, StorageInfo *info)
     if (info == NULL) return false;
     memset(info, 0, sizeof(*info));
 
-    uint32_t base = (record_type == RECORD_TYPE_IDENTITY) ? STORAGE_SLOT_SIZE * 2 : 0;
+    const StorageRecordLayout *layout = Storage_GetLayout(record_type);
+    if (layout == NULL) return false;
 
     StorageRecordHeader hdr_a, hdr_b;
-    info->slot_a_valid = SlotReadRaw(base, &hdr_a, NULL);
-    info->slot_b_valid = SlotReadRaw(base + STORAGE_SLOT_SIZE, &hdr_b, NULL);
+    info->slot_a_valid = SlotReadRaw(layout->slot_a_offset, &hdr_a, NULL);
+    info->slot_b_valid = SlotReadRaw(layout->slot_b_offset, &hdr_b, NULL);
     info->slot_a_sequence = info->slot_a_valid ? hdr_a.sequence : 0;
     info->slot_b_sequence = info->slot_b_valid ? hdr_b.sequence : 0;
     return true;

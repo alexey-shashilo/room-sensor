@@ -70,6 +70,7 @@ static CommandType StrToType(const char *str)
     if (strcmp(str, "UNREGISTER_DEVICE") == 0)     return COMMAND_UNREGISTER_DEVICE;
     if (strcmp(str, "FACTORY_RESET") == 0)         return COMMAND_FACTORY_RESET;
     if (strcmp(str, "GET_PROVISIONING_STATUS") == 0) return COMMAND_GET_PROVISIONING_STATUS;
+    if (strcmp(str, "ASSIGN_LOCATION") == 0)       return COMMAND_ASSIGN_LOCATION;
     return COMMAND_UNKNOWN;
 }
 
@@ -79,6 +80,8 @@ bool CommandParser_Parse(const uint8_t *data, size_t size, CommandRequest *reque
 
     memset(request, 0, sizeof(*request));
     request->type = COMMAND_UNKNOWN;
+    request->payload = (const uint8_t *)data;
+    request->payload_size = size;
 
     size_t pos = 0;
     SkipWhitespace(data, size, &pos);

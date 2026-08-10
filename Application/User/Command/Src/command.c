@@ -47,7 +47,10 @@ bool Command_ProcessBuffer(const uint8_t *data, size_t size)
 
     size_t copy = size;
     if (copy > COMMAND_INPUT_BUFFER_SIZE - 1)
-        copy = COMMAND_INPUT_BUFFER_SIZE - 1;
+    {
+        /* Request too large — reject */
+        return false;
+    }
 
     memcpy(s_input_buf, data, copy);
     s_input_buf[copy] = '\0';

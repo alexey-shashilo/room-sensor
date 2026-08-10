@@ -87,6 +87,8 @@ bool Provisioning_Load(DeviceRegistration *reg)
 {
     if (reg == NULL) return false;
 
+    memset(reg, 0, sizeof(*reg));
+
     StoragePayload payload;
     if (!Storage_Read(RECORD_TYPE_REGISTRATION, &payload))
     {
@@ -124,16 +126,14 @@ bool Provisioning_Save(const DeviceRegistration *reg)
     RegistrationStorageV1 stored;
     memset(&stored, 0, sizeof(stored));
     stored.schema_version = REGISTRATION_SCHEMA_VERSION;
-    stored.revision = ++s_revision;
+    stored.revision = s_revision + 1;
     stored.registered = reg->registered;
     stored.installation_id = reg->installation_id;
     stored.building_id = reg->building_id;
     stored.room_id = reg->room_id;
 
-    /* Keep revision within the same reg */
-    (void)0;
-
     bool ok = Storage_Write(RECORD_TYPE_REGISTRATION, (const uint8_t *)&stored, sizeof(stored));
+    if (ok) s_revision = stored.revision;
     return ok;
 }
 
@@ -142,9 +142,11 @@ bool Provisioning_Clear(void)
     RegistrationStorageV1 stored;
     memset(&stored, 0, sizeof(stored));
     stored.schema_version = REGISTRATION_SCHEMA_VERSION;
-    stored.revision = ++s_revision;
+    stored.revision = s_revision + 1;
     stored.registered = false;
-    return Storage_Write(RECORD_TYPE_REGISTRATION, (const uint8_t *)&stored, sizeof(stored));
+    bool ok = Storage_Write(RECORD_TYPE_REGISTRATION, (const uint8_t *)&stored, sizeof(stored));
+    if (ok) s_revision = stored.revision;
+    return ok;
 }
 
 void Provisioning_GetStatus(const DeviceRegistration *reg, ProvisioningStatus *status)

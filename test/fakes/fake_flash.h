@@ -11,7 +11,7 @@ extern "C" {
 #endif
 
 #define FAKE_FLASH_SIZE 0x1000U
-#define FAKE_FLASH_PAGES 3U
+#define FAKE_FLASH_PAGES 6U
 
 void   FakeFlash_Init(void);
 void   FakeFlash_Corrupt(uint32_t offset, size_t size);
