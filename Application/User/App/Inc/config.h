@@ -32,11 +32,20 @@ typedef struct
     RoomSensorRuntimeConfig runtime;
 } RoomSensorConfig;
 
-void                    Config_LoadDefaults(void);
-bool                    Config_Load(void);
-bool                    Config_Save(void);
-bool                    Config_ResetToDefaults(void);
+typedef enum
+{
+    CONFIG_APPLY_OK = 0,
+    CONFIG_APPLY_INVALID,
+    CONFIG_APPLY_PERSIST_FAILED
+} ConfigApplyStatus;
+
+void               Config_LoadDefaults(void);
+bool               Config_Load(void);
+bool               Config_Save(void);
+bool               Config_SaveCandidate(const RoomSensorConfig *candidate);
+bool               Config_ResetToDefaults(void);
+ConfigApplyStatus  Config_ApplyPersistent(const RoomSensorConfig *candidate);
 const RoomSensorConfig *Config_Get(void);
-bool                    Config_Validate(const ConfigStorageV1 *storage);
+bool               Config_Validate(const ConfigStorageV1 *storage);
 
 #endif

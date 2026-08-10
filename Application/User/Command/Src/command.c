@@ -14,6 +14,7 @@ static size_t s_input_pos = 0;
 static bool s_has_pending = false;
 
 static const CommunicationPort *s_cmd_port = NULL;
+static CommandSourceTrust s_source_trust = COMMAND_SOURCE_UNTRUSTED;
 
 bool Command_Init(CommandServices *services)
 {
@@ -23,6 +24,7 @@ bool Command_Init(CommandServices *services)
     s_input_pos = 0;
     s_has_pending = false;
     s_initialized = true;
+    s_source_trust = COMMAND_SOURCE_UNTRUSTED;  /* fail closed by default */
     return true;
 }
 
@@ -35,9 +37,15 @@ void Command_UpdateRuntime(uint32_t uptime, bool wdg, const DeviceRuntime *light
     s_services.reset_cause = rc;
 }
 
+void Command_SetSourceTrust(CommandSourceTrust trust)
+{
+    s_source_trust = trust;
+}
+
 void Command_SetPort(const CommunicationPort *port)
 {
     s_cmd_port = port;
+    /* Transport does not imply trust — default remains untrusted */
 }
 
 bool Command_ProcessBuffer(const uint8_t *data, size_t size)
@@ -48,7 +56,6 @@ bool Command_ProcessBuffer(const uint8_t *data, size_t size)
     size_t copy = size;
     if (copy > COMMAND_INPUT_BUFFER_SIZE - 1)
     {
-        /* Request too large — reject */
         return false;
     }
 
@@ -84,6 +91,21 @@ void Command_Run(void)
         return;
     }
 
+    /* Authorization MUST run before dispatch — fail closed */
+    if (!CommandAuthorization_IsAllowed(request.type, s_source_trust))
+    {
+        CommandResponse_Init(&response, request.request_id, COMMAND_STATUS_UNAUTHORIZED);
+        CommandResponse_Append(&response, "\"error\":\"unauthorized\"");
+        CommandResponse_Finalize(&response);
+
+        if (s_cmd_port)
+            s_cmd_port->send(s_cmd_port->context, response.payload, response.payload_size);
+
+        s_has_pending = false;
+        s_busy = false;
+        return;
+    }
+
     CommandDispatcher_Dispatch(&request, &response, &s_services);
 
     if (s_cmd_port)
@@ -102,25 +124,55 @@ CommandSecurityClass Command_GetSecurityClass(CommandType type)
         case COMMAND_GET_STATUS:
         case COMMAND_GET_CONFIG:
         case COMMAND_GET_IDENTITY:
-        case COMMAND_SELF_TEST:
         case COMMAND_GET_CAPABILITIES:
         case COMMAND_GET_MANIFEST:
         case COMMAND_GET_PROVISIONING_STATUS:
             return COMMAND_SECURITY_READ_ONLY;
+
+        case COMMAND_SELF_TEST:
+            return COMMAND_SECURITY_DIAGNOSTIC_ACTION;
 
         case COMMAND_SET_CONFIG:
         case COMMAND_RESET_CONFIG:
             return COMMAND_SECURITY_CONFIG_MUTATION;
 
         case COMMAND_REGISTER_DEVICE:
-        case COMMAND_UNREGISTER_DEVICE:
         case COMMAND_ASSIGN_LOCATION:
             return COMMAND_SECURITY_PROVISIONING_MUTATION;
 
+        case COMMAND_UNREGISTER_DEVICE:
+        case COMMAND_REBOOT:
         case COMMAND_FACTORY_RESET:
             return COMMAND_SECURITY_DESTRUCTIVE;
 
+        case COMMAND_UNKNOWN:
         default:
-            return COMMAND_SECURITY_READ_ONLY;
+            return COMMAND_SECURITY_INVALID;
+    }
+}
+
+bool CommandAuthorization_IsAllowed(CommandType type, CommandSourceTrust trust)
+{
+    CommandSecurityClass cls = Command_GetSecurityClass(type);
+
+    if (cls == COMMAND_SECURITY_INVALID)
+        return false;  /* unknown command never executes */
+
+    switch (trust)
+    {
+        case COMMAND_SOURCE_TRUSTED_LOCAL:
+            return true;  /* dev debug transport allowed */
+
+        case COMMAND_SOURCE_AUTHENTICATED_REMOTE:
+            /* policy placeholders until real auth exists */
+            return (cls == COMMAND_SECURITY_READ_ONLY ||
+                    cls == COMMAND_SECURITY_DIAGNOSTIC_ACTION ||
+                    cls == COMMAND_SECURITY_CONFIG_MUTATION ||
+                    cls == COMMAND_SECURITY_PROVISIONING_MUTATION);
+
+        case COMMAND_SOURCE_UNTRUSTED:
+        default:
+            /* default = fail closed */
+            return (cls == COMMAND_SECURITY_READ_ONLY);
     }
 }

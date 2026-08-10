@@ -77,17 +77,57 @@ bool Config_Load(void)
     return true;
 }
 
+bool Config_SaveCandidate(const RoomSensorConfig *candidate)
+{
+    if (candidate == NULL) return false;
+    if (!Config_Validate(&candidate->storage)) return false;
+
+    ConfigStorageV1 storage = candidate->storage;
+    storage.version = CONFIG_SCHEMA_VERSION;
+    storage.light_calibration_q16 = FloatToQ16(candidate->runtime.light_calibration_factor);
+
+    return Storage_Write(RECORD_TYPE_CONFIG, (const uint8_t *)&storage, sizeof(storage));
+}
+
 bool Config_Save(void)
 {
-    s_config.storage.version = CONFIG_SCHEMA_VERSION;
-    s_config.storage.light_calibration_q16 = FloatToQ16(s_config.runtime.light_calibration_factor);
-    return Storage_Write(RECORD_TYPE_CONFIG, (const uint8_t *)&s_config.storage, sizeof(s_config.storage));
+    return Config_SaveCandidate(&s_config);
+}
+
+ConfigApplyStatus Config_ApplyPersistent(const RoomSensorConfig *candidate)
+{
+    if (candidate == NULL) return CONFIG_APPLY_INVALID;
+    if (!Config_Validate(&candidate->storage)) return CONFIG_APPLY_INVALID;
+
+    /* Persist candidate first; only commit runtime on success */
+    if (!Config_SaveCandidate(candidate))
+        return CONFIG_APPLY_PERSIST_FAILED;
+
+    s_config = *candidate;
+    return CONFIG_APPLY_OK;
 }
 
 bool Config_ResetToDefaults(void)
 {
-    Config_LoadDefaults();
-    return Config_Save();
+    RoomSensorConfig defaults;
+    memset(&defaults, 0, sizeof(defaults));
+
+    defaults.storage.version = CONFIG_SCHEMA_VERSION;
+    defaults.storage.light_period_ms = 500U;
+    defaults.storage.display_period_ms = 500U;
+    defaults.storage.diagnostics_period_ms = 10000U;
+    defaults.storage.retry_period_ms = 5000U;
+    defaults.storage.telemetry_period_ms = 5000U;
+    defaults.storage.light_calibration_q16 = FloatToQ16(1.0f);
+    defaults.runtime.light_calibration_factor = 1.0f;
+
+    if (!Config_Validate(&defaults.storage)) return false;
+
+    if (!Config_SaveCandidate(&defaults))
+        return false;
+
+    s_config = defaults;
+    return true;
 }
 
 const RoomSensorConfig *Config_Get(void)

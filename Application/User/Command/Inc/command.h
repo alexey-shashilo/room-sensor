@@ -43,7 +43,8 @@ typedef enum
     COMMAND_STATUS_BUSY,
     COMMAND_STATUS_NOT_SUPPORTED,
     COMMAND_STATUS_CONFLICT,
-    COMMAND_STATUS_INTERNAL_ERROR
+    COMMAND_STATUS_INTERNAL_ERROR,
+    COMMAND_STATUS_UNAUTHORIZED
 } CommandStatus;
 
 typedef struct
@@ -90,10 +91,19 @@ typedef struct
 typedef enum
 {
     COMMAND_SECURITY_READ_ONLY,
+    COMMAND_SECURITY_DIAGNOSTIC_ACTION,
     COMMAND_SECURITY_CONFIG_MUTATION,
     COMMAND_SECURITY_PROVISIONING_MUTATION,
-    COMMAND_SECURITY_DESTRUCTIVE
+    COMMAND_SECURITY_DESTRUCTIVE,
+    COMMAND_SECURITY_INVALID
 } CommandSecurityClass;
+
+typedef enum
+{
+    COMMAND_SOURCE_UNTRUSTED = 0,          /* default = fail closed */
+    COMMAND_SOURCE_TRUSTED_LOCAL,
+    COMMAND_SOURCE_AUTHENTICATED_REMOTE
+} CommandSourceTrust;
 
 typedef struct
 {
@@ -114,6 +124,8 @@ bool Command_Init(CommandServices *services);
 void Command_UpdateRuntime(uint32_t uptime, bool wdg, const DeviceRuntime *light, const DeviceRuntime *disp, ResetCause rc);
 void Command_Run(void);
 bool Command_ProcessBuffer(const uint8_t *data, size_t size);
+void Command_SetSourceTrust(CommandSourceTrust trust);
 CommandSecurityClass Command_GetSecurityClass(CommandType type);
+bool CommandAuthorization_IsAllowed(CommandType type, CommandSourceTrust trust);
 
 #endif

@@ -122,6 +122,7 @@ void CommandResponse_Finalize(CommandResponse *response)
         case COMMAND_STATUS_BUSY:              status_str = "busy"; break;
         case COMMAND_STATUS_NOT_SUPPORTED:     status_str = "not_supported"; break;
         case COMMAND_STATUS_CONFLICT:          status_str = "conflict"; break;
+        case COMMAND_STATUS_UNAUTHORIZED:      status_str = "unauthorized"; break;
         case COMMAND_STATUS_INTERNAL_ERROR:    status_str = "internal_error"; break;
     }
 

@@ -371,6 +371,7 @@ RoomSensor_Status App_Init(void)
         cmd_svc.uptime_ms = 0;
         cmd_svc.watchdog_active = false;
         Command_Init(&cmd_svc);
+        Command_SetSourceTrust(COMMAND_SOURCE_TRUSTED_LOCAL);
     }
 
     return ROOM_SENSOR_OK;

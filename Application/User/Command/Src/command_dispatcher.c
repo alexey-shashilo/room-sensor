@@ -44,6 +44,7 @@ static void HandleGetConfig(const CommandRequest *req, CommandResponse *rsp, con
 
 static void HandleSetConfig(const CommandRequest *req, CommandResponse *rsp, const CommandServices *svc)
 {
+    (void)svc;
     RoomSensorConfig cfg = *svc->config;
 
     if (req->args.has_light_period_ms)
@@ -55,24 +56,19 @@ static void HandleSetConfig(const CommandRequest *req, CommandResponse *rsp, con
     if (req->args.has_light_calibration)
         cfg.runtime.light_calibration_factor = req->args.light_calibration;
 
-    if (!Config_Validate(&cfg.storage))
-    {
-        CommandResponse_Init(rsp, req->request_id, COMMAND_STATUS_INVALID_ARGUMENT);
-        CommandResponse_Append(rsp, "\"error\":\"invalid_configuration\"");
-        CommandResponse_Finalize(rsp);
-        return;
-    }
-
-    *(RoomSensorConfig *)svc->config = cfg;
-
-    if (Config_Save())
+    ConfigApplyStatus as = Config_ApplyPersistent(&cfg);
+    if (as == CONFIG_APPLY_OK)
     {
         CommandResponse_Init(rsp, req->request_id, COMMAND_STATUS_OK);
         CommandResponse_AppendJson(rsp, "result", "saved");
     }
+    else if (as == CONFIG_APPLY_INVALID)
+    {
+        CommandResponse_Init(rsp, req->request_id, COMMAND_STATUS_INVALID_ARGUMENT);
+        CommandResponse_Append(rsp, "\"error\":\"invalid_configuration\"");
+    }
     else
     {
-        *(RoomSensorConfig *)svc->config = cfg;
         CommandResponse_Init(rsp, req->request_id, COMMAND_STATUS_INTERNAL_ERROR);
         CommandResponse_Append(rsp, "\"error\":\"persist_failed\"");
     }
