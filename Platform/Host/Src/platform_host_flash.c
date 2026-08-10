@@ -1,0 +1,55 @@
+/* Host Platform — Flash implementation (in-memory byte array, erased=0xFF) */
+
+#include "host_platform.h"
+#include "platform_flash.h"
+#include <string.h>
+
+#define HOST_FLASH_SIZE 8192U   /* 2 pages, matching Storage layout */
+static uint8_t s_flash[HOST_FLASH_SIZE];
+static bool s_write_fail = false;
+
+void HostFlash_Init(void)
+{
+    memset(s_flash, 0xFF, sizeof(s_flash));
+    s_write_fail = false;
+}
+
+void *HostFlash_GetData(void) { return s_flash; }
+void HostFlash_SetWriteFail(bool fail) { s_write_fail = fail; }
+
+const PlatformFlashInfo *Platform_FlashGetInfo(void)
+{
+    static const PlatformFlashInfo info = {
+        .start_address = 0U,
+        .page_size = 4096,
+        .total_size = HOST_FLASH_SIZE,
+        .page_count = 2
+    };
+    return &info;
+}
+
+PlatformFlashStatus Platform_FlashRead(uint32_t offset, void *data, size_t size)
+{
+    if ((data == NULL) || (size == 0)) return PLATFORM_FLASH_INVALID_ARG;
+    if ((offset + size) > HOST_FLASH_SIZE) return PLATFORM_FLASH_INVALID_ARG;
+    memcpy(data, s_flash + offset, size);
+    return PLATFORM_FLASH_OK;
+}
+
+PlatformFlashStatus Platform_FlashWrite(uint32_t offset, const void *data, size_t size)
+{
+    if ((data == NULL) || (size == 0)) return PLATFORM_FLASH_INVALID_ARG;
+    if ((offset + size) > HOST_FLASH_SIZE) return PLATFORM_FLASH_INVALID_ARG;
+    if (s_write_fail) return PLATFORM_FLASH_ERROR;
+    memcpy(s_flash + offset, data, size);
+    return PLATFORM_FLASH_OK;
+}
+
+PlatformFlashStatus Platform_FlashErase(uint32_t page_index)
+{
+    if (s_write_fail) return PLATFORM_FLASH_ERROR;
+    uint32_t off = page_index * 4096;
+    if (off >= HOST_FLASH_SIZE) return PLATFORM_FLASH_INVALID_ARG;
+    memset(s_flash + off, 0xFF, 4096);
+    return PLATFORM_FLASH_OK;
+}
