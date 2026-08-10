@@ -157,6 +157,16 @@ jobs:
           fi
           echo "PASS: No stm32 HAL include in portable modules"
 
+      - name: Check no HAL I2C/flash/GPIO handle types in portable modules
+        run: |
+          BAD=$(grep -rln 'I2C_HandleTypeDef\|GPIO_TypeDef\|HAL_StatusTypeDef\|HAL_FLASH\|HAL_IWDG\|HAL_Delay\|HAL_GetTick\|HAL_I2C' Application/User/App/ Application/User/Drivers/ Application/User/Communication/ Application/User/Command/ Application/User/Telemetry/ Application/User/Storage/ 2>/dev/null || true)
+          if [ -n "$BAD" ]; then
+            echo "ERROR: STM32 HAL symbols leaked into portable modules:"
+            echo "$BAD"
+            exit 1
+          fi
+          echo "PASS: No HAL symbols leaked into portable modules"
+
       - name: Check no secrets in telemetry/command responses
         run: |
           if grep -rn '"password"\|"token"\|"secret"\|"credential"' Application/User/Telemetry/ Application/User/Command/ --include='*.c' 2>/dev/null; then

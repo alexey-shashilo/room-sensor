@@ -42,6 +42,8 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/Platform/Src/platform_reset_stm32.c
     ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/Platform/Src/platform_flash_stm32.c
     ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/Platform/Src/platform_unique_id_stm32.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/Platform/Src/platform_gpio_stm32.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/Platform/Src/platform_init_stm32.c
     ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/Storage/Src/storage.c
     ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/Telemetry/Src/telemetry.c
     ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/Telemetry/Src/telemetry_serializer.c

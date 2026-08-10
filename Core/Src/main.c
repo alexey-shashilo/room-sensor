@@ -26,6 +26,8 @@
 #include "i2c_bus.h"
 #include "i2c_bus_stm32.h"
 #include "platform_time.h"
+#include "platform_gpio.h"
+#include "platform_init.h"
 
 /* USER CODE END Includes */
 
@@ -98,18 +100,20 @@ int main(void)
   MX_I2C1_Init();
   /* USER CODE BEGIN 2 */
 
-  BSP_LED_Init(LED_GREEN);
-  BSP_LED_On(LED_GREEN);
+  Platform_Init();
+  Platform_LedInit(PLATFORM_LED_GREEN);
+  Platform_LedOn(PLATFORM_LED_GREEN);
 
   {
       static I2cBus s_i2c_bus;
       I2cBus_Stm32_Init(&s_i2c_bus, &hi2c1, 100U);
+      Platform_RegisterI2c(&s_i2c_bus);
       App_SetI2C(&s_i2c_bus);
   }
 
   if (App_Init() != ROOM_SENSOR_OK)
   {
-      BSP_LED_Off(LED_GREEN);
+      Platform_LedOff(PLATFORM_LED_GREEN);
   }
 
   /* USER CODE END 2 */
