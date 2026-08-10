@@ -54,10 +54,10 @@ int main(void)
     {
         Config_LoadDefaults();
         const RoomSensorConfig *cfg = Config_Get();
-        check(cfg->light_period_ms == 500U, "light_period_ms = 500");
-        check(cfg->display_period_ms == 500U, "display_period_ms = 500");
-        check(cfg->retry_period_ms == 5000U, "retry_period_ms = 5000");
-        check(cfg->diagnostics_period_ms == 10000U, "diagnostics_period_ms = 10000");
+        check(cfg->storage.light_period_ms == 500U, "light_period_ms = 500");
+        check(cfg->storage.display_period_ms == 500U, "display_period_ms = 500");
+        check(cfg->storage.retry_period_ms == 5000U, "retry_period_ms = 5000");
+        check(cfg->storage.diagnostics_period_ms == 10000U, "diagnostics_period_ms = 10000");
     }
 
     /* --- Summary --- */

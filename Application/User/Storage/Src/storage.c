@@ -31,12 +31,15 @@ static bool SlotReadRaw(uint32_t abs_offset, StorageRecordHeader *hdr, StoragePa
     if (hdr->magic != STORAGE_MAGIC)
         return false;
 
-    if (hdr->schema_version > STORAGE_SCHEMA_VERSION)
+    if (hdr->record_format_version > STORAGE_RECORD_FORMAT_VERSION)
         return false;
 
     uint16_t psize = hdr->payload_size;
     if (psize > STORAGE_PAYLOAD_MAX)
         return false;
+
+    uint32_t expected_crc = hdr->crc32;
+    hdr->crc32 = 0;
 
     uint8_t raw[STORAGE_HEADER_SIZE + STORAGE_PAYLOAD_MAX];
     memcpy(raw, hdr, STORAGE_HEADER_SIZE);
@@ -46,9 +49,6 @@ static bool SlotReadRaw(uint32_t abs_offset, StorageRecordHeader *hdr, StoragePa
         if (Platform_FlashRead(abs_offset + STORAGE_HEADER_SIZE, raw + STORAGE_HEADER_SIZE, psize) != PLATFORM_FLASH_OK)
             return false;
     }
-
-    uint32_t expected_crc = hdr->crc32;
-    hdr->crc32 = 0;
 
     uint32_t calc_crc = Storage_Crc32(raw, STORAGE_HEADER_SIZE + psize);
     hdr->crc32 = expected_crc;
@@ -68,11 +68,11 @@ static bool SlotReadRaw(uint32_t abs_offset, StorageRecordHeader *hdr, StoragePa
     return true;
 }
 
-static uint8_t SelectSlot(uint32_t *sequence_out)
+static uint8_t SelectSlot(uint32_t base_offset, uint32_t *sequence_out)
 {
     StorageRecordHeader hdr_a, hdr_b;
-    bool valid_a = SlotReadRaw(0, &hdr_a, NULL);
-    bool valid_b = SlotReadRaw(STORAGE_SLOT_SIZE, &hdr_b, NULL);
+    bool valid_a = SlotReadRaw(base_offset, &hdr_a, NULL);
+    bool valid_b = SlotReadRaw(base_offset + STORAGE_SLOT_SIZE, &hdr_b, NULL);
 
     if (!valid_a && !valid_b)
     {
@@ -164,7 +164,16 @@ bool Storage_Write(uint8_t record_type, const uint8_t *data, size_t size)
         return false;
 
     uint32_t current_seq;
-    uint8_t active_slot = SelectSlot(&current_seq);
+    uint8_t active_slot;
+    
+    if (record_type == RECORD_TYPE_IDENTITY)
+    {
+        active_slot = SelectSlot(STORAGE_SLOT_SIZE * 2, &current_seq);
+    }
+    else
+    {
+        active_slot = SelectSlot(0, &current_seq);
+    }
 
     uint8_t write_slot;
     if (active_slot == 0xFF)
@@ -178,7 +187,7 @@ bool Storage_Write(uint8_t record_type, const uint8_t *data, size_t size)
     StorageRecordHeader hdr;
     memset(&hdr, 0, sizeof(hdr));
     hdr.magic = STORAGE_MAGIC;
-    hdr.schema_version = STORAGE_SCHEMA_VERSION;
+    hdr.record_format_version = STORAGE_RECORD_FORMAT_VERSION;
     hdr.payload_size = (uint16_t)size;
     hdr.record_type = record_type;
     hdr.sequence = next_seq;
@@ -244,4 +253,19 @@ void Storage_GetInfo(StorageInfo *info)
     info->slot_b_valid = SlotReadRaw(STORAGE_SLOT_SIZE, &hdr_b, NULL);
     info->slot_a_sequence = info->slot_a_valid ? hdr_a.sequence : 0;
     info->slot_b_sequence = info->slot_b_valid ? hdr_b.sequence : 0;
+}
+
+bool Storage_GetPageInfo(uint8_t record_type, StorageInfo *info)
+{
+    if (info == NULL) return false;
+    memset(info, 0, sizeof(*info));
+
+    uint32_t base = (record_type == RECORD_TYPE_IDENTITY) ? STORAGE_SLOT_SIZE * 2 : 0;
+
+    StorageRecordHeader hdr_a, hdr_b;
+    info->slot_a_valid = SlotReadRaw(base, &hdr_a, NULL);
+    info->slot_b_valid = SlotReadRaw(base + STORAGE_SLOT_SIZE, &hdr_b, NULL);
+    info->slot_a_sequence = info->slot_a_valid ? hdr_a.sequence : 0;
+    info->slot_b_sequence = info->slot_b_valid ? hdr_b.sequence : 0;
+    return true;
 }

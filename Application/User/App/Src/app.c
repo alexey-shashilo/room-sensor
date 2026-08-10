@@ -106,7 +106,7 @@ static void App_DoReadLight(void)
     {
         if (sample.valid)
         {
-            float calibrated = sample.lux * Config_Get()->light_calibration_factor;
+            float calibrated = sample.lux * Config_Get()->runtime.light_calibration_factor;
             RoomState_UpdateIlluminance(&s_room, calibrated, true);
             DeviceRuntime_RecordSuccess(&s_light_rt);
         }
@@ -297,13 +297,13 @@ static void App_PrintBootDiag(void)
 
     printf("CONFIG %s seq=%u calib=%.3f ID=%s\r\n",
            s_config_from_flash ? "persisted" : "defaults",
-           (unsigned)Config_Get()->version,
-           (double)Config_Get()->light_calibration_factor,
+           (unsigned)Config_Get()->storage.version,
+           (double)Config_Get()->runtime.light_calibration_factor,
            short_id);
 
     printf("TELEMETRY schema=%u period=%lu\r\n",
            (unsigned)TELEMETRY_SCHEMA_VERSION,
-           (unsigned long)Config_Get()->telemetry_period_ms);
+           (unsigned long)Config_Get()->storage.telemetry_period_ms);
 
     printf("WDG active=%d\r\n", (int)s_watchdog_active);
     printf("Health=%d\r\n", (int)s_health);
@@ -387,27 +387,27 @@ void App_Run(void)
     const RoomSensorConfig *cfg = Config_Get();
     uint32_t now = Platform_GetTickMs();
 
-    if ((now - s_last_retry_ms) >= cfg->retry_period_ms)
+    if ((now - s_last_retry_ms) >= cfg->storage.retry_period_ms)
     {
         s_last_retry_ms = now;
         App_DoRetry();
     }
 
-    if ((now - s_last_light_ms) >= cfg->light_period_ms)
+    if ((now - s_last_light_ms) >= cfg->storage.light_period_ms)
     {
         s_last_light_ms = now;
         if (s_light_rt.state == DEVICE_STATE_READY)
             App_DoReadLight();
     }
 
-    if ((now - s_last_display_ms) >= cfg->display_period_ms)
+    if ((now - s_last_display_ms) >= cfg->storage.display_period_ms)
     {
         s_last_display_ms = now;
         if (s_disp_rt.state == DEVICE_STATE_READY)
             App_DoUpdateDisplay();
     }
 
-    if ((now - s_last_diag_ms) >= cfg->diagnostics_period_ms)
+    if ((now - s_last_diag_ms) >= cfg->storage.diagnostics_period_ms)
     {
         s_last_diag_ms = now;
         App_UpdateHealth();
@@ -438,7 +438,7 @@ void App_Run(void)
                (unsigned long)cr.send_failures);
     }
 
-    if ((now - s_last_telemetry_ms) >= cfg->telemetry_period_ms)
+    if ((now - s_last_telemetry_ms) >= cfg->storage.telemetry_period_ms)
     {
         s_last_telemetry_ms = now;
 

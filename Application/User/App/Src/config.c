@@ -3,9 +3,22 @@
 #include <string.h>
 #include <math.h>
 
-#define CONFIG_VERSION 1U
+#define Q16_SCALE 65536.0f
 
 static RoomSensorConfig s_config;
+
+static float Q16ToFloat(uint32_t q16)
+{
+    return (float)((int32_t)q16) / Q16_SCALE;
+}
+
+static uint32_t FloatToQ16(float v)
+{
+    float scaled = v * Q16_SCALE;
+    if (scaled > 2147483647.0f) return 0x7FFFFFFFU;
+    if (scaled < -2147483648.0f) return 0x80000000U;
+    return (uint32_t)((int32_t)(scaled));
+}
 
 static bool IsFinite(float v)
 {
@@ -14,26 +27,30 @@ static bool IsFinite(float v)
 
 void Config_LoadDefaults(void)
 {
-    s_config.version = CONFIG_VERSION;
-    s_config.light_period_ms        = 500U;
-    s_config.display_period_ms      = 500U;
-    s_config.diagnostics_period_ms  = 10000U;
-    s_config.retry_period_ms        = 5000U;
-    s_config.telemetry_period_ms    = 5000U;
-    s_config.light_calibration_factor = 1.0f;
+    memset(&s_config, 0, sizeof(s_config));
+
+    s_config.storage.version              = CONFIG_SCHEMA_VERSION;
+    s_config.storage.light_period_ms      = 500U;
+    s_config.storage.display_period_ms    = 500U;
+    s_config.storage.diagnostics_period_ms = 10000U;
+    s_config.storage.retry_period_ms      = 5000U;
+    s_config.storage.telemetry_period_ms  = 5000U;
+    s_config.storage.light_calibration_q16 = FloatToQ16(1.0f);
+
+    s_config.runtime.light_calibration_factor = 1.0f;
 }
 
-bool Config_Validate(const RoomSensorConfig *config)
+bool Config_Validate(const ConfigStorageV1 *storage)
 {
-    if (config == NULL) return false;
-    if (config->version == 0) return false;
-    if (config->light_period_ms < 50U || config->light_period_ms > 60000U) return false;
-    if (config->display_period_ms < 50U || config->display_period_ms > 60000U) return false;
-    if (config->diagnostics_period_ms < 1000U || config->diagnostics_period_ms > 3600000U) return false;
-    if (config->retry_period_ms < 1000U || config->retry_period_ms > 600000U) return false;
-    if (config->telemetry_period_ms < 1000U || config->telemetry_period_ms > 3600000U) return false;
+    if (storage == NULL) return false;
+    if (storage->version != CONFIG_SCHEMA_VERSION) return false;
+    if (storage->light_period_ms < 50U || storage->light_period_ms > 60000U) return false;
+    if (storage->display_period_ms < 50U || storage->display_period_ms > 60000U) return false;
+    if (storage->diagnostics_period_ms < 1000U || storage->diagnostics_period_ms > 3600000U) return false;
+    if (storage->retry_period_ms < 1000U || storage->retry_period_ms > 600000U) return false;
+    if (storage->telemetry_period_ms < 1000U || storage->telemetry_period_ms > 3600000U) return false;
 
-    float cal = config->light_calibration_factor;
+    float cal = Q16ToFloat(storage->light_calibration_q16);
     if (!IsFinite(cal)) return false;
     if (cal < 0.01f || cal > 100.0f) return false;
 
@@ -46,25 +63,25 @@ bool Config_Load(void)
     if (!Storage_Read(RECORD_TYPE_CONFIG, &payload))
         return false;
 
-    RoomSensorConfig candidate;
+    ConfigStorageV1 candidate;
     if (payload.size != sizeof(candidate))
         return false;
 
     memcpy(&candidate, payload.data, sizeof(candidate));
 
-    if (Config_Validate(&candidate))
-    {
-        s_config = candidate;
-        return true;
-    }
+    if (!Config_Validate(&candidate))
+        return false;
 
-    return false;
+    s_config.storage = candidate;
+    s_config.runtime.light_calibration_factor = Q16ToFloat(candidate.light_calibration_q16);
+    return true;
 }
 
 bool Config_Save(void)
 {
-    s_config.version = CONFIG_VERSION;
-    return Storage_Write(RECORD_TYPE_CONFIG, (const uint8_t *)&s_config, sizeof(s_config));
+    s_config.storage.version = CONFIG_SCHEMA_VERSION;
+    s_config.storage.light_calibration_q16 = FloatToQ16(s_config.runtime.light_calibration_factor);
+    return Storage_Write(RECORD_TYPE_CONFIG, (const uint8_t *)&s_config.storage, sizeof(s_config.storage));
 }
 
 bool Config_ResetToDefaults(void)

@@ -5,8 +5,8 @@
 #include <stddef.h>
 #include <stdbool.h>
 
-#define STORAGE_MAGIC           0x52534D43UL  /* "RSMC" */
-#define STORAGE_SCHEMA_VERSION  1U
+#define STORAGE_MAGIC              0x52534D43UL  /* "RSMC" */
+#define STORAGE_RECORD_FORMAT_VERSION  1U
 
 #define RECORD_TYPE_INVALID   0U
 #define RECORD_TYPE_CONFIG    1U
@@ -17,8 +17,8 @@
 
 typedef struct
 {
-    uint32_t magic;           /* must be STORAGE_MAGIC */
-    uint16_t schema_version;
+    uint32_t magic;
+    uint16_t record_format_version;
     uint16_t payload_size;
     uint8_t  record_type;
     uint8_t  flags;
@@ -51,5 +51,6 @@ bool Storage_Read(uint8_t record_type, StoragePayload *payload);
 bool Storage_Write(uint8_t record_type, const uint8_t *data, size_t size);
 bool Storage_Format(void);
 void Storage_GetInfo(StorageInfo *info);
+bool Storage_GetPageInfo(uint8_t record_type, StorageInfo *info);
 
 #endif

@@ -31,6 +31,7 @@ add_executable(test_arch
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Storage/Src/storage.c
     ${CMAKE_CURRENT_SOURCE_DIR}/fakes/fake_platform_time.c
     ${CMAKE_CURRENT_SOURCE_DIR}/fakes/fake_flash.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/fakes/fake_unique_id.c
 )
 target_include_directories(test_arch PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/fakes
@@ -48,6 +49,7 @@ add_executable(test_storage
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Storage/Src/storage.c
     ${CMAKE_CURRENT_SOURCE_DIR}/fakes/fake_platform_time.c
     ${CMAKE_CURRENT_SOURCE_DIR}/fakes/fake_flash.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/fakes/fake_unique_id.c
 )
 target_include_directories(test_storage PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/fakes

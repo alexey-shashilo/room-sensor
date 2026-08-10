@@ -4,6 +4,8 @@
 #include <stdint.h>
 #include <stdbool.h>
 
+#define CONFIG_SCHEMA_VERSION 1U
+
 typedef struct
 {
     uint32_t version;
@@ -14,14 +16,27 @@ typedef struct
     uint32_t retry_period_ms;
     uint32_t telemetry_period_ms;
 
+    uint32_t light_calibration_q16;
+} __attribute__((packed)) ConfigStorageV1;
+
+_Static_assert(sizeof(ConfigStorageV1) == 28, "ConfigStorageV1 size mismatch");
+
+typedef struct
+{
     float light_calibration_factor;
+} RoomSensorRuntimeConfig;
+
+typedef struct
+{
+    ConfigStorageV1 storage;
+    RoomSensorRuntimeConfig runtime;
 } RoomSensorConfig;
 
-void                 Config_LoadDefaults(void);
-bool                 Config_Load(void);
-bool                 Config_Save(void);
-bool                 Config_ResetToDefaults(void);
+void                    Config_LoadDefaults(void);
+bool                    Config_Load(void);
+bool                    Config_Save(void);
+bool                    Config_ResetToDefaults(void);
 const RoomSensorConfig *Config_Get(void);
-bool                 Config_Validate(const RoomSensorConfig *config);
+bool                    Config_Validate(const ConfigStorageV1 *storage);
 
 #endif
