@@ -11,6 +11,7 @@
 #include "communication.h"
 #include "communication_debug.h"
 #include "command.h"
+#include "boot_session.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -40,6 +41,7 @@ static bool              s_watchdog_active = false;
 
 static SelfTestReport    s_self_test;
 static DeviceIdentity    s_device_id;
+static uint64_t          s_boot_id = 0;
 static bool              s_config_from_flash = false;
 static bool              s_device_id_valid = false;
 static bool              s_device_id_persisted = false;
@@ -377,6 +379,13 @@ RoomSensor_Status App_Init(void)
         }
     }
 
+    /* Boot session */
+    {
+        BootSession bs;
+        if (BootSession_Get(&bs))
+            s_boot_id = bs.boot_id;
+    }
+
     /* Save defaults if nothing was persisted */
     if (!s_config_from_flash)
         Config_Save();
@@ -478,6 +487,7 @@ void App_Run(void)
         {
             TelemetrySnapshotInput input;
             input.device_id = s_device_id.device_uuid;
+            input.boot_id = s_boot_id;
             input.room = RoomState_Get(&s_room);
             input.health = s_health;
             input.uptime_ms = now;

@@ -65,6 +65,7 @@ static CommandType StrToType(const char *str)
     if (strcmp(str, "SELF_TEST") == 0)        return COMMAND_SELF_TEST;
     if (strcmp(str, "REBOOT") == 0)           return COMMAND_REBOOT;
     if (strcmp(str, "GET_CAPABILITIES") == 0) return COMMAND_GET_CAPABILITIES;
+    if (strcmp(str, "GET_MANIFEST") == 0)     return COMMAND_GET_MANIFEST;
     return COMMAND_UNKNOWN;
 }
 

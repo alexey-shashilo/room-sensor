@@ -98,12 +98,13 @@ test("seq increments", s2.sequence == s1.sequence + 1);
 
         test("serialize OK", s == SERIALIZE_OK);
         test("written > 0", written > 0);
-        test("contains schema", strstr((char *)buf, "\"schema\": 1") != NULL);
+        test("contains schema", strstr((char *)buf, "\"schema\": 2") != NULL);
         test("contains seq 42", strstr((char *)buf, "\"seq\": 42") != NULL);
         test("contains health ok", strstr((char *)buf, "\"health\": \"ok\"") != NULL);
         test("contains value 72.4", strstr((char *)buf, "72.4") != NULL);
         test("state valid", strstr((char *)buf, "\"state\": \"valid\"") != NULL);
         test("NO session field", strstr((char *)buf, "\"session\"") == NULL);
+    test("contains boot_id", strstr((char *)buf, "\"boot_id\"") != NULL);
     }
 
     /* invalid illuminance */
@@ -279,11 +280,13 @@ size_t exact = req;
         Telemetry_Serialize(&snap, buf, sizeof(buf), &written);
 
         test("device_id uuid format", strstr((char *)buf, "01020304-0506-0708-090a-0b0c0d0e0f10") != NULL);
-        test("schema 1", strstr((char *)buf, "\"schema\": 1") != NULL);
+        test("schema 2", strstr((char *)buf, "\"schema\": 2") != NULL);
         test("seq 42", strstr((char *)buf, "\"seq\": 42") != NULL);
         test("uptime 10000", strstr((char *)buf, "\"uptime_ms\": 10000") != NULL);
         test("lux 72.4", strstr((char *)buf, "72.4") != NULL);
         test("no session field", strstr((char *)buf, "\"session\"") == NULL);
+        test("boot_id present", strstr((char *)buf, "\"boot_id\"") != NULL);
+        test("boot_id format hex", strstr((char *)buf, "\"0000000000000000\"") != NULL);
         test("no trailing comma before close", strstr((char *)buf, ",}") == NULL);
         test("valid JSON close", strstr((char *)buf, "}\n") != NULL);
     }

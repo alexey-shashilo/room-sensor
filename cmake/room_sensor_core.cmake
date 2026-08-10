@@ -20,6 +20,11 @@ set(CORE_SRC
     ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/Command/Src/command_parser.c
     ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/Command/Src/command_dispatcher.c
     ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/Command/Src/command_response.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/Device/Src/device_manifest.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/Device/Src/device_capabilities.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/Device/Src/firmware_metadata.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/Device/Src/boot_session.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/Device/Src/device_manifest_serializer.c
 )
 
 set(CORE_INC
@@ -31,6 +36,7 @@ set(CORE_INC
     ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/Telemetry/Inc
     ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/Communication/Inc
     ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/Command/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/Device/Inc
     ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/Common/Inc
 )
 

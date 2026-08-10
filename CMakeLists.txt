@@ -19,9 +19,27 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS TRUE)
 project(${CMAKE_PROJECT_NAME})
 
 # ============================================================
+# Git SHA injection (deterministic fallback)
+# ============================================================
+execute_process(
+    COMMAND git rev-parse --short=8 HEAD
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    OUTPUT_VARIABLE GIT_SHA
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    ERROR_QUIET
+)
+if(NOT GIT_SHA)
+    set(GIT_SHA "unknown")
+endif()
+set(ROOM_SENSOR_GIT_SHA "${GIT_SHA}" CACHE STRING "Git commit SHA")
+
+# ============================================================
 # Portable Core Library
 # ============================================================
 include(cmake/room_sensor_core.cmake)
+target_compile_definitions(room_sensor_core PUBLIC
+    ROOM_SENSOR_GIT_SHA="${GIT_SHA}"
+)
 
 # ============================================================
 # Platform selection
@@ -49,6 +67,7 @@ if(BUILD_HOST_PLATFORM)
         ${CMAKE_CURRENT_SOURCE_DIR}/Platform/Host/Src/platform_host_reset.c
         ${CMAKE_CURRENT_SOURCE_DIR}/Platform/Host/Src/platform_host_gpio.c
         ${CMAKE_CURRENT_SOURCE_DIR}/Platform/Host/Src/platform_host_init.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/Platform/Host/Src/platform_host_hardware.c
     )
 
     target_include_directories(room_sensor_host PRIVATE
@@ -84,6 +103,7 @@ else()
         ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/Platform/Src/platform_unique_id_stm32.c
         ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/Platform/Src/platform_gpio_stm32.c
         ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/Platform/Src/platform_init_stm32.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/Platform/Src/platform_hardware_stm32.c
     )
 
     target_link_libraries(${CMAKE_PROJECT_NAME}

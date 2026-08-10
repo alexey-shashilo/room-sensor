@@ -101,6 +101,10 @@ SerializeStatus Telemetry_Serialize(
     s = AppendFormat(buf, cap, &pos, "\",\n");
     if (s != SERIALIZE_OK) return s;
 
+    s = AppendFormat(buf, cap, &pos, "  \"boot_id\": \"%016llx\",\n",
+        (unsigned long long)snapshot->boot_id);
+    if (s != SERIALIZE_OK) return s;
+
     s = AppendFormat(buf, cap, &pos,
         "  \"seq\": %lu,\n"
         "  \"uptime_ms\": %lu,\n"

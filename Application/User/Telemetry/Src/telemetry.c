@@ -15,6 +15,7 @@ bool Telemetry_CreateSnapshot(TelemetrySnapshot *snapshot, const TelemetrySnapsh
     snapshot->sequence = s_sequence;
 
     memcpy(snapshot->device_id, input->device_id, 16);
+    snapshot->boot_id = input->boot_id;
     snapshot->uptime_ms = input->uptime_ms;
     snapshot->captured_at_ms = input->uptime_ms;
     snapshot->room = *input->room;

@@ -2,6 +2,8 @@
 #include "command_response.h"
 #include "config.h"
 #include "device_identity.h"
+#include "device_manifest.h"
+#include "device_manifest_serializer.h"
 #include "self_test.h"
 #include "i2c_bus.h"
 #include "storage.h"
@@ -183,6 +185,32 @@ static void HandleGetCapabilities(const CommandRequest *req, CommandResponse *rs
     CommandResponse_Finalize(rsp);
 }
 
+static void HandleGetManifest(const CommandRequest *req, CommandResponse *rsp, const CommandServices *svc)
+{
+    (void)svc;
+    DeviceManifest manifest;
+    DeviceManifest_Build(&manifest);
+
+    uint8_t buf[DEVICE_MANIFEST_SERIALIZED_MAX_SIZE];
+    size_t written = 0;
+    ManifestSerializeStatus ms = DeviceManifest_Serialize(&manifest, buf, sizeof(buf), &written);
+
+    if (ms != MANIFEST_SERIALIZE_OK)
+    {
+        CommandResponse_Init(rsp, req->request_id, COMMAND_STATUS_INTERNAL_ERROR);
+        CommandResponse_Append(rsp, "\"error\":\"serialization_failed\"");
+        CommandResponse_Finalize(rsp);
+        return;
+    }
+
+    CommandResponse_Init(rsp, req->request_id, COMMAND_STATUS_OK);
+    size_t copy = written;
+    if (copy > COMMAND_RESPONSE_MAX_SIZE)
+        copy = COMMAND_RESPONSE_MAX_SIZE;
+    memcpy(rsp->payload, buf, copy);
+    rsp->payload_size = copy;
+}
+
 static void HandleUnknown(const CommandRequest *req, CommandResponse *rsp, const CommandServices *svc)
 {
     (void)svc;
@@ -209,6 +237,7 @@ bool CommandDispatcher_Dispatch(
         case COMMAND_SELF_TEST:        HandleSelfTest(request, response, services); break;
         case COMMAND_REBOOT:           HandleReboot(request, response, services); break;
         case COMMAND_GET_CAPABILITIES: HandleGetCapabilities(request, response, services); break;
+        case COMMAND_GET_MANIFEST:     HandleGetManifest(request, response, services); break;
         default:                       HandleUnknown(request, response, services); break;
     }
     return true;

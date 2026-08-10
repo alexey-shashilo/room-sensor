@@ -52,3 +52,6 @@ bool     HostReset_Clear(void);
 /* === Watchdog === */
 int      HostWdg_GetRefreshCount(void);
 uint32_t HostWdg_GetLastRefreshMs(void);
+
+/* === Hardware / Boot ID === */
+void     HostPlatform_SetBootId(uint64_t id);
