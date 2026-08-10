@@ -11,8 +11,11 @@ add_executable(test_veml7700
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/veml7700/Src/veml7700.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/App/Src/room_state.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/App/Src/config.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Storage/Src/storage.c
     ${CMAKE_CURRENT_SOURCE_DIR}/fakes/fake_i2c_bus.c
     ${CMAKE_CURRENT_SOURCE_DIR}/fakes/fake_platform_time.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/fakes/fake_flash.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/fakes/fake_unique_id.c
 )
 target_include_directories(test_veml7700 PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/fakes
