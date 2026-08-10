@@ -18,6 +18,9 @@ set(CMAKE_PROJECT_NAME room_sensor)
 set(CMAKE_EXPORT_COMPILE_COMMANDS TRUE)
 project(${CMAKE_PROJECT_NAME})
 
+# Include core source/includes list (defines CORE_SRC, CORE_INC, core_add_library)
+include(cmake/room_sensor_core.cmake)
+
 # ============================================================
 # Git SHA injection (deterministic fallback)
 # ============================================================
@@ -34,14 +37,6 @@ endif()
 set(ROOM_SENSOR_GIT_SHA "${GIT_SHA}" CACHE STRING "Git commit SHA")
 
 # ============================================================
-# Portable Core Library
-# ============================================================
-include(cmake/room_sensor_core.cmake)
-target_compile_definitions(room_sensor_core PUBLIC
-    ROOM_SENSOR_GIT_SHA="${GIT_SHA}"
-)
-
-# ============================================================
 # Platform selection
 # ============================================================
 if(BUILD_HOST_TESTS)
@@ -50,9 +45,12 @@ if(BUILD_HOST_TESTS)
 endif()
 
 if(BUILD_HOST_PLATFORM)
-    # Host platform build — compile core only with host platform
-    # (used for local portability verification)
     enable_language(C)
+
+    core_add_library(room_sensor_core)
+    target_compile_definitions(room_sensor_core PUBLIC
+        ROOM_SENSOR_GIT_SHA="${GIT_SHA}"
+    )
 
     add_executable(room_sensor_host)
     set_target_properties(room_sensor_host PROPERTIES WIN32_EXECUTABLE FALSE)
@@ -85,12 +83,20 @@ if(BUILD_HOST_PLATFORM)
     message(STATUS "Host platform build — no ARM toolchain required")
 
 else()
-    # ============================================================
-    # STM32G474 Firmware build
-    # ============================================================
     enable_language(C ASM)
 
-    add_executable(${CMAKE_PROJECT_NAME})
+    add_executable(${CMAKE_PROJECT_NAME}
+        ${CORE_SRC}
+    )
+
+    target_include_directories(${CMAKE_PROJECT_NAME} PUBLIC ${CORE_INC})
+    target_compile_options(${CMAKE_PROJECT_NAME} PRIVATE -Wall -Wextra -Wpedantic)
+
+    target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
+        ROOM_SENSOR_GIT_SHA="${GIT_SHA}"
+        ROOM_SENSOR_VERSION="0.2.0-dev"
+        ROOM_SENSOR_BUILD_TYPE="${CMAKE_BUILD_TYPE}"
+    )
 
     add_subdirectory(cmake/stm32cubemx)
 
@@ -107,14 +113,12 @@ else()
     )
 
     target_link_libraries(${CMAKE_PROJECT_NAME}
-    room_sensor_core stm32cubemx)
+    stm32cubemx
+)
 
     list(REMOVE_ITEM CMAKE_C_IMPLICIT_LINK_LIBRARIES ob)
 
-target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
-)
-
-string(TIMESTAMP BUILD_TIMESTAMP UTC)
+    string(TIMESTAMP BUILD_TIMESTAMP UTC)
     target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
         ROOM_SENSOR_BUILD_TIMESTAMP="${BUILD_TIMESTAMP}"
     )

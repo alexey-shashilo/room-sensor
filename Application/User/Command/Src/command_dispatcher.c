@@ -4,6 +4,7 @@
 #include "device_identity.h"
 #include "device_manifest.h"
 #include "device_manifest_serializer.h"
+#include "provisioning.h"
 #include "self_test.h"
 #include "i2c_bus.h"
 #include "storage.h"
@@ -211,6 +212,119 @@ static void HandleGetManifest(const CommandRequest *req, CommandResponse *rsp, c
     rsp->payload_size = copy;
 }
 
+static void HandleRegisterDevice(const CommandRequest *req, CommandResponse *rsp, const CommandServices *svc)
+{
+    (void)svc;
+
+    /* Parse installation_id from payload */
+    DeviceRegistration current, updated;
+    if (!Provisioning_Load(&current))
+    {
+        CommandResponse_Init(rsp, req->request_id, COMMAND_STATUS_INTERNAL_ERROR);
+        CommandResponse_Append(rsp, "\"error\":\"cannot_read_registration\"");
+        CommandResponse_Finalize(rsp);
+        return;
+    }
+
+    char hex[64];
+    if (!FindField((const uint8_t *)req->payload, req->payload_size, "installation_id", hex, sizeof(hex)))
+    {
+        CommandResponse_Init(rsp, req->request_id, COMMAND_STATUS_INVALID_ARGUMENT);
+        CommandResponse_Append(rsp, "\"error\":\"missing_installation_id\"");
+        CommandResponse_Finalize(rsp);
+        return;
+    }
+
+    EntityId inst;
+    if (!EntityId_Parse(&inst, hex, strlen(hex)))
+    {
+        CommandResponse_Init(rsp, req->request_id, COMMAND_STATUS_INVALID_ARGUMENT);
+        CommandResponse_Append(rsp, "\"error\":\"invalid_installation_id\"");
+        CommandResponse_Finalize(rsp);
+        return;
+    }
+
+    /* Check ownership conflict */
+    if (current.registered && current.installation_valid)
+    {
+        if (memcmp(current.installation_id.bytes, inst.bytes, 16) != 0)
+        {
+            CommandResponse_Init(rsp, req->request_id, COMMAND_STATUS_CONFLICT);
+            CommandResponse_Append(rsp, "\"error\":\"ownership_conflict\"");
+            CommandResponse_Finalize(rsp);
+            return;
+        }
+        /* Same installation — idempotent, no write */
+        CommandResponse_Init(rsp, req->request_id, COMMAND_STATUS_OK);
+        CommandResponse_AppendJson(rsp, "result", "already_registered");
+        CommandResponse_Finalize(rsp);
+        return;
+    }
+
+    updated = current;
+    updated.registered = true;
+    updated.installation_id = inst;
+    updated.installation_valid = true;
+
+    if (!Provisioning_Save(&updated))
+    {
+        CommandResponse_Init(rsp, req->request_id, COMMAND_STATUS_INTERNAL_ERROR);
+        CommandResponse_Append(rsp, "\"error\":\"persist_failed\"");
+        CommandResponse_Finalize(rsp);
+        return;
+    }
+
+    CommandResponse_Init(rsp, req->request_id, COMMAND_STATUS_OK);
+    CommandResponse_AppendJson(rsp, "result", "registered");
+    CommandResponse_Finalize(rsp);
+}
+
+static void HandleUnregisterDevice(const CommandRequest *req, CommandResponse *rsp, const CommandServices *svc)
+{
+    (void)svc;
+    if (!Provisioning_Clear())
+    {
+        CommandResponse_Init(rsp, req->request_id, COMMAND_STATUS_INTERNAL_ERROR);
+        CommandResponse_Append(rsp, "\"error\":\"unregister_failed\"");
+        CommandResponse_Finalize(rsp);
+        return;
+    }
+    CommandResponse_Init(rsp, req->request_id, COMMAND_STATUS_OK);
+    CommandResponse_AppendJson(rsp, "result", "unregistered");
+    CommandResponse_Finalize(rsp);
+}
+
+static void HandleFactoryReset(const CommandRequest *req, CommandResponse *rsp, const CommandServices *svc)
+{
+    (void)svc;
+
+    Provisioning_Clear();
+    Config_ResetToDefaults();
+
+    CommandResponse_Init(rsp, req->request_id, COMMAND_STATUS_OK);
+    CommandResponse_AppendJson(rsp, "result", "factory_reset_complete");
+    CommandResponse_Finalize(rsp);
+}
+
+static void HandleGetProvisioningStatus(const CommandRequest *req, CommandResponse *rsp, const CommandServices *svc)
+{
+    (void)svc;
+    DeviceRegistration reg;
+    ProvisioningStatus ps;
+
+    Provisioning_Load(&reg);
+    Provisioning_GetStatus(&reg, &ps);
+
+    CommandResponse_Init(rsp, req->request_id, COMMAND_STATUS_OK);
+    CommandResponse_AppendJsonInt(rsp, "state", (uint32_t)ps.state);
+    CommandResponse_AppendJsonBool(rsp, "registered", ps.registered);
+    CommandResponse_AppendJsonBool(rsp, "installation_valid", ps.installation_valid);
+    CommandResponse_AppendJsonBool(rsp, "building_valid", ps.building_valid);
+    CommandResponse_AppendJsonBool(rsp, "room_valid", ps.room_valid);
+    CommandResponse_AppendJsonInt(rsp, "revision", ps.revision);
+    CommandResponse_Finalize(rsp);
+}
+
 static void HandleUnknown(const CommandRequest *req, CommandResponse *rsp, const CommandServices *svc)
 {
     (void)svc;
@@ -238,7 +352,11 @@ bool CommandDispatcher_Dispatch(
         case COMMAND_REBOOT:           HandleReboot(request, response, services); break;
         case COMMAND_GET_CAPABILITIES: HandleGetCapabilities(request, response, services); break;
         case COMMAND_GET_MANIFEST:     HandleGetManifest(request, response, services); break;
-        default:                       HandleUnknown(request, response, services); break;
+        case COMMAND_REGISTER_DEVICE:      HandleRegisterDevice(request, response, services); break;
+        case COMMAND_UNREGISTER_DEVICE:    HandleUnregisterDevice(request, response, services); break;
+        case COMMAND_FACTORY_RESET:        HandleFactoryReset(request, response, services); break;
+        case COMMAND_GET_PROVISIONING_STATUS: HandleGetProvisioningStatus(request, response, services); break;
+        default:                           HandleUnknown(request, response, services); break;
     }
     return true;
 }

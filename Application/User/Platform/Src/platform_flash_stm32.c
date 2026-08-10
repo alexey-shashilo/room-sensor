@@ -1,20 +1,24 @@
 #include "platform_flash.h"
 #include "stm32g4xx_hal.h"
 
-#define FLASH_START_ADDR  0x0807E000U
+#define FLASH_START_ADDR  0x0807C000U
 #define STORAGE_PAGE_SIZE  0x1000U
-#define FLASH_TOTAL_SIZE   0x2000U
+#define FLASH_TOTAL_SIZE   0x3000U
 
-static const PlatformFlashInfo s_info = {
-    .start_address = FLASH_START_ADDR,
-    .page_size     = STORAGE_PAGE_SIZE,
-    .total_size    = FLASH_TOTAL_SIZE,
-    .page_count    = 2
-};
+static uint32_t FlashAddr(uint32_t offset)
+{
+    return FLASH_START_ADDR + offset;
+}
 
 const PlatformFlashInfo *Platform_FlashGetInfo(void)
 {
-    return &s_info;
+    static const PlatformFlashInfo info = {
+        .start_address = FLASH_START_ADDR,
+        .page_size     = STORAGE_PAGE_SIZE,
+        .total_size    = FLASH_TOTAL_SIZE,
+        .page_count    = 3
+    };
+    return &info;
 }
 
 PlatformFlashStatus Platform_FlashRead(uint32_t offset, void *data, size_t size)
@@ -39,7 +43,7 @@ PlatformFlashStatus Platform_FlashWrite(uint32_t offset, const void *data, size_
     HAL_FLASH_Unlock();
 
     const uint8_t *src = (const uint8_t *)data;
-    uint32_t addr = FLASH_START_ADDR + offset;
+    uint32_t addr = FlashAddr(offset);
 
     for (size_t i = 0; i < size; i += 8U)
     {

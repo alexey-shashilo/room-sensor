@@ -2,7 +2,7 @@
 #include "platform_flash.h"
 #include <string.h>
 
-#define PAGE_FOR_TYPE(t)  (((t) == RECORD_TYPE_IDENTITY) ? 1U : 0U)
+#define PAGE_FOR_TYPE(t)  (((t) == RECORD_TYPE_IDENTITY) ? 1U : (((t) == RECORD_TYPE_REGISTRATION) ? 2U : 0U))
 
 static uint32_t Storage_Crc32(const uint8_t *data, size_t len)
 {
@@ -111,7 +111,11 @@ bool Storage_Read(uint8_t record_type, StoragePayload *payload)
 {
     if (payload == NULL) return false;
 
-    uint32_t base_offset = (record_type == RECORD_TYPE_IDENTITY) ? STORAGE_SLOT_SIZE * 2 : 0U;
+    uint32_t base_offset = 0;
+    if (record_type == RECORD_TYPE_IDENTITY)
+        base_offset = STORAGE_SLOT_SIZE * 2;
+    else if (record_type == RECORD_TYPE_REGISTRATION)
+        base_offset = STORAGE_SLOT_SIZE * 4;
 
     StorageRecordHeader hdr_a, hdr_b;
     bool valid_a = false, valid_b = false;
@@ -160,20 +164,15 @@ bool Storage_Read(uint8_t record_type, StoragePayload *payload)
 bool Storage_Write(uint8_t record_type, const uint8_t *data, size_t size)
 {
     if (size > STORAGE_PAYLOAD_MAX) return false;
-    if ((record_type != RECORD_TYPE_CONFIG) && (record_type != RECORD_TYPE_IDENTITY))
+    if ((record_type != RECORD_TYPE_CONFIG) && (record_type != RECORD_TYPE_IDENTITY) && (record_type != RECORD_TYPE_REGISTRATION))
         return false;
 
     uint32_t current_seq;
     uint8_t active_slot;
     
-    if (record_type == RECORD_TYPE_IDENTITY)
-    {
-        active_slot = SelectSlot(STORAGE_SLOT_SIZE * 2, &current_seq);
-    }
-    else
-    {
-        active_slot = SelectSlot(0, &current_seq);
-    }
+    uint32_t base = (record_type == RECORD_TYPE_IDENTITY) ? STORAGE_SLOT_SIZE * 2 :
+                 (record_type == RECORD_TYPE_REGISTRATION) ? STORAGE_SLOT_SIZE * 4 : 0;
+    active_slot = SelectSlot(base, &current_seq);
 
     uint8_t write_slot;
     if (active_slot == 0xFF)
@@ -209,7 +208,8 @@ bool Storage_Write(uint8_t record_type, const uint8_t *data, size_t size)
     size_t aligned = (total + 7U) & ~7U;
     if (aligned > STORAGE_SLOT_SIZE) aligned = STORAGE_SLOT_SIZE;
 
-    uint32_t base_offset = (record_type == RECORD_TYPE_IDENTITY) ? STORAGE_SLOT_SIZE * 2 : 0;
+    uint32_t base_offset = (record_type == RECORD_TYPE_IDENTITY) ? STORAGE_SLOT_SIZE * 2 :
+                              (record_type == RECORD_TYPE_REGISTRATION) ? STORAGE_SLOT_SIZE * 4 : 0;
     uint32_t write_offset = base_offset + (uint32_t)write_slot * STORAGE_SLOT_SIZE;
 
     if (Platform_FlashErase(PAGE_FOR_TYPE(record_type)) != PLATFORM_FLASH_OK)

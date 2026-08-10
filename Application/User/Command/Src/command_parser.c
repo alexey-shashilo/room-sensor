@@ -65,7 +65,11 @@ static CommandType StrToType(const char *str)
     if (strcmp(str, "SELF_TEST") == 0)        return COMMAND_SELF_TEST;
     if (strcmp(str, "REBOOT") == 0)           return COMMAND_REBOOT;
     if (strcmp(str, "GET_CAPABILITIES") == 0) return COMMAND_GET_CAPABILITIES;
-    if (strcmp(str, "GET_MANIFEST") == 0)     return COMMAND_GET_MANIFEST;
+    if (strcmp(str, "GET_MANIFEST") == 0)           return COMMAND_GET_MANIFEST;
+    if (strcmp(str, "REGISTER_DEVICE") == 0)       return COMMAND_REGISTER_DEVICE;
+    if (strcmp(str, "UNREGISTER_DEVICE") == 0)     return COMMAND_UNREGISTER_DEVICE;
+    if (strcmp(str, "FACTORY_RESET") == 0)         return COMMAND_FACTORY_RESET;
+    if (strcmp(str, "GET_PROVISIONING_STATUS") == 0) return COMMAND_GET_PROVISIONING_STATUS;
     return COMMAND_UNKNOWN;
 }
 

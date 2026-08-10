@@ -1,7 +1,7 @@
 #include "fake_flash.h"
 #include <string.h>
 
-static uint8_t s_flash[FAKE_FLASH_SIZE * 2]; /* two pages */
+static uint8_t s_flash[FAKE_FLASH_SIZE * FAKE_FLASH_PAGES];
 static bool s_write_fail = false;
 
 void FakeFlash_Init(void)
@@ -32,8 +32,8 @@ const PlatformFlashInfo *Platform_FlashGetInfo(void)
     static const PlatformFlashInfo info = {
         .start_address = 0U,
         .page_size     = FAKE_FLASH_SIZE,
-        .total_size    = FAKE_FLASH_SIZE * 2,
-        .page_count    = 2
+        .total_size    = FAKE_FLASH_SIZE * FAKE_FLASH_PAGES,
+        .page_count    = FAKE_FLASH_PAGES
     };
     return &info;
 }
@@ -58,7 +58,7 @@ PlatformFlashStatus Platform_FlashWrite(uint32_t offset, const void *data, size_
 PlatformFlashStatus Platform_FlashErase(uint32_t page_index)
 {
     if (s_write_fail) return PLATFORM_FLASH_ERROR;
-    if (page_index >= 2) return PLATFORM_FLASH_INVALID_ARG;
+    if (page_index >= FAKE_FLASH_PAGES) return PLATFORM_FLASH_INVALID_ARG;
     memset(s_flash + page_index * FAKE_FLASH_SIZE, 0xFF, FAKE_FLASH_SIZE);
     return PLATFORM_FLASH_OK;
 }
