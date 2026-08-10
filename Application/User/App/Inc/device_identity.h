@@ -17,7 +17,7 @@ typedef struct
 
 bool DeviceIdentity_Load(DeviceIdentity *id);
 bool DeviceIdentity_Derive(DeviceIdentity *id);
-bool DeviceIdentity_Generate(DeviceIdentity *id);
+bool DeviceIdentity_Save(const DeviceIdentity *id);
 bool DeviceIdentity_Validate(const DeviceIdentity *id);
 void DeviceIdentity_GetShortId(const DeviceIdentity *id, char *out, size_t max_len);
 

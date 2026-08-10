@@ -6,5 +6,6 @@
 
 void FakeUniqueId_Set(const uint8_t uid[12]);
 void FakeUniqueId_SetFail(bool fail);
+int  FakeUniqueId_GetCallCount(void);
 
 #endif

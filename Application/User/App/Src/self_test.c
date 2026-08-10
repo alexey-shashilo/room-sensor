@@ -54,7 +54,7 @@ void SelfTest_Run(SelfTestReport *report, const I2cBus *bus)
     }
     else
     {
-        if (DeviceIdentity_Generate(&id))
+        if (DeviceIdentity_Derive(&id) && DeviceIdentity_Save(&id))
             report->identity = SELF_TEST_PASS;
         else
             report->identity = SELF_TEST_FAIL;

@@ -42,10 +42,7 @@ static void DeriveUuid(uint8_t uuid[DEVICE_UUID_SIZE])
         uuid[(shift + 11U) & 15U] ^= uid[i] ^ 0xAAU;
     }
 
-    /* UUID version 8 (custom/deterministic): byte 6, top nibble = 1000 */
     uuid[6] = (uuid[6] & 0x0FU) | 0x80U;
-
-    /* UUID variant RFC 4122: byte 8, top bits = 10 */
     uuid[8] = (uuid[8] & 0x3FU) | 0x80U;
 }
 
@@ -89,14 +86,6 @@ static bool Identity_FromStorage(DeviceIdentity *runtime, const IdentityStorageV
     return DeviceIdentity_Validate(runtime);
 }
 
-static void Identity_ToStorage(IdentityStorageV1 *stored, const DeviceIdentity *runtime)
-{
-    if ((stored == NULL) || (runtime == NULL)) return;
-    stored->schema_version = IDENTITY_SCHEMA_VERSION;
-    memcpy(stored->device_uuid, runtime->device_uuid, DEVICE_UUID_SIZE);
-    stored->hardware_revision = runtime->hardware_revision;
-}
-
 bool DeviceIdentity_Load(DeviceIdentity *id)
 {
     if (id == NULL) return false;
@@ -114,12 +103,16 @@ bool DeviceIdentity_Load(DeviceIdentity *id)
     return Identity_FromStorage(id, &stored);
 }
 
-bool DeviceIdentity_Generate(DeviceIdentity *id)
+bool DeviceIdentity_Save(const DeviceIdentity *id)
 {
-    if (!DeviceIdentity_Derive(id)) return false;
+    if (id == NULL) return false;
+    if (!DeviceIdentity_Validate(id)) return false;
 
     IdentityStorageV1 stored;
-    Identity_ToStorage(&stored, id);
+    stored.schema_version = IDENTITY_SCHEMA_VERSION;
+    memcpy(stored.device_uuid, id->device_uuid, DEVICE_UUID_SIZE);
+    stored.hardware_revision = id->hardware_revision;
+
     return Storage_Write(RECORD_TYPE_IDENTITY, (const uint8_t *)&stored, sizeof(stored));
 }
 

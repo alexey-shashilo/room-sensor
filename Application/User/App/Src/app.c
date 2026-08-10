@@ -364,9 +364,15 @@ RoomSensor_Status App_Init(void)
     }
     else
     {
-        s_device_id_valid = DeviceIdentity_Derive(&s_device_id);
-        if (s_device_id_valid && DeviceIdentity_Generate(&s_device_id))
-            s_device_id_persisted = true;
+        DeviceIdentity derived;
+        if (DeviceIdentity_Derive(&derived))
+        {
+            s_device_id = derived;
+            s_device_id_valid = true;
+
+            if (DeviceIdentity_Save(&derived))
+                s_device_id_persisted = true;
+        }
     }
 
     /* Save defaults if nothing was persisted */
