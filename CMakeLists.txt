@@ -47,6 +47,10 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/Telemetry/Src/telemetry_serializer.c
     ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/Communication/Src/communication.c
     ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/Communication/Src/communication_debug.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/Command/Src/command.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/Command/Src/command_parser.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/Command/Src/command_dispatcher.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/Command/Src/command_response.c
 )
 
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
@@ -57,6 +61,7 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/Storage/Inc
     ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/Telemetry/Inc
     ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/Communication/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/Command/Inc
     ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/Common/Inc
 )
 

@@ -10,7 +10,9 @@
 #include "telemetry.h"
 #include "communication.h"
 #include "communication_debug.h"
+#include "command.h"
 #include <stdio.h>
+#include <string.h>
 
 #define WATCHDOG_TIMEOUT_MS 4000U
 
@@ -385,6 +387,17 @@ RoomSensor_Status App_Init(void)
         static CommunicationPort s_debug_port;
         CommunicationDebug_Init(&s_debug_port);
         Communication_SetPort(&s_debug_port);
+
+        CommandServices cmd_svc;
+        memset(&cmd_svc, 0, sizeof(cmd_svc));
+        cmd_svc.room = RoomState_Get(&s_room);
+        cmd_svc.config = Config_Get();
+        cmd_svc.identity = &s_device_id;
+        cmd_svc.self_test = &s_self_test;
+        cmd_svc.bus = (struct I2cBus *)s_i2c_bus;
+        cmd_svc.uptime_ms = 0;
+        cmd_svc.watchdog_active = false;
+        Command_Init(&cmd_svc);
     }
 
     App_DoRetry();
@@ -403,6 +416,8 @@ void App_Run(void)
 {
     const RoomSensorConfig *cfg = Config_Get();
     uint32_t now = Platform_GetTickMs();
+
+    Command_UpdateRuntime(now - s_start_ms, s_watchdog_active, &s_light_rt, &s_disp_rt, s_reset_cause);
 
     if ((now - s_last_retry_ms) >= cfg->storage.retry_period_ms)
     {
@@ -474,6 +489,7 @@ void App_Run(void)
     }
 
     Communication_Run();
+    Command_Run();
 
     Platform_WatchdogRefresh();
 }
