@@ -3,6 +3,7 @@
 #include <string.h>
 
 static uint8_t s_fake_uid[12] = {0xAA, 0xBB, 0xCC, 0xDD, 0x01, 0x02, 0x03, 0x04, 0xFE, 0xED, 0xBE, 0xEF};
+static bool s_fail_mode = false;
 
 void FakeUniqueId_Set(const uint8_t uid[12])
 {
@@ -12,10 +13,16 @@ void FakeUniqueId_Set(const uint8_t uid[12])
         memset(s_fake_uid, 0, 12);
 }
 
+void FakeUniqueId_SetFail(bool fail)
+{
+    s_fail_mode = fail;
+}
+
 bool Platform_GetUniqueId(uint8_t *out, size_t size)
 {
     if (out == NULL) return false;
     if (size < 12) return false;
+    if (s_fail_mode) return false;
     memcpy(out, s_fake_uid, 12);
     return true;
 }

@@ -4,28 +4,46 @@
 #include <string.h>
 #include <stdio.h>
 
-static void DeriveUuid(uint8_t uuid[16])
+#define IDENTITY_NAMESPACE "ClimateHub.RoomSensor.Identity.v2"
+
+typedef struct
+{
+    uint32_t schema_version;
+    uint8_t  device_uuid[DEVICE_UUID_SIZE];
+    uint32_t hardware_revision;
+} __attribute__((packed)) IdentityStorageV1;
+
+_Static_assert(sizeof(IdentityStorageV1) == 24, "IdentityStorageV1 size mismatch");
+
+static void DeriveUuid(uint8_t uuid[DEVICE_UUID_SIZE])
 {
     uint8_t uid[PLATFORM_UNIQUE_ID_SIZE];
+
     if (!Platform_GetUniqueId(uid, sizeof(uid)))
     {
-        memset(uuid, 0, sizeof(uid));
+        memset(uuid, 0, DEVICE_UUID_SIZE);
         return;
     }
 
-    /* Deterministic hash: mix uid bytes into 128-bit result */
-    /* Simple mixing: XOR-rotate each UID byte through the UUID */
-    memset(uuid, 0, 16);
+    memset(uuid, 0, DEVICE_UUID_SIZE);
+
+    size_t ns_len = strlen(IDENTITY_NAMESPACE);
+    for (size_t i = 0; i < ns_len; i++)
+    {
+        unsigned shift = (unsigned)((i * 7U) & 15U);
+        uuid[shift] ^= (uint8_t)IDENTITY_NAMESPACE[i];
+    }
+
     for (size_t i = 0; i < PLATFORM_UNIQUE_ID_SIZE; i++)
     {
         unsigned shift = (unsigned)((i * 5U) & 15U);
-        uuid[shift]     ^= uid[i];
-        uuid[(shift + 1U) & 15U] ^= (uid[i] << 3U) | (uid[i] >> 5U);
-        uuid[(shift + 7U) & 15U] ^= uid[i] ^ 0x55U;
+        uuid[shift] ^= uid[i];
+        uuid[(shift + 3U) & 15U] ^= (uid[i] << 2U) | (uid[i] >> 6U);
+        uuid[(shift + 11U) & 15U] ^= uid[i] ^ 0xAAU;
     }
 
-    /* UUID version 4: byte 6, top nibble = 0100 */
-    uuid[6] = (uuid[6] & 0x0FU) | 0x40U;
+    /* UUID version 8 (custom/deterministic): byte 6, top nibble = 1000 */
+    uuid[6] = (uuid[6] & 0x0FU) | 0x80U;
 
     /* UUID variant RFC 4122: byte 8, top bits = 10 */
     uuid[8] = (uuid[8] & 0x3FU) | 0x80U;
@@ -35,24 +53,48 @@ bool DeviceIdentity_Validate(const DeviceIdentity *id)
 {
     if (id == NULL) return false;
 
-    /* UUID must not be all zero or all FF */
-    uint8_t zero[16] = {0};
-    if (memcmp(id->device_uuid, zero, 16) == 0) return false;
+    uint8_t zero[DEVICE_UUID_SIZE] = {0};
+    if (memcmp(id->device_uuid, zero, DEVICE_UUID_SIZE) == 0) return false;
 
-    uint8_t ff[16];
-    memset(ff, 0xFF, 16);
-    if (memcmp(id->device_uuid, ff, 16) == 0) return false;
+    uint8_t ff[DEVICE_UUID_SIZE];
+    memset(ff, 0xFF, DEVICE_UUID_SIZE);
+    if (memcmp(id->device_uuid, ff, DEVICE_UUID_SIZE) == 0) return false;
 
-    /* UUID version bits: byte 6 top nibble must be 0100 (version 4) */
-    if ((id->device_uuid[6] & 0xF0U) != 0x40U) return false;
-
-    /* UUID variant bits: byte 8 top bits must be 10xxxxxx (RFC 4122) */
+    if ((id->device_uuid[6] & 0xF0U) != 0x80U) return false;
     if ((id->device_uuid[8] & 0xC0U) != 0x80U) return false;
-
     if (id->hardware_revision == 0) return false;
-    if (id->identity_schema_version == 0) return false;
 
     return true;
+}
+
+bool DeviceIdentity_Derive(DeviceIdentity *id)
+{
+    if (id == NULL) return false;
+
+    memset(id, 0, sizeof(*id));
+    DeriveUuid(id->device_uuid);
+    id->hardware_revision = ROOM_SENSOR_HW_REVISION;
+
+    return DeviceIdentity_Validate(id);
+}
+
+static bool Identity_FromStorage(DeviceIdentity *runtime, const IdentityStorageV1 *stored)
+{
+    if ((runtime == NULL) || (stored == NULL)) return false;
+    if (stored->schema_version != IDENTITY_SCHEMA_VERSION) return false;
+
+    memcpy(runtime->device_uuid, stored->device_uuid, DEVICE_UUID_SIZE);
+    runtime->hardware_revision = stored->hardware_revision;
+
+    return DeviceIdentity_Validate(runtime);
+}
+
+static void Identity_ToStorage(IdentityStorageV1 *stored, const DeviceIdentity *runtime)
+{
+    if ((stored == NULL) || (runtime == NULL)) return;
+    stored->schema_version = IDENTITY_SCHEMA_VERSION;
+    memcpy(stored->device_uuid, runtime->device_uuid, DEVICE_UUID_SIZE);
+    stored->hardware_revision = runtime->hardware_revision;
 }
 
 bool DeviceIdentity_Load(DeviceIdentity *id)
@@ -63,39 +105,22 @@ bool DeviceIdentity_Load(DeviceIdentity *id)
     if (!Storage_Read(RECORD_TYPE_IDENTITY, &payload))
         return false;
 
-    if (payload.size != sizeof(DeviceIdentity))
+    if (payload.size != sizeof(IdentityStorageV1))
         return false;
 
-    DeviceIdentity candidate;
-    memcpy(&candidate, payload.data, sizeof(candidate));
+    IdentityStorageV1 stored;
+    memcpy(&stored, payload.data, sizeof(stored));
 
-    if (!DeviceIdentity_Validate(&candidate))
-        return false;
-
-    *id = candidate;
-    return true;
+    return Identity_FromStorage(id, &stored);
 }
 
 bool DeviceIdentity_Generate(DeviceIdentity *id)
 {
-    if (id == NULL) return false;
+    if (!DeviceIdentity_Derive(id)) return false;
 
-    memset(id, 0, sizeof(*id));
-    DeriveUuid(id->device_uuid);
-    id->hardware_revision = 1;
-    id->identity_schema_version = IDENTITY_SCHEMA_VERSION;
-
-    if (!DeviceIdentity_Validate(id))
-        return false;
-
-    return Storage_Write(RECORD_TYPE_IDENTITY, (const uint8_t *)id, sizeof(*id));
-}
-
-bool DeviceIdentity_Save(const DeviceIdentity *id)
-{
-    if (id == NULL) return false;
-    if (!DeviceIdentity_Validate(id)) return false;
-    return Storage_Write(RECORD_TYPE_IDENTITY, (const uint8_t *)id, sizeof(*id));
+    IdentityStorageV1 stored;
+    Identity_ToStorage(&stored, id);
+    return Storage_Write(RECORD_TYPE_IDENTITY, (const uint8_t *)&stored, sizeof(stored));
 }
 
 void DeviceIdentity_GetShortId(const DeviceIdentity *id, char *out, size_t max_len)

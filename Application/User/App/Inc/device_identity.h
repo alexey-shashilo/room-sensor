@@ -5,18 +5,19 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define IDENTITY_SCHEMA_VERSION 1U
+#define DEVICE_UUID_SIZE            16U
+#define IDENTITY_SCHEMA_VERSION     2U
+#define ROOM_SENSOR_HW_REVISION     1U
 
 typedef struct
 {
-    uint8_t  device_uuid[16];
+    uint8_t  device_uuid[DEVICE_UUID_SIZE];
     uint32_t hardware_revision;
-    uint32_t identity_schema_version;
 } DeviceIdentity;
 
 bool DeviceIdentity_Load(DeviceIdentity *id);
+bool DeviceIdentity_Derive(DeviceIdentity *id);
 bool DeviceIdentity_Generate(DeviceIdentity *id);
-bool DeviceIdentity_Save(const DeviceIdentity *id);
 bool DeviceIdentity_Validate(const DeviceIdentity *id);
 void DeviceIdentity_GetShortId(const DeviceIdentity *id, char *out, size_t max_len);
 

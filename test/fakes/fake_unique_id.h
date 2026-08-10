@@ -5,5 +5,6 @@
 #include <stdbool.h>
 
 void FakeUniqueId_Set(const uint8_t uid[12]);
+void FakeUniqueId_SetFail(bool fail);
 
 #endif

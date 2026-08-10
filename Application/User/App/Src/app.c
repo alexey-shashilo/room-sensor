@@ -40,6 +40,7 @@ static SelfTestReport    s_self_test;
 static DeviceIdentity    s_device_id;
 static bool              s_config_from_flash = false;
 static bool              s_device_id_valid = false;
+static bool              s_device_id_persisted = false;
 
 static RoomState         s_room;
 
@@ -301,6 +302,9 @@ static void App_PrintBootDiag(void)
            (double)Config_Get()->runtime.light_calibration_factor,
            short_id);
 
+    printf("ID valid=%d persisted=%d\r\n",
+           (int)s_device_id_valid, (int)s_device_id_persisted);
+
     printf("TELEMETRY schema=%u period=%lu\r\n",
            (unsigned)TELEMETRY_SCHEMA_VERSION,
            (unsigned long)Config_Get()->storage.telemetry_period_ms);
@@ -354,9 +358,16 @@ RoomSensor_Status App_Init(void)
 
     /* Device identity */
     if (DeviceIdentity_Load(&s_device_id))
+    {
         s_device_id_valid = true;
+        s_device_id_persisted = true;
+    }
     else
-        s_device_id_valid = DeviceIdentity_Generate(&s_device_id);
+    {
+        s_device_id_valid = DeviceIdentity_Derive(&s_device_id);
+        if (s_device_id_valid && DeviceIdentity_Generate(&s_device_id))
+            s_device_id_persisted = true;
+    }
 
     /* Save defaults if nothing was persisted */
     if (!s_config_from_flash)
