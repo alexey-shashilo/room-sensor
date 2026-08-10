@@ -1,4 +1,4 @@
-# room_sensor_core.cmake — defines portable core sources and includes
+# room_sensor_core.cmake — defines portable core sources, includes, and a helper function
 
 set(CORE_SRC
     ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/App/Src/app.c
@@ -39,3 +39,13 @@ set(CORE_INC
     ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/Provisioning/Inc
     ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/Common/Inc
 )
+
+function(core_add_library TARGET)
+    add_library(${TARGET} STATIC ${CORE_SRC})
+    target_include_directories(${TARGET} PUBLIC ${CORE_INC})
+    target_compile_options(${TARGET} PRIVATE -Wall -Wextra -Wpedantic)
+    target_compile_definitions(${TARGET} PUBLIC
+        ROOM_SENSOR_VERSION="0.2.0-dev"
+        ROOM_SENSOR_BUILD_TYPE="${CMAKE_BUILD_TYPE}"
+    )
+endfunction()

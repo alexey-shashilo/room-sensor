@@ -297,7 +297,7 @@ int main(void)
         DeviceIdentity_Derive(&id);
         DeviceIdentity_Save(&id);
 
-        FakeFlash_Corrupt(4096, 24);
+        FakeFlash_Corrupt(8192, 24);
         test("corrupted identity rejected", !DeviceIdentity_Load(&id));
     }
 
