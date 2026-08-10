@@ -68,12 +68,14 @@ add_executable(test_telemetry
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/App/Src/room_state.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/App/Src/config.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/App/Src/device_identity.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Telemetry/Src/telemetry.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Telemetry/Src/telemetry_serializer.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Communication/Src/communication.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Storage/Src/storage.c
     ${CMAKE_CURRENT_SOURCE_DIR}/fakes/fake_platform_time.c
     ${CMAKE_CURRENT_SOURCE_DIR}/fakes/fake_communication_port.c
     ${CMAKE_CURRENT_SOURCE_DIR}/fakes/fake_flash.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/fakes/fake_unique_id.c
 )
 target_include_directories(test_telemetry PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/fakes
@@ -109,6 +111,7 @@ target_include_directories(test_longrun PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Telemetry/Inc
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Communication/Inc
 )
+target_link_libraries(test_longrun m)
 add_test(NAME test_longrun COMMAND test_longrun)
 
 enable_testing()
