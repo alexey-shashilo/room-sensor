@@ -25,6 +25,7 @@ set(CORE_SRC
     ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/Device/Src/firmware_metadata.c
     ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/Device/Src/boot_session.c
     ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/Device/Src/device_manifest_serializer.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/Device/Src/device_lifecycle.c
 )
 
 set(CORE_INC

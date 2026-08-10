@@ -8,10 +8,11 @@
 #include "storage.h"
 #include "device_identity.h"
 #include "telemetry.h"
+#include "boot_session.h"
+#include "device_lifecycle.h"
 #include "communication.h"
 #include "communication_debug.h"
 #include "command.h"
-#include "boot_session.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -208,7 +209,7 @@ static void App_DoUpdateDisplay(void)
     }
 }
 
-static void App_DoRetry(void)
+void App_DoRetry(void)
 {
     switch (s_light_rt.state)
     {
@@ -350,47 +351,10 @@ RoomSensor_Status App_Init(void)
 
     RoomState_Init(&s_room);
     SelfTest_Init(&s_self_test);
-
-    /* Initialize storage */
     Storage_Init();
 
-    /* Load config — fall back to defaults */
-    if (Config_Load())
-        s_config_from_flash = true;
-    else
-        Config_LoadDefaults();
+    DeviceLifecycle_Init(LIFECYCLE_BOOT);
 
-    /* Device identity */
-    if (DeviceIdentity_Load(&s_device_id))
-    {
-        s_device_id_valid = true;
-        s_device_id_persisted = true;
-    }
-    else
-    {
-        DeviceIdentity derived;
-        if (DeviceIdentity_Derive(&derived))
-        {
-            s_device_id = derived;
-            s_device_id_valid = true;
-
-            if (DeviceIdentity_Save(&derived))
-                s_device_id_persisted = true;
-        }
-    }
-
-    /* Boot session */
-    {
-        BootSession bs;
-        if (BootSession_Get(&bs))
-            s_boot_id = bs.boot_id;
-    }
-
-    /* Save defaults if nothing was persisted */
-    if (!s_config_from_flash)
-        Config_Save();
-
-    /* Initialize communication (debug UART port) */
     Communication_Init();
     {
         static CommunicationPort s_debug_port;
@@ -409,24 +373,107 @@ RoomSensor_Status App_Init(void)
         Command_Init(&cmd_svc);
     }
 
-    App_DoRetry();
-
-    SelfTest_Run(&s_self_test, s_i2c_bus);
-    App_UpdateHealth();
-
-    s_watchdog_active = Platform_WatchdogInit(WATCHDOG_TIMEOUT_MS);
-
-    App_PrintBootDiag();
-
     return ROOM_SENSOR_OK;
 }
 
 void App_Run(void)
 {
-    const RoomSensorConfig *cfg = Config_Get();
     uint32_t now = Platform_GetTickMs();
 
     Command_UpdateRuntime(now - s_start_ms, s_watchdog_active, &s_light_rt, &s_disp_rt, s_reset_cause);
+
+    /* ================================================================
+       Device Lifecycle State Machine
+       ================================================================ */
+    {
+        LifecycleState lc = DeviceLifecycle_GetState();
+
+        switch (lc)
+        {
+            case LIFECYCLE_BOOT:
+                DeviceLifecycle_TransitionTo(LIFECYCLE_LOAD_CONFIGURATION);
+                break;
+
+            case LIFECYCLE_LOAD_CONFIGURATION:
+                if (Config_Load())
+                    s_config_from_flash = true;
+                else
+                    Config_LoadDefaults();
+                DeviceLifecycle_TransitionTo(LIFECYCLE_LOAD_IDENTITY);
+                break;
+
+            case LIFECYCLE_LOAD_IDENTITY:
+            {
+                if (DeviceIdentity_Load(&s_device_id))
+                {
+                    s_device_id_valid = true;
+                    s_device_id_persisted = true;
+                }
+                else
+                {
+                    DeviceIdentity derived;
+                    if (DeviceIdentity_Derive(&derived))
+                    {
+                        s_device_id = derived;
+                        s_device_id_valid = true;
+                        if (DeviceIdentity_Save(&derived))
+                            s_device_id_persisted = true;
+                    }
+                }
+                DeviceLifecycle_TransitionTo(LIFECYCLE_CREATE_BOOT_SESSION);
+                break;
+            }
+
+            case LIFECYCLE_CREATE_BOOT_SESSION:
+            {
+                BootSession bs;
+                if (BootSession_Get(&bs))
+                    s_boot_id = bs.boot_id;
+                if (!s_config_from_flash)
+                    Config_Save();
+                DeviceLifecycle_TransitionTo(LIFECYCLE_SELF_TEST);
+                break;
+            }
+
+            case LIFECYCLE_SELF_TEST:
+                SelfTest_Run(&s_self_test, s_i2c_bus);
+                DeviceLifecycle_TransitionTo(LIFECYCLE_PROBE_PERIPHERALS);
+                break;
+
+            case LIFECYCLE_PROBE_PERIPHERALS:
+                App_DoRetry();
+                s_watchdog_active = Platform_WatchdogInit(WATCHDOG_TIMEOUT_MS);
+                DeviceLifecycle_TransitionTo(LIFECYCLE_INITIALIZE_DRIVERS);
+                break;
+
+            case LIFECYCLE_INITIALIZE_DRIVERS:
+                App_DoRetry();
+                DeviceLifecycle_TransitionTo(LIFECYCLE_READY);
+                break;
+
+            case LIFECYCLE_READY:
+                App_UpdateHealth();
+                App_PrintBootDiag();
+                DeviceLifecycle_TransitionTo(LIFECYCLE_OPERATIONAL);
+                break;
+
+            case LIFECYCLE_OPERATIONAL:
+            case LIFECYCLE_DEGRADED:
+                /* Fall through to scheduler below */
+                break;
+
+            default:
+                break;
+        }
+
+        if (!DeviceLifecycle_IsOperational())
+            return;
+    }
+
+    /* ================================================================
+       Cooperative Scheduler (only when OPERATIONAL or DEGRADED)
+       ================================================================ */
+    const RoomSensorConfig *cfg = Config_Get();
 
     if ((now - s_last_retry_ms) >= cfg->storage.retry_period_ms)
     {

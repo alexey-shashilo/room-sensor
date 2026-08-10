@@ -35,5 +35,6 @@ RoomSensor_Status App_Init(void);
 void               App_Run(void);
 void               App_GetStatus(AppStatus *status);
 void               App_SetI2C(const I2cBus *bus);
+void               App_DoRetry(void);
 
 #endif

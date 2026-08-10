@@ -54,4 +54,25 @@ typedef struct
     uint32_t last_failure_ms;
 } DeviceRuntime;
 
+/* ================================================================
+   Device Lifecycle — universal state machine for all Climate Hub devices
+   ================================================================ */
+typedef enum
+{
+    LIFECYCLE_POWER_ON = 0,
+    LIFECYCLE_BOOT,
+    LIFECYCLE_PLATFORM_INIT,
+    LIFECYCLE_LOAD_CONFIGURATION,
+    LIFECYCLE_LOAD_IDENTITY,
+    LIFECYCLE_CREATE_BOOT_SESSION,
+    LIFECYCLE_SELF_TEST,
+    LIFECYCLE_PROBE_PERIPHERALS,
+    LIFECYCLE_INITIALIZE_DRIVERS,
+    LIFECYCLE_RESTORE_RUNTIME,
+    LIFECYCLE_READY,
+    LIFECYCLE_OPERATIONAL,
+    LIFECYCLE_DEGRADED,
+    LIFECYCLE_SAFE_MODE
+} LifecycleState;
+
 #endif
