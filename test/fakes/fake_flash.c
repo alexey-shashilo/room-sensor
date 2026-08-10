@@ -31,7 +31,7 @@ const PlatformFlashInfo *Platform_FlashGetInfo(void)
 {
     static const PlatformFlashInfo info = {
         .start_address = 0U,
-        .page_size     = FAKE_FLASH_SIZE,
+        .page_size     = 2048,
         .total_size    = FAKE_FLASH_SIZE * FAKE_FLASH_PAGES,
         .page_count    = FAKE_FLASH_PAGES
     };
@@ -41,7 +41,8 @@ const PlatformFlashInfo *Platform_FlashGetInfo(void)
 PlatformFlashStatus Platform_FlashRead(uint32_t offset, void *data, size_t size)
 {
     if ((data == NULL) || (size == 0)) return PLATFORM_FLASH_INVALID_ARG;
-    if ((offset + size) > sizeof(s_flash)) return PLATFORM_FLASH_INVALID_ARG;
+    if (offset > sizeof(s_flash)) return PLATFORM_FLASH_INVALID_ARG;
+    if (size > sizeof(s_flash) - offset) return PLATFORM_FLASH_INVALID_ARG;
     memcpy(data, s_flash + offset, size);
     return PLATFORM_FLASH_OK;
 }
@@ -49,7 +50,8 @@ PlatformFlashStatus Platform_FlashRead(uint32_t offset, void *data, size_t size)
 PlatformFlashStatus Platform_FlashWrite(uint32_t offset, const void *data, size_t size)
 {
     if ((data == NULL) || (size == 0)) return PLATFORM_FLASH_INVALID_ARG;
-    if ((offset + size) > sizeof(s_flash)) return PLATFORM_FLASH_INVALID_ARG;
+    if (offset > sizeof(s_flash)) return PLATFORM_FLASH_INVALID_ARG;
+    if (size > sizeof(s_flash) - offset) return PLATFORM_FLASH_INVALID_ARG;
     if (s_write_fail) return PLATFORM_FLASH_ERROR;
     memcpy(s_flash + offset, data, size);
     return PLATFORM_FLASH_OK;
@@ -59,6 +61,6 @@ PlatformFlashStatus Platform_FlashErase(uint32_t page_index)
 {
     if (s_write_fail) return PLATFORM_FLASH_ERROR;
     if (page_index >= FAKE_FLASH_PAGES) return PLATFORM_FLASH_INVALID_ARG;
-    memset(s_flash + page_index * FAKE_FLASH_SIZE, 0xFF, FAKE_FLASH_SIZE);
+    memset(s_flash + page_index * 2048, 0xFF, 2048);
     return PLATFORM_FLASH_OK;
 }

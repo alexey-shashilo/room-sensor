@@ -10,7 +10,7 @@
 extern "C" {
 #endif
 
-#define FAKE_FLASH_SIZE 0x1000U
+#define FAKE_FLASH_SIZE 2048U
 #define FAKE_FLASH_PAGES 6U
 
 void   FakeFlash_Init(void);

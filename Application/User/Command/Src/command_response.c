@@ -14,31 +14,70 @@ void CommandResponse_Init(CommandResponse *response, uint32_t request_id, Comman
     if (response == NULL) return;
     response->request_id = request_id;
     response->status = status;
+    response->overflowed = false;
     response->payload_size = 0;
+}
+
+static bool AppendChecked(CommandResponse *rsp, const char *fmt, va_list args)
+{
+    size_t remaining = COMMAND_RESPONSE_MAX_SIZE - rsp->payload_size;
+    int n = vsnprintf((char *)rsp->payload + rsp->payload_size, remaining, fmt, args);
+    if (n < 0) { rsp->overflowed = true; return false; }
+    if ((size_t)n >= remaining) { rsp->overflowed = true; return false; }
+    rsp->payload_size += (size_t)n;
+    return true;
 }
 
 bool CommandResponse_Append(CommandResponse *response, const char *fmt, ...)
 {
     if ((response == NULL) || (fmt == NULL)) return false;
-    if (response->payload_size >= COMMAND_RESPONSE_MAX_SIZE) return false;
+    if (response->overflowed) return false;
+    if (response->payload_size >= COMMAND_RESPONSE_MAX_SIZE) { response->overflowed = true; return false; }
 
     va_list args;
     va_start(args, fmt);
-    int n = vsnprintf((char *)response->payload + response->payload_size,
-                      COMMAND_RESPONSE_MAX_SIZE - response->payload_size,
-                      fmt, args);
+    bool ok = AppendChecked(response, fmt, args);
     va_end(args);
+    return ok;
+}
 
-    if (n < 0) return false;
-    response->payload_size += (size_t)n;
-    if (response->payload_size > COMMAND_RESPONSE_MAX_SIZE)
-        response->payload_size = COMMAND_RESPONSE_MAX_SIZE;
-    return true;
+static void EscapeAndAppend(CommandResponse *rsp, const char *value)
+{
+    if (value == NULL) return;
+    for (const char *p = value; *p; p++)
+    {
+        char buf[8];
+        size_t n = 0;
+        switch (*p)
+        {
+            case '"':  memcpy(buf, "\\\"", 2); n = 2; break;
+            case '\\': memcpy(buf, "\\\\", 2); n = 2; break;
+            case '\n': memcpy(buf, "\\n", 2); n = 2; break;
+            case '\r': memcpy(buf, "\\r", 2); n = 2; break;
+            case '\t': memcpy(buf, "\\t", 2); n = 2; break;
+            default:
+                if ((uint8_t)*p < 0x20) { snprintf(buf, sizeof(buf), "\\u%04x", (unsigned)(uint8_t)*p); n = strlen(buf); }
+                else { buf[0] = *p; n = 1; }
+                break;
+        }
+        if (rsp->payload_size + n > COMMAND_RESPONSE_MAX_SIZE - 1)
+        {
+            rsp->overflowed = true;
+            return;
+        }
+        memcpy(rsp->payload + rsp->payload_size, buf, n);
+        rsp->payload_size += n;
+    }
 }
 
 bool CommandResponse_AppendJson(CommandResponse *response, const char *key, const char *value)
 {
-    return CommandResponse_Append(response, "\"%s\":\"%s\",", key, value ? value : "");
+    if (!CommandResponse_Append(response, "\"%s\":\"", key)) return false;
+    EscapeAndAppend(response, value ? value : "");
+    if (response->overflowed) return false;
+    if (response->payload_size >= COMMAND_RESPONSE_MAX_SIZE) { response->overflowed = true; return false; }
+    response->payload[response->payload_size] = ','; response->payload_size++;
+    return true;
 }
 
 bool CommandResponse_AppendJsonInt(CommandResponse *response, const char *key, uint32_t value)
@@ -50,13 +89,9 @@ bool CommandResponse_AppendJsonFloat(CommandResponse *response, const char *key,
 {
     if (!IsFinite(value))
         return CommandResponse_Append(response, "\"%s\":null,", key);
-
-    char fmt_val[32];
-    char fmt_key[128];
-    snprintf(fmt_val, sizeof(fmt_val), "%%.%df", decimals);
-    snprintf(fmt_key, sizeof(fmt_key), "\"%s\":%s,", key, fmt_val);
-    return CommandResponse_Append(response, "\"%s\":", key) &&
-           CommandResponse_Append(response, fmt_val, (double)value);
+    char fmt[32];
+    snprintf(fmt, sizeof(fmt), "\"%s\":%%.%df,", key, decimals);
+    return CommandResponse_Append(response, fmt, (double)value);
 }
 
 bool CommandResponse_AppendJsonBool(CommandResponse *response, const char *key, bool value)
@@ -68,8 +103,15 @@ void CommandResponse_Finalize(CommandResponse *response)
 {
     if (response == NULL) return;
 
-    char tmp[COMMAND_RESPONSE_MAX_SIZE];
-    size_t tmp_size = 0;
+    if (response->overflowed)
+    {
+        snprintf((char *)response->payload, COMMAND_RESPONSE_MAX_SIZE,
+            "{\"id\":%lu,\"status\":\"internal_error\",\"schema\":%u,\"error\":\"response_too_large\"}\n",
+            (unsigned long)response->request_id, (unsigned)COMMAND_SCHEMA_VERSION);
+        response->payload_size = strlen((char *)response->payload);
+        response->overflowed = false;
+        return;
+    }
 
     const char *status_str = "unknown";
     switch (response->status)
@@ -83,29 +125,36 @@ void CommandResponse_Finalize(CommandResponse *response)
         case COMMAND_STATUS_INTERNAL_ERROR:    status_str = "internal_error"; break;
     }
 
-    int n = snprintf(tmp, sizeof(tmp),
+    /* Calculate wrapper length first */
+    char wrapper[128];
+    int wn = snprintf(wrapper, sizeof(wrapper),
         "{\"id\":%lu,\"status\":\"%s\",\"schema\":%u,",
-        (unsigned long)response->request_id,
-        status_str,
-        (unsigned)COMMAND_SCHEMA_VERSION);
+        (unsigned long)response->request_id, status_str, (unsigned)COMMAND_SCHEMA_VERSION);
+    if (wn <= 0) { response->overflowed = true; return; }
+    size_t wrapper_len = (size_t)wn;
 
-    if (n > 0) tmp_size = (size_t)n;
+    size_t close_len = 3;  /* "}\n" */
 
-    size_t payload_len = response->payload_size;
-    size_t copy = payload_len;
-    if (tmp_size + copy + 2 > COMMAND_RESPONSE_MAX_SIZE)
-        copy = COMMAND_RESPONSE_MAX_SIZE - tmp_size - 2;
+    if (response->payload_size > 0 && ((char *)response->payload)[response->payload_size - 1] == ',')
+        response->payload_size--;
 
-    if (copy > 0)
-        memcpy(tmp + tmp_size, response->payload, copy);
-    tmp_size += copy;
+    size_t total = wrapper_len + response->payload_size + close_len;
 
-    if (tmp_size > 0 && tmp[tmp_size - 1] == ',')
-        tmp_size--;
+    if (total >= COMMAND_RESPONSE_MAX_SIZE)
+    {
+        snprintf((char *)response->payload, COMMAND_RESPONSE_MAX_SIZE,
+            "{\"id\":%lu,\"status\":\"internal_error\",\"schema\":%u,\"error\":\"response_too_large\"}\n",
+            (unsigned long)response->request_id, (unsigned)COMMAND_SCHEMA_VERSION);
+        response->payload_size = strlen((char *)response->payload);
+        return;
+    }
 
-    n = snprintf(tmp + tmp_size, sizeof(tmp) - tmp_size, "}\n");
-    if (n > 0) tmp_size += (size_t)n;
+    /* Shift payload right to make room for wrapper */
+    memmove(response->payload + wrapper_len, response->payload, response->payload_size);
+    memcpy(response->payload, wrapper, wrapper_len);
+    response->payload_size += wrapper_len;
 
-    memcpy(response->payload, tmp, tmp_size);
-    response->payload_size = tmp_size;
+    snprintf((char *)response->payload + response->payload_size,
+             COMMAND_RESPONSE_MAX_SIZE - response->payload_size, "}\n");
+    response->payload_size += close_len;
 }

@@ -6,14 +6,14 @@
 #include <stddef.h>
 #include "room_sensor_types.h"
 #include "room_state.h"
+#include "config.h"
 #include "device_identity.h"
 #include "self_test.h"
-#include "config.h"
 #include "platform_reset.h"
 
-#define COMMAND_SCHEMA_VERSION     1U
-#define COMMAND_RESPONSE_MAX_SIZE  1024U
-#define COMMAND_INPUT_BUFFER_SIZE  512U
+#define COMMAND_SCHEMA_VERSION       1U
+#define COMMAND_RESPONSE_MAX_SIZE    1024U
+#define COMMAND_INPUT_BUFFER_SIZE    512U
 
 typedef enum
 {
@@ -48,27 +48,60 @@ typedef enum
 
 typedef struct
 {
-    CommandType type;
-    uint32_t    request_id;
-    const uint8_t *payload;
-    size_t      payload_size;
+    bool has_light_period_ms;
+    uint32_t light_period_ms;
+
+    bool has_display_period_ms;
+    uint32_t display_period_ms;
+
+    bool has_telemetry_period_ms;
+    uint32_t telemetry_period_ms;
+
+    bool has_light_calibration;
+    float light_calibration;
+
+    bool has_installation_id;
+    uint8_t installation_id[16];
+
+    bool has_building_id;
+    uint8_t building_id[16];
+
+    bool has_room_id;
+    uint8_t room_id[16];
+} CommandArguments;
+
+typedef struct
+{
+    CommandType       type;
+    uint32_t          request_id;
+    CommandArguments  args;
+    bool              has_request_id;
 } CommandRequest;
 
 typedef struct
 {
     uint32_t     request_id;
     CommandStatus status;
+    bool         overflowed;
     uint8_t      payload[COMMAND_RESPONSE_MAX_SIZE];
     size_t       payload_size;
 } CommandResponse;
 
+typedef enum
+{
+    COMMAND_SECURITY_READ_ONLY,
+    COMMAND_SECURITY_CONFIG_MUTATION,
+    COMMAND_SECURITY_PROVISIONING_MUTATION,
+    COMMAND_SECURITY_DESTRUCTIVE
+} CommandSecurityClass;
+
 typedef struct
 {
-    const RoomState            *room;
-    const RoomSensorConfig     *config;
-    const DeviceIdentity       *identity;
-    const SelfTestReport       *self_test;
-    struct I2cBus              *bus;
+    const RoomState        *room;
+    const RoomSensorConfig *config;
+    const DeviceIdentity   *identity;
+    const SelfTestReport   *self_test;
+    struct I2cBus          *bus;
 
     uint32_t uptime_ms;
     bool     watchdog_active;
@@ -81,5 +114,6 @@ bool Command_Init(CommandServices *services);
 void Command_UpdateRuntime(uint32_t uptime, bool wdg, const DeviceRuntime *light, const DeviceRuntime *disp, ResetCause rc);
 void Command_Run(void);
 bool Command_ProcessBuffer(const uint8_t *data, size_t size);
+CommandSecurityClass Command_GetSecurityClass(CommandType type);
 
 #endif

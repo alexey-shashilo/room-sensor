@@ -20,10 +20,10 @@ static uint32_t Storage_Crc32(const uint8_t *data, size_t len)
 }
 
 static const StorageRecordLayout s_layouts[4] = {
-    [0] = { .slot_a_page = 0, .slot_b_page = 1, .slot_a_offset = 0, .slot_b_offset = STORAGE_PAGE_SIZE },
-    [RECORD_TYPE_CONFIG]      = { .slot_a_page = 0, .slot_b_page = 1, .slot_a_offset = 0, .slot_b_offset = STORAGE_PAGE_SIZE },
-    [RECORD_TYPE_IDENTITY]    = { .slot_a_page = 2, .slot_b_page = 3, .slot_a_offset = 2 * STORAGE_PAGE_SIZE, .slot_b_offset = 3 * STORAGE_PAGE_SIZE },
-    [RECORD_TYPE_REGISTRATION] = { .slot_a_page = 4, .slot_b_page = 5, .slot_a_offset = 4 * STORAGE_PAGE_SIZE, .slot_b_offset = 5 * STORAGE_PAGE_SIZE },
+    [0] = { .slot_a_page = 0, .slot_b_page = 1, .slot_a_offset = 0,               .slot_b_offset = 1 * STORAGE_ERASE_UNIT },
+    [RECORD_TYPE_CONFIG]      = { .slot_a_page = 0, .slot_b_page = 1, .slot_a_offset = 0,               .slot_b_offset = 1 * STORAGE_ERASE_UNIT },
+    [RECORD_TYPE_IDENTITY]    = { .slot_a_page = 2, .slot_b_page = 3, .slot_a_offset = 2 * STORAGE_ERASE_UNIT, .slot_b_offset = 3 * STORAGE_ERASE_UNIT },
+    [RECORD_TYPE_REGISTRATION] = { .slot_a_page = 4, .slot_b_page = 5, .slot_a_offset = 4 * STORAGE_ERASE_UNIT, .slot_b_offset = 5 * STORAGE_ERASE_UNIT },
 };
 
 const StorageRecordLayout *Storage_GetLayout(uint8_t record_type)

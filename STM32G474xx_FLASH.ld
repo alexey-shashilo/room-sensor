@@ -56,7 +56,8 @@ ENTRY(Reset_Handler)
 MEMORY
 {
 RAM (xrw)      : ORIGIN = 0x20000000, LENGTH = 128K
-FLASH (rx)      : ORIGIN = 0x8000000, LENGTH = 512K
+FLASH (rx)      : ORIGIN = 0x8000000, LENGTH = 500K
+/* Last 12K reserved for persistent storage at 0x0807D000 */
 }
 
 /* Highest address of the user mode stack */

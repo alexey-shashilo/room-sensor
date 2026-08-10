@@ -9,9 +9,9 @@
 #define STORAGE_RECORD_FORMAT_VERSION  1U
 #define STORAGE_PAYLOAD_MAX            256U
 
-/* Each slot occupies its own erase page (4096 bytes on G474).
+/* Each slot occupies its own physical erase page (2048 bytes on G474).
    Config: pages 0-1, Identity: pages 2-3, Registration: pages 4-5 */
-#define STORAGE_PAGE_SIZE      4096U
+#define STORAGE_ERASE_UNIT     2048U
 
 /* Record types */
 #define RECORD_TYPE_INVALID     0U

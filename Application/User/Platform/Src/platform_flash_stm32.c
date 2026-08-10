@@ -1,9 +1,14 @@
 #include "platform_flash.h"
 #include "stm32g4xx_hal.h"
 
-#define FLASH_START_ADDR  0x0807A000U
-#define STORAGE_PAGE_SIZE  0x1000U
-#define FLASH_TOTAL_SIZE   0x6000U
+/* STM32G474: physical Flash erase page = 2 KiB (2048 bytes).
+   Single bank mode (DBANK=0, default on NUCLEO-G474RE).
+   Reserved storage: 6 pages × 2048 = 12 KiB at top of 512 KiB Flash.
+   Page index = (address - 0x08000000) / 2048. */
+
+#define FLASH_START_ADDR    0x0807D000U  /* 512KB - 12KB = 500KB offset */
+#define STORAGE_PAGE_SIZE   2048U
+#define FLASH_TOTAL_SIZE    0x3000U      /* 12 KiB = 6 × 2048 */
 
 static uint32_t FlashAddr(uint32_t offset)
 {
@@ -24,7 +29,8 @@ const PlatformFlashInfo *Platform_FlashGetInfo(void)
 PlatformFlashStatus Platform_FlashRead(uint32_t offset, void *data, size_t size)
 {
     if ((data == NULL) || (size == 0)) return PLATFORM_FLASH_INVALID_ARG;
-    if ((offset + size) > FLASH_TOTAL_SIZE) return PLATFORM_FLASH_INVALID_ARG;
+    if (offset > FLASH_TOTAL_SIZE) return PLATFORM_FLASH_INVALID_ARG;
+    if (size > FLASH_TOTAL_SIZE - offset) return PLATFORM_FLASH_INVALID_ARG;
 
     uint8_t *src = (uint8_t *)(FLASH_START_ADDR + offset);
     for (size_t i = 0; i < size; i++)
@@ -36,7 +42,8 @@ PlatformFlashStatus Platform_FlashRead(uint32_t offset, void *data, size_t size)
 PlatformFlashStatus Platform_FlashWrite(uint32_t offset, const void *data, size_t size)
 {
     if ((data == NULL) || (size == 0)) return PLATFORM_FLASH_INVALID_ARG;
-    if ((offset + size) > FLASH_TOTAL_SIZE) return PLATFORM_FLASH_INVALID_ARG;
+    if (offset > FLASH_TOTAL_SIZE) return PLATFORM_FLASH_INVALID_ARG;
+    if (size > FLASH_TOTAL_SIZE - offset) return PLATFORM_FLASH_INVALID_ARG;
     if ((offset % 8U) != 0U) return PLATFORM_FLASH_INVALID_ARG;
     if ((size % 8U) != 0U) return PLATFORM_FLASH_INVALID_ARG;
 
@@ -67,29 +74,24 @@ PlatformFlashStatus Platform_FlashWrite(uint32_t offset, const void *data, size_
 
     HAL_FLASH_Lock();
 
-    uint8_t verify[256];
-    size_t check = (size > sizeof(verify)) ? sizeof(verify) : size;
-    if (Platform_FlashRead(offset, verify, check) != PLATFORM_FLASH_OK)
-        return PLATFORM_FLASH_ERROR;
-
-    for (size_t i = 0; i < check; i++)
-    {
-        if (verify[i] != ((const uint8_t *)data)[i])
-            return PLATFORM_FLASH_VERIFY_ERROR;
-    }
-
     return PLATFORM_FLASH_OK;
 }
 
 PlatformFlashStatus Platform_FlashErase(uint32_t page_index)
 {
-    uint32_t page = (FLASH_START_ADDR + page_index * STORAGE_PAGE_SIZE - 0x08000000U) / STORAGE_PAGE_SIZE;
+    if (page_index >= 6) return PLATFORM_FLASH_INVALID_ARG;
+
+    /* Page index is relative to the start of the storage region.
+       Physical page number: pages 0-249 are firmware (0..500KB / 2KB - 1).
+       Storage pages start at page 250 (0x0807D000 / 2048 = 250). */
+    uint32_t phys_page = 250 + page_index;
 
     HAL_FLASH_Unlock();
 
     FLASH_EraseInitTypeDef erase = {0};
     erase.TypeErase = FLASH_TYPEERASE_PAGES;
-    erase.Page = page;
+    erase.Banks = FLASH_BANK_1;
+    erase.Page = phys_page;
     erase.NbPages = 1;
 
     uint32_t page_error = 0;

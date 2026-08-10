@@ -94,3 +94,33 @@ void Command_Run(void)
     s_has_pending = false;
     s_busy = false;
 }
+
+CommandSecurityClass Command_GetSecurityClass(CommandType type)
+{
+    switch (type)
+    {
+        case COMMAND_GET_STATUS:
+        case COMMAND_GET_CONFIG:
+        case COMMAND_GET_IDENTITY:
+        case COMMAND_SELF_TEST:
+        case COMMAND_GET_CAPABILITIES:
+        case COMMAND_GET_MANIFEST:
+        case COMMAND_GET_PROVISIONING_STATUS:
+            return COMMAND_SECURITY_READ_ONLY;
+
+        case COMMAND_SET_CONFIG:
+        case COMMAND_RESET_CONFIG:
+            return COMMAND_SECURITY_CONFIG_MUTATION;
+
+        case COMMAND_REGISTER_DEVICE:
+        case COMMAND_UNREGISTER_DEVICE:
+        case COMMAND_ASSIGN_LOCATION:
+            return COMMAND_SECURITY_PROVISIONING_MUTATION;
+
+        case COMMAND_FACTORY_RESET:
+            return COMMAND_SECURITY_DESTRUCTIVE;
+
+        default:
+            return COMMAND_SECURITY_READ_ONLY;
+    }
+}
