@@ -11,6 +11,7 @@ bool CommandResponse_AppendJson(CommandResponse *response, const char *key, cons
 bool CommandResponse_AppendJsonInt(CommandResponse *response, const char *key, uint32_t value);
 bool CommandResponse_AppendJsonFloat(CommandResponse *response, const char *key, float value, int decimals);
 bool CommandResponse_AppendJsonBool(CommandResponse *response, const char *key, bool value);
+bool CommandResponse_AppendJsonRaw(CommandResponse *response, const char *key, const uint8_t *raw_json, size_t raw_len);
 void CommandResponse_Finalize(CommandResponse *response);
 
 #endif

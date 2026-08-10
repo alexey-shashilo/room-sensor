@@ -103,13 +103,14 @@ static void HandleGetIdentity(const CommandRequest *req, CommandResponse *rsp, c
 
 static void HandleSelfTest(const CommandRequest *req, CommandResponse *rsp, const CommandServices *svc)
 {
-    if (svc->bus)
+    if (svc->bus && svc->self_test)
     {
         SelfTestReport report;
         SelfTest_Run(&report, (const I2cBus *)svc->bus);
-        *(SelfTestReport *)svc->self_test = report;
+        *svc->self_test = report;
     }
-    const SelfTestReport *st = (const SelfTestReport *)svc->self_test;
+    const SelfTestReport *st = svc->self_test;
+    if (st == NULL) st = &(SelfTestReport){0};
     CommandResponse_Init(rsp, req->request_id, COMMAND_STATUS_OK);
     CommandResponse_AppendJson(rsp, "platform", st->platform == SELF_TEST_PASS ? "pass" : "fail");
     CommandResponse_AppendJson(rsp, "i2c", st->i2c == SELF_TEST_PASS ? "pass" : "fail");
@@ -153,7 +154,7 @@ static void HandleGetManifest(const CommandRequest *req, CommandResponse *rsp, c
     size_t written = 0;
     ManifestSerializeStatus ms = DeviceManifest_Serialize(&manifest, buf, sizeof(buf), &written);
 
-    if (ms != MANIFEST_SERIALIZE_OK || written > COMMAND_RESPONSE_MAX_SIZE)
+    if (ms != MANIFEST_SERIALIZE_OK || written == 0)
     {
         CommandResponse_Init(rsp, req->request_id, COMMAND_STATUS_INTERNAL_ERROR);
         CommandResponse_Append(rsp, "\"error\":\"serialization_failed\"");
@@ -162,8 +163,12 @@ static void HandleGetManifest(const CommandRequest *req, CommandResponse *rsp, c
     }
 
     CommandResponse_Init(rsp, req->request_id, COMMAND_STATUS_OK);
-    memcpy(rsp->payload, buf, written);
-    rsp->payload_size = written;
+    if (!CommandResponse_AppendJsonRaw(rsp, "manifest", buf, written) || rsp->overflowed)
+    {
+        CommandResponse_Init(rsp, req->request_id, COMMAND_STATUS_INTERNAL_ERROR);
+        CommandResponse_Append(rsp, "\"error\":\"response_too_large\"");
+    }
+    CommandResponse_Finalize(rsp);
 }
 
 static void HandleRegisterDevice(const CommandRequest *req, CommandResponse *rsp, const CommandServices *svc)

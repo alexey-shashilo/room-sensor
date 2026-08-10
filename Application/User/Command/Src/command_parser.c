@@ -247,5 +247,5 @@ bool CommandParser_Parse(const uint8_t *data, size_t size, CommandRequest *reque
     SkipW(data, size, &pos);
     if (pos != size) return false;
 
-    return has_cmd;
+    return has_cmd && has_id;
 }

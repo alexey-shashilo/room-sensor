@@ -91,7 +91,8 @@ bool DeviceIdentity_Load(DeviceIdentity *id)
     if (id == NULL) return false;
 
     StoragePayload payload;
-    if (!Storage_Read(RECORD_TYPE_IDENTITY, &payload))
+    StorageReadStatus rs = Storage_Read(RECORD_TYPE_IDENTITY, &payload);
+    if (rs != STORAGE_READ_OK)
         return false;
 
     if (payload.size != sizeof(IdentityStorageV1))

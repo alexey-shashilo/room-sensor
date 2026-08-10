@@ -111,21 +111,43 @@ bool Storage_Init(void)
     return true;
 }
 
-bool Storage_Read(uint8_t record_type, StoragePayload *payload)
+StorageReadStatus Storage_Read(uint8_t record_type, StoragePayload *payload)
 {
-    if (payload == NULL) return false;
+    if (payload == NULL) return STORAGE_READ_INVALID_ARGUMENT;
 
     const StorageRecordLayout *layout = Storage_GetLayout(record_type);
-    if (layout == NULL) return false;
+    if (layout == NULL) return STORAGE_READ_INVALID_ARGUMENT;
 
+    /* First pass: check what's in the slots */
+    uint32_t magic_a = 0xFFFFFFFF, magic_b = 0xFFFFFFFF;
+    bool io_a = (Platform_FlashRead(layout->slot_a_offset, &magic_a, 4) == PLATFORM_FLASH_OK);
+    bool io_b = (Platform_FlashRead(layout->slot_b_offset, &magic_b, 4) == PLATFORM_FLASH_OK);
+
+    bool erased_a = (magic_a == 0xFFFFFFFF);
+    bool erased_b = (magic_b == 0xFFFFFFFF);
+    bool valid_magic_a = (magic_a == STORAGE_MAGIC);
+    bool valid_magic_b = (magic_b == STORAGE_MAGIC);
+
+    /* Check for non-erased but invalid data (corrupted) */
+    bool corrupt_a = io_a && !erased_a && !valid_magic_a;
+    bool corrupt_b = io_b && !erased_b && !valid_magic_b;
+
+    /* If IO failed on a slot, treat as unavailable */
+    if (!io_a) erased_a = true;
+    if (!io_b) erased_b = true;
+
+    /* If any slot has corrupt data and no valid slot exists, report CORRUPT */
+    if ((corrupt_a || corrupt_b) && !valid_magic_a && !valid_magic_b)
+        return STORAGE_READ_CORRUPT;
+
+    /* If both are erased, never written */
+    if (erased_a && erased_b)
+        return STORAGE_READ_NOT_FOUND;
+
+    /* Second pass: try to read the valid slot(s) */
     StorageRecordHeader hdr_a, hdr_b;
-    bool valid_a = false, valid_b = false;
-
-    if (Platform_FlashRead(layout->slot_a_offset, &hdr_a, STORAGE_HEADER_SIZE) == PLATFORM_FLASH_OK)
-        valid_a = (hdr_a.magic == STORAGE_MAGIC && hdr_a.record_type == record_type);
-
-    if (Platform_FlashRead(layout->slot_b_offset, &hdr_b, STORAGE_HEADER_SIZE) == PLATFORM_FLASH_OK)
-        valid_b = (hdr_b.magic == STORAGE_MAGIC && hdr_b.record_type == record_type);
+    bool valid_a = valid_magic_a ? SlotReadRaw(layout->slot_a_offset, &hdr_a, NULL) : false;
+    bool valid_b = valid_magic_b ? SlotReadRaw(layout->slot_b_offset, &hdr_b, NULL) : false;
 
     uint8_t best_slot = 0xFF;
     uint32_t best_seq = 0;
@@ -154,12 +176,18 @@ bool Storage_Read(uint8_t record_type, StoragePayload *payload)
     }
 
     if (best_slot == 0xFF)
-        return false;
+    {
+        /* Both slots have magic records, but neither passed CRC/validation.
+           This means both have corrupt data. */
+        if (valid_magic_a || valid_magic_b)
+            return STORAGE_READ_CORRUPT;
+        return STORAGE_READ_NOT_FOUND;
+    }
 
     if (best_slot == 0)
-        return SlotReadRaw(layout->slot_a_offset, &hdr_a, payload);
+        return SlotReadRaw(layout->slot_a_offset, &hdr_a, payload) ? STORAGE_READ_OK : STORAGE_READ_CORRUPT;
     else
-        return SlotReadRaw(layout->slot_b_offset, &hdr_b, payload);
+        return SlotReadRaw(layout->slot_b_offset, &hdr_b, payload) ? STORAGE_READ_OK : STORAGE_READ_CORRUPT;
 }
 
 bool Storage_Write(uint8_t record_type, const uint8_t *data, size_t size)

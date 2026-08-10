@@ -12,9 +12,9 @@ static bool s_initialized = false;
 static uint8_t s_input_buf[COMMAND_INPUT_BUFFER_SIZE];
 static size_t s_input_pos = 0;
 static bool s_has_pending = false;
+static CommandSourceTrust s_pending_trust = COMMAND_SOURCE_UNTRUSTED;
 
 static const CommunicationPort *s_cmd_port = NULL;
-static CommandSourceTrust s_source_trust = COMMAND_SOURCE_UNTRUSTED;
 
 bool Command_Init(CommandServices *services)
 {
@@ -24,7 +24,6 @@ bool Command_Init(CommandServices *services)
     s_input_pos = 0;
     s_has_pending = false;
     s_initialized = true;
-    s_source_trust = COMMAND_SOURCE_UNTRUSTED;  /* fail closed by default */
     return true;
 }
 
@@ -39,31 +38,41 @@ void Command_UpdateRuntime(uint32_t uptime, bool wdg, const DeviceRuntime *light
 
 void Command_SetSourceTrust(CommandSourceTrust trust)
 {
-    s_source_trust = trust;
+    /* deprecated — prefer message-scoped Command_ProcessInput */
+    (void)trust;
 }
 
 void Command_SetPort(const CommunicationPort *port)
 {
     s_cmd_port = port;
-    /* Transport does not imply trust — default remains untrusted */
 }
 
-bool Command_ProcessBuffer(const uint8_t *data, size_t size)
+static bool EnqueueCommand(const uint8_t *data, size_t size, CommandSourceTrust trust)
 {
     if (!s_initialized || data == NULL || size == 0) return false;
     if (s_has_pending) return false;
 
     size_t copy = size;
     if (copy > COMMAND_INPUT_BUFFER_SIZE - 1)
-    {
         return false;
-    }
 
     memcpy(s_input_buf, data, copy);
     s_input_buf[copy] = '\0';
     s_input_pos = copy;
     s_has_pending = true;
+    s_pending_trust = trust;
     return true;
+}
+
+bool Command_ProcessBuffer(const uint8_t *data, size_t size)
+{
+    return EnqueueCommand(data, size, COMMAND_SOURCE_UNTRUSTED);
+}
+
+bool Command_ProcessInput(const CommandInput *input)
+{
+    if (input == NULL) return false;
+    return EnqueueCommand(input->data, input->size, input->trust);
 }
 
 void Command_Run(void)
@@ -91,8 +100,8 @@ void Command_Run(void)
         return;
     }
 
-    /* Authorization MUST run before dispatch — fail closed */
-    if (!CommandAuthorization_IsAllowed(request.type, s_source_trust))
+    /* Authorization per message — trust is part of the input, not global state */
+    if (!CommandAuthorization_IsAllowed(request.type, s_pending_trust))
     {
         CommandResponse_Init(&response, request.request_id, COMMAND_STATUS_UNAUTHORIZED);
         CommandResponse_Append(&response, "\"error\":\"unauthorized\"");
@@ -156,15 +165,14 @@ bool CommandAuthorization_IsAllowed(CommandType type, CommandSourceTrust trust)
     CommandSecurityClass cls = Command_GetSecurityClass(type);
 
     if (cls == COMMAND_SECURITY_INVALID)
-        return false;  /* unknown command never executes */
+        return false;
 
     switch (trust)
     {
         case COMMAND_SOURCE_TRUSTED_LOCAL:
-            return true;  /* dev debug transport allowed */
+            return true;
 
         case COMMAND_SOURCE_AUTHENTICATED_REMOTE:
-            /* policy placeholders until real auth exists */
             return (cls == COMMAND_SECURITY_READ_ONLY ||
                     cls == COMMAND_SECURITY_DIAGNOSTIC_ACTION ||
                     cls == COMMAND_SECURITY_CONFIG_MUTATION ||
@@ -172,7 +180,6 @@ bool CommandAuthorization_IsAllowed(CommandType type, CommandSourceTrust trust)
 
         case COMMAND_SOURCE_UNTRUSTED:
         default:
-            /* default = fail closed */
             return (cls == COMMAND_SECURITY_READ_ONLY);
     }
 }

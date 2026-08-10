@@ -90,11 +90,19 @@ bool Provisioning_Load(DeviceRegistration *reg)
     memset(reg, 0, sizeof(*reg));
 
     StoragePayload payload;
-    if (!Storage_Read(RECORD_TYPE_REGISTRATION, &payload))
+    StorageReadStatus rs = Storage_Read(RECORD_TYPE_REGISTRATION, &payload);
+    if (rs == STORAGE_READ_NOT_FOUND)
     {
         memset(reg, 0, sizeof(*reg));
         reg->registered = false;
         return true;  /* absent registration is valid (unprovisioned) */
+    }
+
+    if (rs != STORAGE_READ_OK)
+    {
+        /* CORRUPT or IO_ERROR — fail closed */
+        memset(reg, 0, sizeof(*reg));
+        return false;
     }
 
     if (payload.size != sizeof(RegistrationStorageV1))

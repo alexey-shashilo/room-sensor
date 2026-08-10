@@ -58,10 +58,19 @@ typedef struct
     uint32_t slot_b_offset;
 } StorageRecordLayout;
 
+typedef enum
+{
+    STORAGE_READ_OK = 0,
+    STORAGE_READ_NOT_FOUND,
+    STORAGE_READ_CORRUPT,
+    STORAGE_READ_IO_ERROR,
+    STORAGE_READ_INVALID_ARGUMENT
+} StorageReadStatus;
+
 const StorageRecordLayout *Storage_GetLayout(uint8_t record_type);
 
 bool Storage_Init(void);
-bool Storage_Read(uint8_t record_type, StoragePayload *payload);
+StorageReadStatus Storage_Read(uint8_t record_type, StoragePayload *payload);
 bool Storage_Write(uint8_t record_type, const uint8_t *data, size_t size);
 bool Storage_Format(void);
 void Storage_GetInfo(StorageInfo *info);

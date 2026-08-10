@@ -110,7 +110,7 @@ typedef struct
     const RoomState        *room;
     const RoomSensorConfig *config;
     const DeviceIdentity   *identity;
-    const SelfTestReport   *self_test;
+    SelfTestReport *self_test;
     struct I2cBus          *bus;
 
     uint32_t uptime_ms;
@@ -120,10 +120,18 @@ typedef struct
     ResetCause reset_cause;
 } CommandServices;
 
+typedef struct
+{
+    const uint8_t *data;
+    size_t size;
+    CommandSourceTrust trust;
+} CommandInput;
+
 bool Command_Init(CommandServices *services);
 void Command_UpdateRuntime(uint32_t uptime, bool wdg, const DeviceRuntime *light, const DeviceRuntime *disp, ResetCause rc);
 void Command_Run(void);
 bool Command_ProcessBuffer(const uint8_t *data, size_t size);
+bool Command_ProcessInput(const CommandInput *input);
 void Command_SetSourceTrust(CommandSourceTrust trust);
 CommandSecurityClass Command_GetSecurityClass(CommandType type);
 bool CommandAuthorization_IsAllowed(CommandType type, CommandSourceTrust trust);

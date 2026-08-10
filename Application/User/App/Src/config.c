@@ -60,8 +60,11 @@ bool Config_Validate(const ConfigStorageV1 *storage)
 bool Config_Load(void)
 {
     StoragePayload payload;
-    if (!Storage_Read(RECORD_TYPE_CONFIG, &payload))
-        return false;
+    StorageReadStatus rs = Storage_Read(RECORD_TYPE_CONFIG, &payload);
+    if (rs == STORAGE_READ_NOT_FOUND)
+        return false;  /* defaults will be used */
+    if (rs != STORAGE_READ_OK)
+        return false;  /* corrupt — defaults will be used */
 
     ConfigStorageV1 candidate;
     if (payload.size != sizeof(candidate))
