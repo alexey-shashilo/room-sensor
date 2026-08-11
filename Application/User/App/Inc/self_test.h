@@ -29,4 +29,9 @@ void SelfTest_Init(SelfTestReport *report);
 void SelfTest_Run(SelfTestReport *report, const I2cBus *bus);
 const SelfTestReport *SelfTest_GetReport(void);
 
+/* Map a SelfTestResult to its wire-protocol string WITHOUT collapsing distinct
+   states into pass/fail. NOT_RUN->"not_run", PASS->"pass", FAIL->"fail",
+   SKIPPED->"skipped", DEGRADED->"degraded" (unknown -> "unknown"). */
+const char *SelfTestResult_ToProtocolString(SelfTestResult result);
+
 #endif

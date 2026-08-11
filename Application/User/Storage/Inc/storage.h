@@ -166,6 +166,30 @@ StorageRecoveryStatus Storage_RecoverCorruptRecord(uint8_t record_type,
    The record is left ERASED (both slots). Does not touch other records. */
 bool Storage_FormatRecord(uint8_t record_type);
 
+/* Result of establishing A/B redundancy for a record. */
+typedef enum
+{
+    STORAGE_REPAIR_DONE = 0,        /* mirror established -> both slots VALID */
+    STORAGE_REPAIR_NOT_NEEDED,      /* already HEALTHY (both slots valid) */
+    STORAGE_REPAIR_NOT_FOUND,       /* both slots erased (nothing to mirror) */
+    STORAGE_REPAIR_REFUSED,         /* IO uncertainty or no valid source; no erase */
+    STORAGE_REPAIR_INVALID_ARGUMENT
+} StorageRepairStatus;
+
+/* Establish the missing A/B mirror of an otherwise-valid record, preserving the
+   valid source throughout. Reads the VALID slot's payload, erases ONLY the
+   degraded peer (erased or corrupt), writes the mirrored copy (sequence +1),
+   and verifies. The original valid slot is NEVER erased, so a power loss at any
+   point leaves the valid source intact.
+
+   VALID + ERASED          -> erase peer, mirror -> DONE (both valid)
+   VALID + CORRUPT         -> erase peer, mirror   -> DONE (both valid)
+   VALID + IO_ERROR        -> REFUSED, ZERO erase (cannot trust the peer)
+   VALID + VALID           -> NOT_NEEDED
+   ERASED + ERASED         -> NOT_FOUND (no data exists to mirror)
+   no valid slot           -> REFUSED (explicit recovery path remains separate) */
+StorageRepairStatus Storage_EnsureRedundancy(uint8_t record_type);
+
 /* Classified result of a durable write attempt. Distinguishes an unsafe
    storage state (e.g. a no-valid CORRUPT+ERASED pair that requires explicit
    recovery) from a genuine Flash IO/physical error or a readback verification

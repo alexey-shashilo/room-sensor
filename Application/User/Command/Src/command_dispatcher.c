@@ -7,6 +7,7 @@
 #include "provisioning.h"
 #include "self_test.h"
 #include "i2c_bus.h"
+#include "telemetry.h"
 #include <string.h>
 
 static void HandleGetStatus(const CommandRequest *req, CommandResponse *rsp, const CommandServices *svc)
@@ -153,12 +154,25 @@ static void HandleSelfTest(const CommandRequest *req, CommandResponse *rsp, cons
         *svc->self_test = report;
     }
     const SelfTestReport *st = svc->self_test;
-    if (st == NULL) st = &(SelfTestReport){0};
+    SelfTestReport empty_report;
+    if (st == NULL) { memset(&empty_report, 0, sizeof(empty_report)); st = &empty_report; }
     CommandResponse_Init(rsp, req->request_id, COMMAND_STATUS_OK);
-    CommandResponse_AppendJson(rsp, "platform", st->platform == SELF_TEST_PASS ? "pass" : "fail");
-    CommandResponse_AppendJson(rsp, "i2c", st->i2c == SELF_TEST_PASS ? "pass" : "fail");
-    CommandResponse_AppendJson(rsp, "light_sensor", st->light_sensor == SELF_TEST_PASS ? "pass" : "fail");
-    CommandResponse_AppendJson(rsp, "display", st->display == SELF_TEST_PASS ? "pass" : "fail");
+    /* Report every SelfTest field, preserving distinct states (degraded /
+       skipped / fail are NOT collapsed into a generic pass/fail). */
+    CommandResponse_AppendJson(rsp, "platform",
+                               SelfTestResult_ToProtocolString(st->platform));
+    CommandResponse_AppendJson(rsp, "i2c",
+                               SelfTestResult_ToProtocolString(st->i2c));
+    CommandResponse_AppendJson(rsp, "storage",
+                               SelfTestResult_ToProtocolString(st->storage));
+    CommandResponse_AppendJson(rsp, "config",
+                               SelfTestResult_ToProtocolString(st->config));
+    CommandResponse_AppendJson(rsp, "identity",
+                               SelfTestResult_ToProtocolString(st->identity));
+    CommandResponse_AppendJson(rsp, "light_sensor",
+                               SelfTestResult_ToProtocolString(st->light_sensor));
+    CommandResponse_AppendJson(rsp, "display",
+                               SelfTestResult_ToProtocolString(st->display));
     CommandResponse_Finalize(rsp);
 }
 
@@ -175,8 +189,8 @@ static void HandleGetCapabilities(const CommandRequest *req, CommandResponse *rs
     (void)svc;
     CommandResponse_Init(rsp, req->request_id, COMMAND_STATUS_OK);
     CommandResponse_AppendJsonInt(rsp, "command_schema", COMMAND_SCHEMA_VERSION);
-    CommandResponse_AppendJsonInt(rsp, "telemetry_schema", 1);
-    CommandResponse_AppendJsonInt(rsp, "config_schema", 1);
+    CommandResponse_AppendJsonInt(rsp, "telemetry_schema", TELEMETRY_SCHEMA_VERSION);
+    CommandResponse_AppendJsonInt(rsp, "config_schema", CONFIG_SCHEMA_VERSION);
     CommandResponse_AppendJsonBool(rsp, "illuminance", true);
     CommandResponse_AppendJsonBool(rsp, "temperature", false);
     CommandResponse_AppendJsonBool(rsp, "humidity", false);

@@ -455,6 +455,60 @@ bool Storage_Write(uint8_t record_type, const uint8_t *data, size_t size)
     return Storage_WriteEx(record_type, data, size) == STORAGE_WRITE_OK;
 }
 
+StorageRepairStatus Storage_EnsureRedundancy(uint8_t record_type)
+{
+    const StorageRecordLayout *layout = Storage_GetLayout(record_type);
+    if (layout == NULL) return STORAGE_REPAIR_INVALID_ARGUMENT;
+    if (!s_initialized) return STORAGE_REPAIR_REFUSED;
+
+    SlotSnapshot a = ReadSlotSnapshot(record_type, 0);
+    SlotSnapshot b = ReadSlotSnapshot(record_type, 1);
+
+    bool a_valid = (a.state == SLOT_STATE_VALID);
+    bool b_valid = (b.state == SLOT_STATE_VALID);
+
+    /* Already redundant. */
+    if (a_valid && b_valid) return STORAGE_REPAIR_NOT_NEEDED;
+
+    /* Nothing persisted to mirror. */
+    if ((a.state == SLOT_STATE_ERASED && b.state == SLOT_STATE_ERASED))
+        return STORAGE_REPAIR_NOT_FOUND;
+
+    /* Any IO uncertainty: do NOT erase anything (cannot trust the peer). */
+    if (a.state == SLOT_STATE_IO_ERROR || b.state == SLOT_STATE_IO_ERROR)
+        return STORAGE_REPAIR_REFUSED;
+
+    /* Need exactly one valid source and a degraded (erased/corrupt) peer. */
+    uint8_t valid_slot, peer_slot;
+    const SlotSnapshot *valid_src;
+    if (a_valid && !b_valid)        { valid_slot = 0; peer_slot = 1; valid_src = &a; }
+    else if (b_valid && !a_valid)   { valid_slot = 1; peer_slot = 0; valid_src = &b; }
+    else return STORAGE_REPAIR_REFUSED;   /* no valid source */
+
+    uint32_t peer_page   = (peer_slot == 0) ? layout->slot_a_page : layout->slot_b_page;
+    uint32_t peer_offset = (peer_slot == 0) ? layout->slot_a_offset : layout->slot_b_offset;
+
+    uint32_t payload_size = valid_src->header.payload_size;
+    if (payload_size == 0 || payload_size > STORAGE_PAYLOAD_MAX)
+        return STORAGE_REPAIR_REFUSED;
+
+    uint32_t next_seq = valid_src->header.sequence + 1;
+    if (next_seq == 0) next_seq = 1;
+
+    /* Erase ONLY the degraded peer page; the valid source is never touched. */
+    if (Platform_FlashErase(peer_page) != PLATFORM_FLASH_OK)
+        return STORAGE_REPAIR_REFUSED;
+
+    StorageWriteStatus ws = WriteProgramRecord(peer_offset, record_type,
+                                               valid_src->payload.data,
+                                               payload_size, next_seq);
+    if (ws != STORAGE_WRITE_OK)
+        return STORAGE_REPAIR_REFUSED;
+
+    (void)valid_slot;
+    return STORAGE_REPAIR_DONE;
+}
+
 StorageRecoveryStatus Storage_RecoverCorruptRecord(uint8_t record_type,
                                                    const uint8_t *data, size_t size)
 {

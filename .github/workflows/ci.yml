@@ -216,3 +216,16 @@ jobs:
             exit 1
           fi
           echo "PASS: Command has no App dependency"
+
+      # Layering rule: Telemetry must NOT depend on App concrete types. It uses
+      # only lower-level portable types (room_sensor_types.h / room_state.h).
+      # Block any regressive #include "app.h" / AppStatus usage.
+      - name: Check Telemetry has no App dependency
+        run: |
+          BAD=$(grep -rnE '#include[[:space:]]*["<]app\.h[">]|AppStatus' Application/User/Telemetry/ 2>/dev/null || true)
+          if [ -n "$BAD" ]; then
+            echo "ERROR: Telemetry must not depend on App (app.h / AppStatus):"
+            echo "$BAD"
+            exit 1
+          fi
+          echo "PASS: Telemetry has no App dependency"

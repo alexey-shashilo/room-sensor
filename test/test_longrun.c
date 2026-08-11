@@ -100,6 +100,27 @@ int main(void)
     check(rs.illuminance_valid, "room state remained valid");
 
     /* ================================================================
+       1b. Telemetry boot-relative timestamp contract
+       ================================================================ */
+    printf("\n=== Telemetry boot-relative uptime ===\n");
+    {
+        /* App scheduler passes input.uptime_ms = now - s_start_ms (elapsed since
+           App boot). Telemetry must reflect that value verbatim and, with no
+           wall clock on v1, captured_at_ms is the same boot-relative timestamp. */
+        FakePlatform_SetTick(12500U);   /* simulated "now" */
+        TelemetrySnapshotInput in2;
+        in2.device_id = id.device_uuid;
+        in2.room = &rs;
+        in2.health = SYSTEM_HEALTH_OK;
+        in2.boot_id = 7;
+        in2.uptime_ms = 2500U;          /* 12500 - 10000 (App boot tick) = boot-relative */
+        TelemetrySnapshot s2;
+        check(Telemetry_CreateSnapshot(&s2, &in2), "snapshot created");
+        check(s2.uptime_ms == 2500U, "snapshot uptime_ms is boot-relative (2500, not 12500)");
+        check(s2.captured_at_ms == 2500U, "captured_at_ms is same boot-relative timestamp");
+    }
+
+    /* ================================================================
        2. Offline for 2 hours — only latest value preserved
        ================================================================ */
     printf("\n=== Offline latest-value-wins ===\n");

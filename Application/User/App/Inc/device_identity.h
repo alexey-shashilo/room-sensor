@@ -10,6 +10,12 @@
 #define IDENTITY_SCHEMA_VERSION     2U
 #define ROOM_SENSOR_HW_REVISION     1U
 
+/* SECURITY NOTE: the DeviceIdentity UUID is a STABLE DEVICE IDENTIFIER derived
+   from the hardware UID via deterministic custom mixing. It is NOT
+   cryptographic authentication, NOT a secret, and NOT proof of device
+   authenticity. It may be used to identify a device (boot ID, telemetry tag),
+   never to authenticate or authorize it. Do not rely on it as a credential. */
+
 typedef struct
 {
     uint8_t  device_uuid[DEVICE_UUID_SIZE];
@@ -36,6 +42,12 @@ StorageReadStatus DeviceIdentity_GetPersistenceStatus(void);
    from persistence status. A readable VALID+IO record reads OK yet reports
    DEGRADED_IO. Updated by DeviceIdentity_Load / DeviceIdentity_Save. */
 StorageHealth DeviceIdentity_GetStorageHealth(void);
+
+/* Exact result of the LAST identity write attempt (OK / INVALID_ARGUMENT /
+   UNSAFE_STATE / IO_ERROR / VERIFY_FAILED) — a separate fact from current
+   readability and A/B health. A failed write does NOT mean the existing VALID
+   identity record was lost or corrupt. */
+StorageWriteStatus DeviceIdentity_GetLastWriteStatus(void);
 
 /* Non-mutating diagnostic inspection of the persisted identity record.
    Reads and validates into a LOCAL candidate and returns the observed state

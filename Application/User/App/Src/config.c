@@ -11,8 +11,13 @@ static StorageReadStatus s_storage_status = STORAGE_READ_NOT_FOUND;
    storage operation. Read status and health are separate: a readable VALID+IO
    record reads OK yet reports DEGRADED_IO. */
 static StorageHealth s_storage_health = STORAGE_HEALTH_HEALTHY;
+/* Result of the LAST write attempt (a separate fact from current readability
+   and from redundancy health). A failed write does NOT imply persisted data is
+   lost or corrupt. */
+static StorageWriteStatus s_last_write_status = STORAGE_WRITE_OK;
 
 static void Config_RefreshHealth(void);
+static void Config_RefreshReadState(void);
 
 static float Q16ToFloat(uint32_t q16)
 {
@@ -122,6 +127,30 @@ static void Config_RefreshHealth(void)
         s_storage_health = Storage_GetHealth(RECORD_TYPE_CONFIG);
 }
 
+/* Refresh the CURRENT readable persistence state (and redundancy health) with a
+   non-destructive Storage_Read snapshot. It does NOT mutate the runtime config
+   value (s_config). Crucially, a failed write to the inactive mirror does NOT
+   destroy the old VALID record, so the read status must reflect the ACTUAL
+   readable persistent data — never blindly forced to CORRUPT because the last
+   write failed. */
+static void Config_RefreshReadState(void)
+{
+    if (!Storage_IsInitialized())
+    {
+        s_storage_status = STORAGE_READ_IO_ERROR;
+        return;
+    }
+    StoragePayload payload;
+    StorageReadStatus rs = Storage_Read(RECORD_TYPE_CONFIG, &payload);
+    s_storage_status = rs;
+    Config_RefreshHealth();
+}
+
+StorageWriteStatus Config_GetLastWriteStatus(void)
+{
+    return s_last_write_status;
+}
+
 StorageReadStatus Config_SelfCheck(void)
 {
     if (!Storage_IsInitialized())
@@ -162,25 +191,28 @@ bool Config_SaveCandidate(const RoomSensorConfig *candidate)
 
     StorageWriteStatus ws = Storage_WriteEx(RECORD_TYPE_CONFIG,
                                             (const uint8_t *)&storage, sizeof(storage));
+    /* Record the EXACT write result; it stays observable via
+       Config_GetLastWriteStatus() (OK / INVALID_ARGUMENT / UNSAFE_STATE /
+       IO_ERROR / VERIFY_FAILED). */
+    s_last_write_status = ws;
 
-    /* Current persistence status reflects the write outcome. Failures are
-       classified so an unsafe (no-valid) state is not misreported as a generic
-       physical IO error. Successful writes make persistence OK. */
-    switch (ws)
+    if (ws == STORAGE_WRITE_OK)
     {
-        case STORAGE_WRITE_OK:
-            s_storage_status = STORAGE_READ_OK;
-            break;
-        case STORAGE_WRITE_INVALID_ARGUMENT:
-            /* No storage state change; argument rejected by storage layer. */
-            break;
-        case STORAGE_WRITE_UNSAFE_STATE:
-        case STORAGE_WRITE_VERIFY_FAILED:
-        case STORAGE_WRITE_IO_ERROR:
-        default:
-            s_storage_status = STORAGE_READ_CORRUPT;
-            break;
+        /* Successful durable write: current readable state is OK. The runtime
+           config value is committed by the CALLER (Config_Save / Config_ApplyPersistent),
+           not here. */
+        s_storage_status = STORAGE_READ_OK;
     }
+    else
+    {
+        /* A FAILED write does NOT imply the persisted data was lost or that the
+           old VALID record became CORRUPT. Non-destructively re-derive the ACTUAL
+           readable state of whatever still exists on Flash. */
+        Config_RefreshReadState();
+    }
+
+    /* StorageHealth always reflects the CURRENT A/B mirror, whether the write
+       succeeded, failed, or was refused. */
     Config_RefreshHealth();
     return (ws == STORAGE_WRITE_OK);
 }

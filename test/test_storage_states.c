@@ -714,6 +714,88 @@ static void TestWriteClassification(void)
     }
 }
 
+/* Safe A/B mirror establishment (Storage_EnsureRedundancy). The valid source
+   is never erased; the degraded peer (erased/corrupt) is mirrored. IO
+   uncertainty refuses without erasing. */
+static void TestEnsureRedundancy(void)
+{
+    printf("\n=== EnsureRedundancy (safe mirror repair) ===\n");
+
+    /* VALID+ERASED -> DONE, both valid -> HEALTHY. */
+    FakeFlash_Init(); Storage_Init();
+    {
+        uint8_t a[4] = {0xAA, 0xBB, 0xCC, 0xDD};
+        Storage_Write(RECORD_TYPE_CONFIG, a, sizeof(a));   /* slot A valid, B erased */
+        T("health before repair == DEGRADED",
+          Storage_GetHealth(RECORD_TYPE_CONFIG) == STORAGE_HEALTH_DEGRADED);
+        T("VALID+ERASED -> DONE",
+          Storage_EnsureRedundancy(RECORD_TYPE_CONFIG) == STORAGE_REPAIR_DONE);
+        T("health after repair == HEALTHY",
+          Storage_GetHealth(RECORD_TYPE_CONFIG) == STORAGE_HEALTH_HEALTHY);
+        StoragePayload p;
+        T("mirrored record still readable",
+          Storage_Read(RECORD_TYPE_CONFIG, &p) == STORAGE_READ_OK);
+        T("  mirrored payload preserved", p.size == sizeof(a) && memcmp(p.data, a, sizeof(a)) == 0);
+    }
+
+    /* VALID+CORRUPT -> DONE (peer rebuilt from valid source). */
+    FakeFlash_Init(); Storage_Init();
+    {
+        uint8_t a[4] = {1, 2, 3, 4};
+        Storage_Write(RECORD_TYPE_CONFIG, a, sizeof(a));   /* slot A valid */
+        Storage_Write(RECORD_TYPE_CONFIG, a, sizeof(a));   /* slot B valid (newest) */
+        FakeFlash_Corrupt(2048, 8);                        /* corrupt slot B, keep A valid */
+        T("VALID+CORRUPT -> DONE",
+          Storage_EnsureRedundancy(RECORD_TYPE_CONFIG) == STORAGE_REPAIR_DONE);
+        T("  health became HEALTHY",
+          Storage_GetHealth(RECORD_TYPE_CONFIG) == STORAGE_HEALTH_HEALTHY);
+    }
+
+    /* VALID+IO -> REFUSED, zero erase. */
+    FakeFlash_Init(); Storage_Init();
+    {
+        uint8_t a[4] = {1, 2, 3, 4};
+        Storage_Write(RECORD_TYPE_CONFIG, a, sizeof(a));   /* slot A valid */
+        FakeFlash_SetReadFail(true, 2048, 4096);           /* slot B unreadable */
+        FakeFlash_ResetIoCounters();
+        T("VALID+IO -> REFUSED",
+          Storage_EnsureRedundancy(RECORD_TYPE_CONFIG) == STORAGE_REPAIR_REFUSED);
+        T("  zero erase on IO refusal", FakeFlash_GetEraseCount() == 0);
+        FakeFlash_SetReadFail(false, 0, 0);
+    }
+
+    /* VALID+VALID -> NOT_NEEDED. */
+    FakeFlash_Init(); Storage_Init();
+    {
+        uint8_t a[4] = {1, 2, 3, 4};
+        Storage_Write(RECORD_TYPE_CONFIG, a, sizeof(a));
+        Storage_Write(RECORD_TYPE_CONFIG, a, sizeof(a));   /* both valid */
+        T("VALID+VALID -> NOT_NEEDED",
+          Storage_EnsureRedundancy(RECORD_TYPE_CONFIG) == STORAGE_REPAIR_NOT_NEEDED);
+    }
+
+    /* ERASED+ERASED -> NOT_FOUND (nothing to mirror). */
+    FakeFlash_Init(); Storage_Init();
+    {
+        T("ERASED+ERASED -> NOT_FOUND",
+          Storage_EnsureRedundancy(RECORD_TYPE_CONFIG) == STORAGE_REPAIR_NOT_FOUND);
+    }
+
+    /* Valid source survives a failed peer write (verify-fail on peer). */
+    FakeFlash_Init(); Storage_Init();
+    {
+        uint8_t a[4] = {0xDE, 0xAD, 0xBE, 0xEF};
+        Storage_Write(RECORD_TYPE_CONFIG, a, sizeof(a));   /* slot A valid */
+        FakeFlash_SetVerifyFail(true);                     /* peer mirror write fails verify */
+        T("peer verify failure -> REFUSED (source preserved)",
+          Storage_EnsureRedundancy(RECORD_TYPE_CONFIG) == STORAGE_REPAIR_REFUSED);
+        FakeFlash_SetVerifyFail(false);
+        StoragePayload p;
+        T("  valid source still readable",
+          Storage_Read(RECORD_TYPE_CONFIG, &p) == STORAGE_READ_OK && memcmp(p.data, a, sizeof(a)) == 0);
+    }
+}
+
 int main(void)
 {
     printf("Storage Slot-State Host Tests\n");
@@ -730,6 +812,7 @@ int main(void)
     TestRecoveryHarden();
     TestRecoveryPreserveValid();
     TestWriteClassification();
+    TestEnsureRedundancy();
     TestFormatOwnership();
     TestBankValidation();
 

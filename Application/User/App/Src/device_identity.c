@@ -26,8 +26,13 @@ static StorageReadStatus s_persistence_status = STORAGE_READ_NOT_FOUND;
    status. A readable VALID+IO record reads OK yet reports DEGRADED_IO. Kept
    current on every DeviceIdentity_Load / DeviceIdentity_Save. */
 static StorageHealth s_storage_health = STORAGE_HEALTH_HEALTHY;
+/* Result of the LAST identity write attempt — a separate fact from current
+   readability and from A/B health. A failed write does NOT mean the existing
+   VALID record was lost or became CORRUPT. */
+static StorageWriteStatus s_last_write_status = STORAGE_WRITE_OK;
 
 static void DeviceIdentity_RefreshHealth(void);
+static void DeviceIdentity_RefreshReadState(void);
 
 static void DeriveUuid(uint8_t uuid[DEVICE_UUID_SIZE])
 {
@@ -161,6 +166,25 @@ static void DeviceIdentity_RefreshHealth(void)
         s_storage_health = Storage_GetHealth(RECORD_TYPE_IDENTITY);
 }
 
+/* Non-destructively re-derive current readable identity persistence state (and
+   A/B health) from actual Flash. Does NOT mutate the runtime identity. */
+static void DeviceIdentity_RefreshReadState(void)
+{
+    if (!Storage_IsInitialized())
+    {
+        s_persistence_status = STORAGE_READ_IO_ERROR;
+        return;
+    }
+    StoragePayload payload;
+    s_persistence_status = Storage_Read(RECORD_TYPE_IDENTITY, &payload);
+    DeviceIdentity_RefreshHealth();
+}
+
+StorageWriteStatus DeviceIdentity_GetLastWriteStatus(void)
+{
+    return s_last_write_status;
+}
+
 StorageReadStatus DeviceIdentity_SelfCheck(void)
 {
     if (!Storage_IsInitialized())
@@ -201,23 +225,17 @@ bool DeviceIdentity_Save(const DeviceIdentity *id)
 
     StorageWriteStatus ws = Storage_WriteEx(RECORD_TYPE_IDENTITY,
                                             (const uint8_t *)&stored, sizeof(stored));
-    /* A successful durable save means current persistence state is OK. Failures
-       are classified so an unsafe (no-valid) state is not misreported as a
-       physical IO error. */
-    switch (ws)
-    {
-        case STORAGE_WRITE_OK:
-            s_persistence_status = STORAGE_READ_OK;
-            break;
-        case STORAGE_WRITE_INVALID_ARGUMENT:
-            break;
-        case STORAGE_WRITE_UNSAFE_STATE:
-        case STORAGE_WRITE_VERIFY_FAILED:
-        case STORAGE_WRITE_IO_ERROR:
-        default:
-            s_persistence_status = STORAGE_READ_CORRUPT;
-            break;
-    }
+    /* Record the EXACT write result, observable via
+       DeviceIdentity_GetLastWriteStatus(). */
+    s_last_write_status = ws;
+
+    if (ws == STORAGE_WRITE_OK)
+        s_persistence_status = STORAGE_READ_OK;
+    else
+        /* A failed write does NOT mean the existing VALID record is corrupt or
+           lost. Non-destructively refresh the ACTUAL readable state. */
+        DeviceIdentity_RefreshReadState();
+
     DeviceIdentity_RefreshHealth();
     return (ws == STORAGE_WRITE_OK);
 }

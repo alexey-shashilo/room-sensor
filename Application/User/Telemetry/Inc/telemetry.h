@@ -4,7 +4,9 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include "room_state.h"
-#include "app.h"
+#include "room_sensor_types.h"
+/* Telemetry depends only on lower-level portable types (RoomState,
+   SystemHealthState from room_sensor_types.h). It MUST NOT include app.h. */
 
 #define TELEMETRY_SCHEMA_VERSION 2U
 

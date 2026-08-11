@@ -61,6 +61,12 @@ StorageReadStatus Config_GetStorageStatus(void);
    Updated by Config_Load and every Config_Save / Config_Reset path. */
 StorageHealth Config_GetStorageHealth(void);
 
+/* Result of the LAST write attempt (OK / INVALID_ARGUMENT / UNSAFE_STATE /
+   IO_ERROR / VERIFY_FAILED). This is a separate fact from current readability
+   and from A/B redundancy health: a failed write does NOT mean persisted data
+   was lost or corrupt. Runtime config is only updated on confirmed success. */
+StorageWriteStatus Config_GetLastWriteStatus(void);
+
 /* Non-mutating diagnostic inspection of the persisted config record. It reads
    and validates into a LOCAL candidate and returns the observed state without
    touching the global runtime config or the Config_GetStorageStatus() result.

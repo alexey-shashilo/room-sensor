@@ -345,6 +345,23 @@ static void App_PrintBootDiag(void)
     printf("Health=%d\r\n", (int)s_health);
 }
 
+/* Boot maintenance: establish A/B redundancy for each known-valid persistent
+   record so a normal first boot (or a power loss during a prior mirror write)
+   reaches HEALTHY rather than remaining single-copy forever. Safe mirror repair
+   never erases the valid source and refuses IO uncertainty. A BLANK/absent
+   provisioning record is deliberately left untouched (factory-new DISCOVERABLE
+   state is healthy); registration mirrors form only from a real persisted
+   record. This is non-destructive by construction. */
+static void App_BootEnsureRedundancy(void)
+{
+    /* Config and Identity are the two boot-critical persistent records.
+       Storage_EnsureRedundancy returns NOT_FOUND (both erased), NOT_NEEDED
+       (already redundant), DONE (mirror established), or REFUSED (IO error /
+       no valid source: no mutation, preserved for explicit recovery). */
+    Storage_EnsureRedundancy(RECORD_TYPE_CONFIG);
+    Storage_EnsureRedundancy(RECORD_TYPE_IDENTITY);
+}
+
 static void App_UpdateHealth(void)
 {
     if (s_i2c_bus == NULL)
@@ -496,6 +513,9 @@ void App_Run(void)
                    (evidence kept for diagnostics/recovery). */
                 if (s_config_storage_status == STORAGE_READ_NOT_FOUND)
                     Config_Save();
+                /* Establish redundancy so first-boot / power-loss-heal devices
+                   reach HEALTHY mirrors (Config + Identity). */
+                App_BootEnsureRedundancy();
                 DeviceLifecycle_TransitionTo(LIFECYCLE_SELF_TEST);
                 break;
             }
@@ -602,7 +622,7 @@ void App_Run(void)
             input.boot_id = s_boot_id;
             input.room = RoomState_Get(&s_room);
             input.health = s_health;
-            input.uptime_ms = now;
+            input.uptime_ms = now - s_start_ms;
 
             TelemetrySnapshot snap;
             if (Telemetry_CreateSnapshot(&snap, &input))

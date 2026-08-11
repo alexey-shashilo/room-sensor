@@ -98,3 +98,16 @@ const SelfTestReport *SelfTest_GetReport(void)
 {
     return &s_report;
 }
+
+const char *SelfTestResult_ToProtocolString(SelfTestResult result)
+{
+    switch (result)
+    {
+        case SELF_TEST_NOT_RUN:  return "not_run";
+        case SELF_TEST_PASS:     return "pass";
+        case SELF_TEST_FAIL:     return "fail";
+        case SELF_TEST_SKIPPED:  return "skipped";
+        case SELF_TEST_DEGRADED: return "degraded";
+        default:                 return "unknown";
+    }
+}

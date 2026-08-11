@@ -305,6 +305,16 @@ int main(void)
         check(r.display == SELF_TEST_SKIPPED, "NULL bus: display SKIPPED");
     }
 
+    /* ============ Protocol-string serializer preserves distinct states ===== */
+    printf("\n=== SelfTestResult_ToProtocolString mapping ===\n");
+    {
+        check(strcmp(SelfTestResult_ToProtocolString(SELF_TEST_NOT_RUN),  "not_run") == 0,  "NOT_RUN -> not_run");
+        check(strcmp(SelfTestResult_ToProtocolString(SELF_TEST_PASS),     "pass") == 0,     "PASS -> pass");
+        check(strcmp(SelfTestResult_ToProtocolString(SELF_TEST_FAIL),     "fail") == 0,     "FAIL -> fail");
+        check(strcmp(SelfTestResult_ToProtocolString(SELF_TEST_SKIPPED),  "skipped") == 0,  "SKIPPED -> skipped");
+        check(strcmp(SelfTestResult_ToProtocolString(SELF_TEST_DEGRADED), "degraded") == 0, "DEGRADED -> degraded");
+    }
+
     /* ============ Persistence status model ================================ */
     printf("\n=== config current-persistence status model ===\n");
     {
