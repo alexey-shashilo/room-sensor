@@ -32,6 +32,11 @@ StorageReadStatus DeviceIdentity_GetLoadStatus(void);
    durable save reports OK. NOT_FOUND = blank/first-boot. */
 StorageReadStatus DeviceIdentity_GetPersistenceStatus(void);
 
+/* Redundancy (A/B mirror) health of the persisted identity record, separate
+   from persistence status. A readable VALID+IO record reads OK yet reports
+   DEGRADED_IO. Updated by DeviceIdentity_Load / DeviceIdentity_Save. */
+StorageHealth DeviceIdentity_GetStorageHealth(void);
+
 /* Non-mutating diagnostic inspection of the persisted identity record.
    Reads and validates into a LOCAL candidate and returns the observed state
    without touching the global runtime identity or persistence status.

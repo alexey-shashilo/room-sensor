@@ -18,6 +18,7 @@ extern "C" {
 void   FakeFlash_Init(void);
 void   FakeFlash_Corrupt(uint32_t offset, size_t size);
 void   FakeFlash_SetWriteFail(bool fail);
+void   FakeFlash_SetVerifyFail(bool fail);   /* post-write readback mismatch */
 void   FakeFlash_SetReadFail(bool fail, uint32_t start_offset, uint32_t end_offset);
 void  *FakeFlash_GetData(void);
 void   FakeFlash_ResetReadCount(void);

@@ -79,6 +79,12 @@ bool Provisioning_IsOperational(const DeviceRegistration *reg);
    IO_ERROR. After an explicit recovery the value changes without reboot. */
 bool Provisioning_IsHealthy(void);
 
+/* Redundancy (A/B mirror) health of the persisted registration record, separate
+   from read/storage status. A readable VALID+IO registration remains operational
+   yet reports DEGRADED_IO, which system diagnostics must surface. Non-mutating
+   snapshot of the current storage. */
+StorageHealth Provisioning_GetStorageHealth(void);
+
 void Provisioning_GetStatus(const DeviceRegistration *reg, ProvisioningStatus *status);
 
 bool EntityId_IsZero(const EntityId *id);

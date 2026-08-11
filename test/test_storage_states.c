@@ -659,6 +659,61 @@ static void TestRecoveryPreserveValid(void)
     }
 }
 
+/* StorageWriteStatus classification: an unsafe (no-valid) state, a genuine
+   Flash IO failure, and a post-write verification mismatch must be reported
+   distinctly rather than collapsing everything into a generic "IO error". */
+static void TestWriteClassification(void)
+{
+    printf("\n=== Write classification (StorageWriteStatus) ===\n");
+
+    /* CORRUPT+ERASED (no valid copy) -> UNSAFE_STATE, not IO_ERROR. */
+    FakeFlash_Init(); Storage_Init();
+    {
+        uint8_t a[4] = {1, 2, 3, 4};
+        Storage_Write(RECORD_TYPE_CONFIG, a, sizeof(a));  /* slot A valid */
+        FakeFlash_Corrupt(0, 8);                          /* corrupt slot A -> no valid */
+        uint8_t w[4] = {9, 9, 9, 9};
+        FakeFlash_ResetIoCounters();
+        T("no-valid pair -> UNSAFE_STATE",
+          Storage_WriteEx(RECORD_TYPE_CONFIG, w, sizeof(w)) == STORAGE_WRITE_UNSAFE_STATE);
+        T("  zero erase on unsafe write", FakeFlash_GetEraseCount() == 0);
+    }
+
+    /* Valid pair + Flash erase/program HAL failure -> IO_ERROR. */
+    FakeFlash_Init(); Storage_Init();
+    {
+        uint8_t a[4] = {1, 2, 3, 4};
+        Storage_Write(RECORD_TYPE_CONFIG, a, sizeof(a));  /* slot A valid, B erased */
+        FakeFlash_SetWriteFail(true);                     /* erase of slot B fails */
+        uint8_t w[4] = {9, 9, 9, 9};
+        T("HAL erase failure -> IO_ERROR",
+          Storage_WriteEx(RECORD_TYPE_CONFIG, w, sizeof(w)) == STORAGE_WRITE_IO_ERROR);
+        FakeFlash_SetWriteFail(false);
+    }
+
+    /* Post-write readback mismatch -> VERIFY_FAILED (distinct from IO_ERROR). */
+    FakeFlash_Init(); Storage_Init();
+    {
+        uint8_t w[4] = {9, 9, 9, 9};
+        FakeFlash_SetVerifyFail(true);
+        T("readback mismatch -> VERIFY_FAILED",
+          Storage_WriteEx(RECORD_TYPE_CONFIG, w, sizeof(w)) == STORAGE_WRITE_VERIFY_FAILED);
+        FakeFlash_SetVerifyFail(false);
+        /* Region not left valid; a retry with verify ok succeeds. */
+        StoragePayload rp;
+        T("verify failure did not leave valid record",
+          Storage_Read(RECORD_TYPE_CONFIG, &rp) != STORAGE_READ_OK);
+    }
+
+    /* Success -> OK. */
+    FakeFlash_Init(); Storage_Init();
+    {
+        uint8_t w[4] = {9, 9, 9, 9};
+        T("clean write -> OK",
+          Storage_WriteEx(RECORD_TYPE_CONFIG, w, sizeof(w)) == STORAGE_WRITE_OK);
+    }
+}
+
 int main(void)
 {
     printf("Storage Slot-State Host Tests\n");
@@ -674,6 +729,7 @@ int main(void)
     TestWriteFailClosed();
     TestRecoveryHarden();
     TestRecoveryPreserveValid();
+    TestWriteClassification();
     TestFormatOwnership();
     TestBankValidation();
 

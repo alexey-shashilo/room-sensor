@@ -65,7 +65,11 @@ PROVIDE(_estack = ORIGIN(RAM) + LENGTH(RAM));    /* end of RAM */
 _sstack = _estack - _Min_Stack_Size;
 /* Generate a link error if heap and stack don't fit into RAM */
 _Min_Heap_Size = 0x200;      /* required amount of heap  */
-_Min_Stack_Size = 0x400; /* required amount of stack */
+/* Project stack budget (see docs/stack-budget.md). Increased from 0x400 so the
+   reservation covers the largest measured call chain (Command_Run 1152 B +
+   nested HandleGetManifest 1152 B), an ISR allowance, and an engineering
+   margin, while leaving ample RAM headroom on the 128 KB device. */
+_Min_Stack_Size = 0x2000; /* 8192 B reserved for the main stack */
 
 /* Define output sections */
 SECTIONS

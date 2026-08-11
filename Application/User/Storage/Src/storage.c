@@ -361,28 +361,30 @@ static uint8_t SelectWriteSlot(uint8_t record_type, uint32_t *sequence_out)
 }
 
 /* Build a program-aligned record in the padded buffer and program it to the
-   (already erased) target slot. Guarantees no OOB read: aligned <= buffer. */
-static bool WriteProgramRecord(uint32_t write_offset,
-                               uint8_t record_type, const uint8_t *data, size_t size,
-                               uint32_t seq)
+   (already erased) target slot. Guarantees no OOB read: aligned <= buffer.
+   Returns a classified result: IO_ERROR for erase/program HAL failure, and
+   VERIFY_FAILED for a post-write readback mismatch. */
+static StorageWriteStatus WriteProgramRecord(uint32_t write_offset,
+                                             uint8_t record_type, const uint8_t *data, size_t size,
+                                             uint32_t seq)
 {
-    if (size > STORAGE_PAYLOAD_MAX) return false;
-    if ((data == NULL) && (size > 0)) return false;
-    if (!s_initialized) return false;
+    if (size > STORAGE_PAYLOAD_MAX) return STORAGE_WRITE_INVALID_ARGUMENT;
+    if ((data == NULL) && (size > 0)) return STORAGE_WRITE_INVALID_ARGUMENT;
+    if (!s_initialized) return STORAGE_WRITE_IO_ERROR;
     /* program_unit must be a supported power of two (validated at Init; the
        guard makes the alignment computation safe on every code path). */
     if (s_program_unit == 0 ||
         (s_program_unit & (s_program_unit - 1U)) != 0U)
-        return false;
+        return STORAGE_WRITE_IO_ERROR;
 
     size_t total = STORAGE_HEADER_SIZE + size;
     size_t aligned = (total + s_program_unit - 1U) & ~((size_t)(s_program_unit - 1U));
 
     /* Program-buffer capacity invariant (defensive, also asserted statically). */
-    if (aligned < total) return false;
-    if (aligned > STORAGE_PROGRAM_BUFFER_MAX) return false;
+    if (aligned < total) return STORAGE_WRITE_INVALID_ARGUMENT;
+    if (aligned > STORAGE_PROGRAM_BUFFER_MAX) return STORAGE_WRITE_INVALID_ARGUMENT;
     /* Record must fit inside the slot page. */
-    if (aligned > s_page_size) return false;
+    if (aligned > s_page_size) return STORAGE_WRITE_INVALID_ARGUMENT;
 
     StorageRecordHeader hdr;
     memset(&hdr, 0, sizeof(hdr));
@@ -409,31 +411,31 @@ static bool WriteProgramRecord(uint32_t write_offset,
     memcpy(program_buf, &hdr, STORAGE_HEADER_SIZE);
 
     if (Platform_FlashWrite(write_offset, program_buf, aligned) != PLATFORM_FLASH_OK)
-        return false;
+        return STORAGE_WRITE_IO_ERROR;
 
     /* Verify the program-aligned bytes as written. */
     uint8_t verify[STORAGE_PROGRAM_BUFFER_MAX];
     if (Platform_FlashRead(write_offset, verify, total) != PLATFORM_FLASH_OK)
-        return false;
+        return STORAGE_WRITE_IO_ERROR;
     if (memcmp(program_buf, verify, total) != 0)
-        return false;
+        return STORAGE_WRITE_VERIFY_FAILED;
 
-    return true;
+    return STORAGE_WRITE_OK;
 }
 
-bool Storage_Write(uint8_t record_type, const uint8_t *data, size_t size)
+StorageWriteStatus Storage_WriteEx(uint8_t record_type, const uint8_t *data, size_t size)
 {
-    if (!s_initialized) return false;
-    if (size > STORAGE_PAYLOAD_MAX) return false;
-    if ((data == NULL) && (size > 0)) return false;
+    if (!s_initialized) return STORAGE_WRITE_IO_ERROR;
+    if (size > STORAGE_PAYLOAD_MAX) return STORAGE_WRITE_INVALID_ARGUMENT;
+    if ((data == NULL) && (size > 0)) return STORAGE_WRITE_INVALID_ARGUMENT;
 
     const StorageRecordLayout *layout = Storage_GetLayout(record_type);
-    if (layout == NULL) return false;
+    if (layout == NULL) return STORAGE_WRITE_INVALID_ARGUMENT;
 
     uint32_t current_seq;
     uint8_t write_slot = SelectWriteSlot(record_type, &current_seq);
     if (write_slot == 0xFF)
-        return false;  /* fail closed: slot state unknown or unsafe */
+        return STORAGE_WRITE_UNSAFE_STATE;  /* no valid copy: explicit recovery required */
 
     uint32_t write_page = (write_slot == 0) ? layout->slot_a_page : layout->slot_b_page;
     uint32_t write_offset = (write_slot == 0) ? layout->slot_a_offset : layout->slot_b_offset;
@@ -443,9 +445,14 @@ bool Storage_Write(uint8_t record_type, const uint8_t *data, size_t size)
 
     /* Erase only the inactive slot page; the active valid page is preserved. */
     if (Platform_FlashErase(write_page) != PLATFORM_FLASH_OK)
-        return false;
+        return STORAGE_WRITE_IO_ERROR;
 
     return WriteProgramRecord(write_offset, record_type, data, size, next_seq);
+}
+
+bool Storage_Write(uint8_t record_type, const uint8_t *data, size_t size)
+{
+    return Storage_WriteEx(record_type, data, size) == STORAGE_WRITE_OK;
 }
 
 StorageRecoveryStatus Storage_RecoverCorruptRecord(uint8_t record_type,
@@ -496,7 +503,7 @@ StorageRecoveryStatus Storage_RecoverCorruptRecord(uint8_t record_type,
         return STORAGE_RECOVERY_FAILED;
 
     /* Both slots now ERASED; write a fresh sequence-1 record into slot A. */
-    if (!WriteProgramRecord(layout->slot_a_offset, record_type, data, size, 1U))
+    if (WriteProgramRecord(layout->slot_a_offset, record_type, data, size, 1U) != STORAGE_WRITE_OK)
         return STORAGE_RECOVERY_FAILED;
 
     return STORAGE_RECOVERY_OK;

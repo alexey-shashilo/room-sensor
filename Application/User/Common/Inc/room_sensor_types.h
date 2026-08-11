@@ -66,6 +66,14 @@ typedef struct
    ================================================================ */
 typedef enum
 {
+    SYSTEM_HEALTH_BOOTING = 0,
+    SYSTEM_HEALTH_OK,
+    SYSTEM_HEALTH_DEGRADED,
+    SYSTEM_HEALTH_FAULT
+} SystemHealthState;
+
+typedef enum
+{
     LIFECYCLE_POWER_ON = 0,
     LIFECYCLE_BOOT,
     LIFECYCLE_PLATFORM_INIT,

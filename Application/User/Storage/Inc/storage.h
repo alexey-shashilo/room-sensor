@@ -135,7 +135,6 @@ bool Storage_Init(void);
    which owns lifecycle/global initialization and must not be re-run. */
 bool Storage_IsInitialized(void);
 StorageReadStatus Storage_Read(uint8_t record_type, StoragePayload *payload);
-bool Storage_Write(uint8_t record_type, const uint8_t *data, size_t size);
 bool Storage_Format(void);
 
 /* Result of an explicit per-record destructive recovery attempt. */
@@ -166,6 +165,26 @@ StorageRecoveryStatus Storage_RecoverCorruptRecord(uint8_t record_type,
 /* Erase ONLY the two pages of `record_type` (engineering/service operation).
    The record is left ERASED (both slots). Does not touch other records. */
 bool Storage_FormatRecord(uint8_t record_type);
+
+/* Classified result of a durable write attempt. Distinguishes an unsafe
+   storage state (e.g. a no-valid CORRUPT+ERASED pair that requires explicit
+   recovery) from a genuine Flash IO/physical error or a readback verification
+   failure, so higher layers never collapse every failure into "IO_ERROR". */
+typedef enum
+{
+    STORAGE_WRITE_OK = 0,
+    STORAGE_WRITE_INVALID_ARGUMENT,
+    STORAGE_WRITE_UNSAFE_STATE,   /* e.g. no VALID copy; explicit recovery required */
+    STORAGE_WRITE_IO_ERROR,       /* Flash erase/program HAL failure */
+    STORAGE_WRITE_VERIFY_FAILED   /* post-write readback mismatch */
+} StorageWriteStatus;
+
+/* Extended write API with a classified result. `data`/`size` must form exactly
+   `size` payload bytes; NULL data is only valid with size==0. */
+StorageWriteStatus Storage_WriteEx(uint8_t record_type, const uint8_t *data, size_t size);
+
+/* Compatibility wrapper around Storage_WriteEx: true iff result is OK. */
+bool Storage_Write(uint8_t record_type, const uint8_t *data, size_t size);
 
 void Storage_GetInfo(StorageInfo *info);
 bool Storage_GetPageInfo(uint8_t record_type, StorageInfo *info);

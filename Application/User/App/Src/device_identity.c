@@ -22,6 +22,12 @@ static StorageReadStatus s_load_status = STORAGE_READ_NOT_FOUND;
    failed write -> CORRUPT/IO_ERROR. Historical load status remains available
    via DeviceIdentity_GetLoadStatus(). */
 static StorageReadStatus s_persistence_status = STORAGE_READ_NOT_FOUND;
+/* Redundancy (A/B mirror) health of the identity record, separate from read
+   status. A readable VALID+IO record reads OK yet reports DEGRADED_IO. Kept
+   current on every DeviceIdentity_Load / DeviceIdentity_Save. */
+static StorageHealth s_storage_health = STORAGE_HEALTH_HEALTHY;
+
+static void DeviceIdentity_RefreshHealth(void);
 
 static void DeriveUuid(uint8_t uuid[DEVICE_UUID_SIZE])
 {
@@ -102,6 +108,7 @@ bool DeviceIdentity_Load(DeviceIdentity *id)
     StorageReadStatus rs = Storage_Read(RECORD_TYPE_IDENTITY, &payload);
     s_load_status = rs;
     s_persistence_status = rs;
+    DeviceIdentity_RefreshHealth();
 
     if (rs != STORAGE_READ_OK)
     {
@@ -139,6 +146,19 @@ StorageReadStatus DeviceIdentity_GetLoadStatus(void)
 StorageReadStatus DeviceIdentity_GetPersistenceStatus(void)
 {
     return s_persistence_status;
+}
+
+StorageHealth DeviceIdentity_GetStorageHealth(void)
+{
+    return s_storage_health;
+}
+
+/* Refresh redundancy health from the actual Storage_GetHealth snapshot without
+   mutating the runtime identity. Called after every storage-bearing op. */
+static void DeviceIdentity_RefreshHealth(void)
+{
+    if (Storage_IsInitialized())
+        s_storage_health = Storage_GetHealth(RECORD_TYPE_IDENTITY);
 }
 
 StorageReadStatus DeviceIdentity_SelfCheck(void)
@@ -179,10 +199,27 @@ bool DeviceIdentity_Save(const DeviceIdentity *id)
     memcpy(stored.device_uuid, id->device_uuid, DEVICE_UUID_SIZE);
     stored.hardware_revision = id->hardware_revision;
 
-    bool ok = Storage_Write(RECORD_TYPE_IDENTITY, (const uint8_t *)&stored, sizeof(stored));
-    /* A successful durable save means the current persistence state is OK. */
-    s_persistence_status = ok ? STORAGE_READ_OK : STORAGE_READ_IO_ERROR;
-    return ok;
+    StorageWriteStatus ws = Storage_WriteEx(RECORD_TYPE_IDENTITY,
+                                            (const uint8_t *)&stored, sizeof(stored));
+    /* A successful durable save means current persistence state is OK. Failures
+       are classified so an unsafe (no-valid) state is not misreported as a
+       physical IO error. */
+    switch (ws)
+    {
+        case STORAGE_WRITE_OK:
+            s_persistence_status = STORAGE_READ_OK;
+            break;
+        case STORAGE_WRITE_INVALID_ARGUMENT:
+            break;
+        case STORAGE_WRITE_UNSAFE_STATE:
+        case STORAGE_WRITE_VERIFY_FAILED:
+        case STORAGE_WRITE_IO_ERROR:
+        default:
+            s_persistence_status = STORAGE_READ_CORRUPT;
+            break;
+    }
+    DeviceIdentity_RefreshHealth();
+    return (ws == STORAGE_WRITE_OK);
 }
 
 void DeviceIdentity_GetShortId(const DeviceIdentity *id, char *out, size_t max_len)

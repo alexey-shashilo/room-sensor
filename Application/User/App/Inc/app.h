@@ -10,13 +10,8 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-typedef enum
-{
-    SYSTEM_HEALTH_BOOTING = 0,
-    SYSTEM_HEALTH_OK,
-    SYSTEM_HEALTH_DEGRADED,
-    SYSTEM_HEALTH_FAULT
-} SystemHealthState;
+/* SystemHealthState is defined in room_sensor_types.h (portable Common) so the
+   lower-level Command layer can reference it without depending on App. */
 
 typedef struct
 {
@@ -40,6 +35,12 @@ typedef struct
        values used but persistent record preserved untouched (degraded). */
     StorageReadStatus config_storage_status;
     StorageReadStatus identity_storage_status;
+
+    /* Redundancy (A/B mirror) health of each persistent record — separate from
+       read status. A readable VALID+IO record reads OK but reports DEGRADED_IO. */
+    StorageHealth config_storage_health;
+    StorageHealth identity_storage_health;
+    StorageHealth provisioning_storage_health;
 
     uint32_t uptime_ms;
 } AppStatus;

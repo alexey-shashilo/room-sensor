@@ -65,9 +65,15 @@ static bool              s_storage_init_ok = false;
 
 static RoomState         s_room;
 
-/* Persistent, live AppStatus snapshot. cmd_svc.status points here so GET_STATUS
-   reads current runtime health. Refreshed by App_GetStatus() / App_Run. */
+/* Live AppStatus snapshot exposed via App_GetStatus(). */
 static AppStatus         s_status;
+
+/* Command-facing runtime-status DTO. App (the owner) fills it from the
+   authoritative modules before Command_Run(); Command only reads the snapshot
+   and has no dependency on App concrete types. */
+static CommandRuntimeStatus s_cmd_status;
+
+static void App_FillCommandRuntimeStatus(void);
 
 static void DeviceRuntime_Init(DeviceRuntime *rt, DeviceState initial)
 {
@@ -301,6 +307,7 @@ static const char *SelfTestResultStr(SelfTestResult r)
         case SELF_TEST_PASS:    return "PASS";
         case SELF_TEST_FAIL:    return "FAIL";
         case SELF_TEST_SKIPPED: return "SKIPPED";
+        case SELF_TEST_DEGRADED:return "DEGRADED";
         default:                return "NOT_RUN";
     }
 }
@@ -348,20 +355,29 @@ static void App_UpdateHealth(void)
 
     bool veml_ready = (s_light_rt.state == DEVICE_STATE_READY);
     bool disp_ready = (s_disp_rt.state == DEVICE_STATE_READY);
-    /* Authoritative runtime health, NOT the SelfTest report. App_UpdateHealth
-       reflects current subsystem state, so it recovers after an explicit
-       storage recovery without a reboot and never trusts a stale diagnostic
-       snapshot (e.g. SelfTestReport) as the storage source of truth. */
-    bool storage_ok = s_storage_init_ok && Storage_IsInitialized();
-    bool config_ok  = (Config_GetStorageStatus() != STORAGE_READ_CORRUPT) &&
-                      (Config_GetStorageStatus() != STORAGE_READ_IO_ERROR);
-    bool identity_ok = (DeviceIdentity_GetPersistenceStatus() != STORAGE_READ_CORRUPT) &&
-                       (DeviceIdentity_GetPersistenceStatus() != STORAGE_READ_IO_ERROR);
+    /* Authoritative runtime health, NOT the SelfTest report. Redundancy health
+       is separate from read status: a readable VALID+IO record reads OK but its
+       mirror (A/B) is DEGRADED_IO and must degrade system health. */
+    bool runtime_ok = veml_ready && disp_ready &&
+                      s_storage_init_ok && Storage_IsInitialized();
 
-    /* Provisioning health is runtime-CURRENT (not a boot snapshot): after an
-       explicit recovery it returns to OK without a reboot. */
-    if (veml_ready && disp_ready && storage_ok && config_ok && identity_ok &&
-        Provisioning_IsHealthy())
+    /* Persistence redundancy: healthy only when every A/B mirror is HEALTHY.
+       A degraded mirror degrades system health without stopping sensing. */
+    bool config_healthy  = (Config_GetStorageHealth() == STORAGE_HEALTH_HEALTHY);
+    bool identity_healthy = (DeviceIdentity_GetStorageHealth() == STORAGE_HEALTH_HEALTHY);
+    bool prov_healthy    = (Provisioning_GetStorageHealth() == STORAGE_HEALTH_HEALTHY);
+
+    bool persistence_redundant_ok =
+        config_healthy && identity_healthy && prov_healthy &&
+        (Config_GetStorageStatus() != STORAGE_READ_CORRUPT) &&
+        (Config_GetStorageStatus() != STORAGE_READ_IO_ERROR) &&
+        (DeviceIdentity_GetPersistenceStatus() != STORAGE_READ_CORRUPT) &&
+        (DeviceIdentity_GetPersistenceStatus() != STORAGE_READ_IO_ERROR) &&
+        Provisioning_IsHealthy();
+
+    /* A non-OK/FAULT state here is DEGRADED: sensing continues (the scheduler is
+       never gated on health) and only the reported health reflects the mirror. */
+    if (runtime_ok && persistence_redundant_ok)
         s_health = SYSTEM_HEALTH_OK;
     else
         s_health = SYSTEM_HEALTH_DEGRADED;
@@ -401,7 +417,8 @@ RoomSensor_Status App_Init(void)
         cmd_svc.bus = (struct I2cBus *)s_i2c_bus;
         cmd_svc.uptime_ms = 0;
         cmd_svc.watchdog_active = false;
-        cmd_svc.status = &s_status;
+        cmd_svc.runtime_status = &s_cmd_status;
+        App_FillCommandRuntimeStatus();
         App_GetStatus(&s_status);
         Command_Init(&cmd_svc);
     }
@@ -594,7 +611,8 @@ void App_Run(void)
     }
 
     Communication_Run();
-    App_GetStatus(&s_status);   /* keep cmd_svc->status current for GET_STATUS */
+    App_FillCommandRuntimeStatus();   /* keep CommandRuntimeStatus current for GET_STATUS */
+    App_GetStatus(&s_status);         /* keep AppStatus.s_health etc current */
     Command_Run();
 
     Platform_WatchdogRefresh();
@@ -619,8 +637,29 @@ void App_GetStatus(AppStatus *status)
        boot snapshot kept internally for the boot persistence policy. */
     s_status.config_storage_status = Config_GetStorageStatus();
     s_status.identity_storage_status = DeviceIdentity_GetPersistenceStatus();
+    /* Redundancy health, separate from read status — surfaces a damaged mirror
+       without claiming the record is unreadable. */
+    s_status.config_storage_health = Config_GetStorageHealth();
+    s_status.identity_storage_health = DeviceIdentity_GetStorageHealth();
+    s_status.provisioning_storage_health = Provisioning_GetStorageHealth();
     s_status.uptime_ms = Platform_GetTickMs() - s_start_ms;
 
     if (status != &s_status)
         *status = s_status;
+}
+
+/* Populate the Command-facing runtime-status DTO from the authoritative owners.
+   Command reads this snapshot only; ownership of state stays with App/modules. */
+static void App_FillCommandRuntimeStatus(void)
+{
+    const ProvisioningRuntime *pr = Provisioning_GetRuntime();
+    s_cmd_status.system_health = s_health;
+    s_cmd_status.storage_initialized = s_storage_init_ok && Storage_IsInitialized();
+    s_cmd_status.config_persistence = Config_GetStorageStatus();
+    s_cmd_status.config_storage_health = Config_GetStorageHealth();
+    s_cmd_status.identity_persistence = DeviceIdentity_GetPersistenceStatus();
+    s_cmd_status.identity_storage_health = DeviceIdentity_GetStorageHealth();
+    s_cmd_status.provisioning_state = (pr != NULL) ? pr->status.state : PROVISIONING_ERROR;
+    s_cmd_status.provisioning_persistence = (pr != NULL) ? pr->storage_status : STORAGE_READ_IO_ERROR;
+    s_cmd_status.provisioning_storage_health = Provisioning_GetStorageHealth();
 }

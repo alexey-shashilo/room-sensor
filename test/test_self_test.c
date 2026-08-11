@@ -53,10 +53,12 @@ static void BootHealthy(void)
     Storage_Init();
     Config_Load();
     Config_LoadDefaults();
-    Config_Save();
+    Config_Save();             /* slot A */
+    Config_Save();             /* slot B (newest) -> both valid, HEALTHY */
     DeviceIdentity seed;
     DeviceIdentity_Derive(&seed);
-    DeviceIdentity_Save(&seed);
+    DeviceIdentity_Save(&seed);  /* slot A */
+    DeviceIdentity_Save(&seed);  /* slot B -> both valid, HEALTHY */
     FakeFlash_ResetIoCounters();
 }
 
@@ -112,40 +114,92 @@ int main(void)
         check(FakeFlash_GetEraseCount() == 0, "blank: zero Flash erases");
     }
 
-    /* ============ 3. Corrupt config -> FAIL, zero writes ================== */
-    printf("\n=== corrupt config -> config FAIL, zero Flash ops ===\n");
+    /* ============ 3. Fully corrupt config -> FAIL, zero writes ============ */
+    printf("\n=== corrupt config (both slots) -> config FAIL, zero Flash ops ===\n");
     {
         InitI2cHealthy();
         BootHealthy();
-        FakeFlash_Corrupt(0, 24);   /* config slot A header */
+        FakeFlash_Corrupt(0, 24);      /* config slot A header */
+        FakeFlash_Corrupt(2048, 24);   /* config slot B header (both corrupted) */
         bool init_before = Storage_IsInitialized();
 
         SelfTestReport r;
         SelfTest_Run(&r, &s_bus);
 
-        check(r.config == SELF_TEST_FAIL, "corrupt config -> FAIL");
+        check(r.config == SELF_TEST_FAIL, "fully-corrupt config -> FAIL");
         check(r.identity == SELF_TEST_PASS, "corrupt config does not affect identity");
         check(Storage_IsInitialized() == init_before, "Storage_IsInitialized unchanged (corrupt)");
         check(FakeFlash_GetWriteCount() == 0, "corrupt config: zero Flash writes");
         check(FakeFlash_GetEraseCount() == 0, "corrupt config: zero Flash erases");
     }
 
-    /* ============ 4. Corrupt identity -> FAIL, zero writes ================ */
-    printf("\n=== corrupt identity -> identity FAIL, zero Flash ops ===\n");
+    /* ============ 3b. VALID + single CORRUPT mirror -> DEGRADED =========== */
+    printf("\n=== config VALID+CORRUPT -> read OK, health DEGRADED (DEGRADED, not FAIL/OK) ===\n");
+    {
+        InitI2cHealthy();
+        BootHealthy();
+        FakeFlash_Corrupt(2048, 24);   /* corrupt ONLY slot B; slot A valid */
+        SelfTestReport r;
+        SelfTest_Run(&r, &s_bus);
+        check(r.config == SELF_TEST_DEGRADED, "VALID+CORRUPT config -> DEGRADED (usable, mirror bad)");
+        check(Storage_GetHealth(RECORD_TYPE_CONFIG) == STORAGE_HEALTH_DEGRADED,
+              "Storage_GetHealth(config) == DEGRADED");
+        StoragePayload p;
+        check(Storage_Read(RECORD_TYPE_CONFIG, &p) == STORAGE_READ_OK,
+              "VALID+CORRUPT config still readable (OK)");
+    }
+
+    /* ============ 3c. VALID + IO_ERROR mirror -> DEGRADED, readable ======= */
+    printf("\n=== config VALID+IO -> read OK, health DEGRADED_IO (DEGRADED) ===\n");
+    {
+        InitI2cHealthy();
+        BootHealthy();
+        FakeFlash_SetReadFail(true, 2048, 4096);   /* slot B unreadable; slot A valid */
+        SelfTestReport r;
+        SelfTest_Run(&r, &s_bus);
+        check(r.config == SELF_TEST_DEGRADED, "VALID+IO config -> DEGRADED (readable, mirror IO)");
+        check(Storage_GetHealth(RECORD_TYPE_CONFIG) == STORAGE_HEALTH_DEGRADED_IO,
+              "Storage_GetHealth(config) == DEGRADED_IO");
+        StoragePayload p;
+        check(Storage_Read(RECORD_TYPE_CONFIG, &p) == STORAGE_READ_OK,
+              "VALID+IO config still readable (OK)");
+        FakeFlash_SetReadFail(false, 0, 0);
+    }
+
+    /* ============ 4. Fully-corrupt identity -> FAIL, zero writes ========== */
+    printf("\n=== corrupt identity (both slots) -> identity FAIL, zero Flash ops ===\n");
     {
         InitI2cHealthy();
         BootHealthy();
         FakeFlash_Corrupt(4096, 24);   /* identity slot A header */
+        FakeFlash_Corrupt(6144, 24);   /* identity slot B header (both corrupted) */
         bool init_before = Storage_IsInitialized();
 
         SelfTestReport r;
         SelfTest_Run(&r, &s_bus);
 
-        check(r.identity == SELF_TEST_FAIL, "corrupt identity -> FAIL");
+        check(r.identity == SELF_TEST_FAIL, "fully-corrupt identity -> FAIL");
         check(r.config == SELF_TEST_PASS, "corrupt identity does not affect config");
         check(Storage_IsInitialized() == init_before, "Storage_IsInitialized unchanged (corrupt ident)");
         check(FakeFlash_GetWriteCount() == 0, "corrupt identity: zero Flash writes");
         check(FakeFlash_GetEraseCount() == 0, "corrupt identity: zero Flash erases");
+    }
+
+    /* ============ 4b. Identity VALID+IO mirror -> DEGRADED, readable ====== */
+    printf("\n=== identity VALID+IO -> read OK, health DEGRADED_IO (DEGRADED) ===\n");
+    {
+        InitI2cHealthy();
+        BootHealthy();
+        FakeFlash_SetReadFail(true, 6144, 8192);   /* slot B unreadable; slot A valid */
+        SelfTestReport r;
+        SelfTest_Run(&r, &s_bus);
+        check(r.identity == SELF_TEST_DEGRADED, "VALID+IO identity -> DEGRADED (readable)");
+        check(Storage_GetHealth(RECORD_TYPE_IDENTITY) == STORAGE_HEALTH_DEGRADED_IO,
+              "Storage_GetHealth(identity) == DEGRADED_IO");
+        StoragePayload p2;
+        check(Storage_Read(RECORD_TYPE_IDENTITY, &p2) == STORAGE_READ_OK,
+              "VALID+IO identity still readable (OK)");
+        FakeFlash_SetReadFail(false, 0, 0);
     }
 
     /* ============ 5. Config IO_ERROR -> FAIL, zero writes ================= */
@@ -153,7 +207,7 @@ int main(void)
     {
         InitI2cHealthy();
         BootHealthy();
-        FakeFlash_SetReadFail(true, 0, 2048);   /* config slot A unreadable */
+        FakeFlash_SetReadFail(true, 0, 4096);   /* BOTH config slots unreadable */
         bool init_before = Storage_IsInitialized();
 
         SelfTestReport r;

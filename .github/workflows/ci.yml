@@ -85,48 +85,20 @@ jobs:
             build-fw/room_sensor.hex
           if-no-files-found: error
 
-      # P2: stack-usage reporting + guard. The firmware is built with
-      # -fstack-usage, producing one *.su file per translation unit. We report
-      # the top-15 project-owned functions by static (frame-only) stack usage,
-      # excluding vendor HAL/BSP noise (under cmake/stm32cubemx). The guard
-      # fails when a single project-owned function reports a static frame
-      # exceeding the stated threshold. LIMITATION: per-function static usage
-      # is NOT the call-chain (worst-case total) stack; it deliberately ignores
-      # dynamic/call usage, which is a stack-summing analysis outside this gate.
-      - name: Report stack usage (top-15 project-owned)
+      # P2: stack-usage gate. The firmware is built with -fstack-usage, producing one
+# *.su file per translation unit. scripts/check_stack_usage.py reports the
+# top-N project-owned static frames and enforces a threshold. It FAILS CLOSED:
+# if no project-owned .su frames can be measured, CI fails (a missing
+# measurement means the quality gate is unavailable). Note the documented
+# limitation: per-function static usage is NOT the call-chain total stack.
+      - name: Report and gate stack usage (fail-closed)
         run: |
           su_files=$(find build-fw -name '*.su' 2>/dev/null || true)
           if [ -z "$su_files" ]; then
-            echo "WARN: no -fstack-usage .su files produced; skipping report"
-            exit 0
-          fi
-          echo "== top-15 project-owned static stack usage (bytes static = frame only) =="
-          for f in $su_files; do
-            # .su line: "<file>:<line>:<col>:<func>\t<bytes>\tstatic"
-            awk 'NF >= 3 && $3 == "static" {
-              # keep rows whose source is under Application/User (project-owned)
-              if (index($1, "Application/User") > 0) {
-                bytes=$2; f=$1;
-                sub(/^.*:[0-9]+:[0-9]+:/, "", f);   # strip file:line:col -> func
-                print bytes"\t"f
-              }
-            }' "$f"
-          done | sort -rn | head -15 | awk '{printf "%6d  %s\n", $1, $2}'
-      - name: Fail CI if a project-owned function exceeds stack threshold
-        run: |
-          # Justified threshold (bytes, static frame only). The largest
-          # project-owned static frames are the command/response path
-          # (Command_Run, HandleGetManifest) ~1152 B at -O0; 2048 leaves
-          # margin while still catching pathological regressions.
-          THRESHOLD=2048
-          worst=$(find build-fw -name '*.su' 2>/dev/null | while read f; do
-            awk 'NF >= 3 && $3 == "static" && index($1, "Application/User") > 0 { print $2 }' "$f"
-          done | sort -rn | head -1)
-          if [ -n "$worst" ] && [ "$worst" -gt "$THRESHOLD" ]; then
-            echo "ERROR: project-owned static frame of ${worst} B exceeds ${THRESHOLD} B"
+            echo "FAIL-CLOSED: no *.su files produced; stack-usage gate unavailable"
             exit 1
           fi
-          echo "PASS: worst project-owned static frame = ${worst:-0} B (<= ${THRESHOLD} B)"
+          python3 scripts/check_stack_usage.py --threshold 2048 $su_files
 
   portable-core-build:
     runs-on: ubuntu-24.04
@@ -185,11 +157,14 @@ jobs:
 
       - name: Check no dynamic memory in Application/User
         run: |
-          if grep -rn 'malloc\|calloc\|realloc\|free' Application/User/ --include='*.c' --include='*.h' | grep -v 'test/'; then
-            echo "ERROR: Dynamic memory found in Application/User"
+          # Function-call-oriented: match only actual allocation/deallocation
+          # CALLS like free(ptr), malloc(...), calloc(...), realloc(...). This
+          # does NOT match ordinary prose such as "side-effect-free".
+          if grep -rnE '\b(malloc|calloc|realloc|free)[[:space:]]*\(' Application/User/ --include='*.c' --include='*.h' | grep -v 'test/'; then
+            echo "ERROR: Dynamic memory malloc/calloc/realloc/free( call found in Application/User"
             exit 1
           fi
-          echo "PASS: No dynamic memory in Application/User"
+          echo "PASS: No dynamic memory malloc/calloc/realloc/free( calls in Application/User"
 
       - name: Check no HAL_Delay in portable modules
         run: |
@@ -228,3 +203,16 @@ jobs:
             exit 1
           fi
           echo "PASS: No secrets serialized"
+
+      # Layering rule: Command must NOT depend on App concrete types. Command
+      # communicates downward via the portable CommandRuntimeStatus DTO; App
+      # fills it. Block any regressive #include "app.h" / AppStatus usage.
+      - name: Check Command has no App dependency
+        run: |
+          BAD=$(grep -rnE '#include[[:space:]]*["<]app\.h[">]|AppStatus' Application/User/Command/ 2>/dev/null || true)
+          if [ -n "$BAD" ]; then
+            echo "ERROR: Command must not depend on App (app.h / AppStatus):"
+            echo "$BAD"
+            exit 1
+          fi
+          echo "PASS: Command has no App dependency"

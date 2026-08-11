@@ -4,6 +4,7 @@
 static uint8_t s_flash[FAKE_FLASH_SIZE * FAKE_FLASH_MAX_PAGES];
 static uint32_t s_page_count = FAKE_FLASH_PAGES;
 static bool s_write_fail = false;
+static bool s_verify_fail = false;
 static bool s_read_fail = false;
 static uint32_t s_read_fail_start = 0;
 static uint32_t s_read_fail_end = 0;
@@ -17,6 +18,7 @@ void FakeFlash_Init(void)
     memset(s_flash, 0xFF, sizeof(s_flash));
     s_page_count = FAKE_FLASH_PAGES;
     s_write_fail = false;
+    s_verify_fail = false;
     s_read_fail = false;
     s_read_fail_start = 0;
     s_read_fail_end = 0;
@@ -59,6 +61,14 @@ void FakeFlash_Corrupt(uint32_t offset, size_t size)
 void FakeFlash_SetWriteFail(bool fail)
 {
     s_write_fail = fail;
+}
+
+void FakeFlash_SetVerifyFail(bool fail)
+{
+    /* When enabled, Platform_FlashWrite programs bytes then silently corrupts
+       the region so the storage layer's post-write readback mismatch is
+       detected as a verify failure (STORAGE_WRITE_VERIFY_FAILED). */
+    s_verify_fail = fail;
 }
 
 void FakeFlash_SetReadFail(bool fail, uint32_t start_offset, uint32_t end_offset)
@@ -143,6 +153,10 @@ PlatformFlashStatus Platform_FlashWrite(uint32_t offset, const void *data, size_
     if (!s_bank_supported) return PLATFORM_FLASH_ERROR;
     s_write_count++;
     memcpy(s_flash + offset, data, size);
+    /* Simulate a post-write verification failure: corrupt one written byte so
+       the storage readback never matches the intended program buffer. */
+    if (s_verify_fail && size > 0)
+        s_flash[offset] ^= 0x5A;
     return PLATFORM_FLASH_OK;
 }
 

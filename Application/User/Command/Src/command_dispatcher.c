@@ -28,28 +28,47 @@ static void HandleGetStatus(const CommandRequest *req, CommandResponse *rsp, con
     CommandResponse_Append(rsp, "},");
     CommandResponse_AppendJsonBool(rsp, "watchdog", svc->watchdog_active);
 
-    /* Authoritative storage/config/identity health comes from the live runtime
-       status (svc->status filled by App_GetStatus()), NOT from the SelfTest
-       report. A SelfTestReport only answers "what did the last diagnostic
-       observe?" — it is not runtime storage state. */
-    const AppStatus *st = svc->status;
-    CommandResponse_AppendJsonBool(rsp, "storage_ok",
-                                   (st != NULL) && st->storage_initialized);
+    /* Authoritative config/identity/provisioning health comes from the live
+       CommandRuntimeStatus snapshot (svc->runtime_status filled by App), NOT
+       from the SelfTest report (which only records what a previous diagnostic
+       observed). Read status and redundancy health are exposed separately so a
+       readable VALID+IO record (read OK, mirror DEGRADED_IO) is not reported as
+       fully healthy. */
+    const CommandRuntimeStatus *st = svc->runtime_status;
+    bool storage_ok = (st != NULL) && st->storage_initialized;
+    CommandResponse_AppendJsonBool(rsp, "storage_ok", storage_ok);
     if (st != NULL)
     {
-        bool config_ok  = (st->config_storage_status != STORAGE_READ_CORRUPT) &&
-                          (st->config_storage_status != STORAGE_READ_IO_ERROR);
-        bool identity_ok = (st->identity_storage_status != STORAGE_READ_CORRUPT) &&
-                           (st->identity_storage_status != STORAGE_READ_IO_ERROR);
-
-        CommandResponse_AppendJsonBool(rsp, "system_health",
-                                       st->health == SYSTEM_HEALTH_OK);
+        CommandResponse_AppendJsonInt(rsp, "system_health", (uint32_t)st->system_health);
         CommandResponse_AppendJsonBool(rsp, "storage_initialized", st->storage_initialized);
-        CommandResponse_AppendJsonBool(rsp, "config_ok", config_ok);
-        CommandResponse_AppendJsonBool(rsp, "identity_ok", identity_ok);
-        CommandResponse_AppendJsonInt(rsp, "config_persistence", (uint32_t)st->config_storage_status);
-        CommandResponse_AppendJsonInt(rsp, "identity_persistence", (uint32_t)st->identity_storage_status);
-        CommandResponse_AppendJsonBool(rsp, "provisioning_healthy", st->provisioning_initialized);
+
+        /* Config */
+        CommandResponse_AppendJsonBool(rsp, "config_ok",
+                                       (st->config_persistence != STORAGE_READ_CORRUPT) &&
+                                       (st->config_persistence != STORAGE_READ_IO_ERROR));
+        CommandResponse_AppendJsonInt(rsp, "config_persistence_status",
+                                      (uint32_t)st->config_persistence);
+        CommandResponse_AppendJsonInt(rsp, "config_storage_health",
+                                      (uint32_t)st->config_storage_health);
+
+        /* Identity */
+        CommandResponse_AppendJsonBool(rsp, "identity_ok",
+                                       (st->identity_persistence != STORAGE_READ_CORRUPT) &&
+                                       (st->identity_persistence != STORAGE_READ_IO_ERROR));
+        CommandResponse_AppendJsonInt(rsp, "identity_persistence_status",
+                                      (uint32_t)st->identity_persistence);
+        CommandResponse_AppendJsonInt(rsp, "identity_storage_health",
+                                      (uint32_t)st->identity_storage_health);
+
+        /* Registration / provisioning */
+        CommandResponse_AppendJsonBool(rsp, "provisioning_healthy",
+                                       st->provisioning_persistence != STORAGE_READ_CORRUPT &&
+                                       st->provisioning_persistence != STORAGE_READ_IO_ERROR);
+        CommandResponse_AppendJsonInt(rsp, "provisioning_state", (uint32_t)st->provisioning_state);
+        CommandResponse_AppendJsonInt(rsp, "provisioning_persistence_status",
+                                      (uint32_t)st->provisioning_persistence);
+        CommandResponse_AppendJsonInt(rsp, "provisioning_storage_health",
+                                      (uint32_t)st->provisioning_storage_health);
     }
     CommandResponse_Finalize(rsp);
 }

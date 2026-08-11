@@ -7,6 +7,12 @@
 
 static RoomSensorConfig s_config;
 static StorageReadStatus s_storage_status = STORAGE_READ_NOT_FOUND;
+/* Redundancy (A/B mirror) health of the config record, kept current on every
+   storage operation. Read status and health are separate: a readable VALID+IO
+   record reads OK yet reports DEGRADED_IO. */
+static StorageHealth s_storage_health = STORAGE_HEALTH_HEALTHY;
+
+static void Config_RefreshHealth(void);
 
 static float Q16ToFloat(uint32_t q16)
 {
@@ -63,6 +69,7 @@ bool Config_Load(void)
     StoragePayload payload;
     StorageReadStatus rs = Storage_Read(RECORD_TYPE_CONFIG, &payload);
     s_storage_status = rs;
+    Config_RefreshHealth();
 
     if (rs == STORAGE_READ_NOT_FOUND)
         return false;  /* fresh/never-written: safe defaults are used */
@@ -99,6 +106,20 @@ bool Config_Load(void)
 StorageReadStatus Config_GetStorageStatus(void)
 {
     return s_storage_status;
+}
+
+StorageHealth Config_GetStorageHealth(void)
+{
+    return s_storage_health;
+}
+
+/* Refresh redundancy health from the actual Storage_GetHealth snapshot without
+   mutating the runtime config value. Called after every storage-bearing
+   operation (load/save/apply/reset/recovery). */
+static void Config_RefreshHealth(void)
+{
+    if (Storage_IsInitialized())
+        s_storage_health = Storage_GetHealth(RECORD_TYPE_CONFIG);
 }
 
 StorageReadStatus Config_SelfCheck(void)
@@ -139,15 +160,29 @@ bool Config_SaveCandidate(const RoomSensorConfig *candidate)
     storage.version = CONFIG_SCHEMA_VERSION;
     storage.light_calibration_q16 = FloatToQ16(candidate->runtime.light_calibration_factor);
 
-    bool ok = Storage_Write(RECORD_TYPE_CONFIG, (const uint8_t *)&storage, sizeof(storage));
-    /* Current persistence status reflects the write outcome: a successful
-       durable write makes the persisted config OK; a failed write is reported
-       as a degraded/error status rather than falsely claiming OK. */
-    if (ok)
-        s_storage_status = STORAGE_READ_OK;
-    else if (s_storage_status != STORAGE_READ_CORRUPT)
-        s_storage_status = STORAGE_READ_IO_ERROR;
-    return ok;
+    StorageWriteStatus ws = Storage_WriteEx(RECORD_TYPE_CONFIG,
+                                            (const uint8_t *)&storage, sizeof(storage));
+
+    /* Current persistence status reflects the write outcome. Failures are
+       classified so an unsafe (no-valid) state is not misreported as a generic
+       physical IO error. Successful writes make persistence OK. */
+    switch (ws)
+    {
+        case STORAGE_WRITE_OK:
+            s_storage_status = STORAGE_READ_OK;
+            break;
+        case STORAGE_WRITE_INVALID_ARGUMENT:
+            /* No storage state change; argument rejected by storage layer. */
+            break;
+        case STORAGE_WRITE_UNSAFE_STATE:
+        case STORAGE_WRITE_VERIFY_FAILED:
+        case STORAGE_WRITE_IO_ERROR:
+        default:
+            s_storage_status = STORAGE_READ_CORRUPT;
+            break;
+    }
+    Config_RefreshHealth();
+    return (ws == STORAGE_WRITE_OK);
 }
 
 bool Config_Save(void)

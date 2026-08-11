@@ -56,10 +56,15 @@ bool               Config_Validate(const ConfigStorageV1 *storage);
    Config_Save / Config_Reset path so the result is never stale. */
 StorageReadStatus Config_GetStorageStatus(void);
 
+/* Redundancy (A/B mirror) health of the persisted config record, separate from
+   read status. A readable VALID+IO record reads OK but reports DEGRADED_IO.
+   Updated by Config_Load and every Config_Save / Config_Reset path. */
+StorageHealth Config_GetStorageHealth(void);
+
 /* Non-mutating diagnostic inspection of the persisted config record. It reads
    and validates into a LOCAL candidate and returns the observed state without
    touching the global runtime config or the Config_GetStorageStatus() result.
-   Intended for a side-effect-less self-test / diagnostic command.
+   Intended for a side-effect-free self-test / diagnostic command.
    OK = persisted healthy, NOT_FOUND = blank/first-boot,
    CORRUPT = corrupt record, IO_ERROR = Flash failure. */
 StorageReadStatus Config_SelfCheck(void);

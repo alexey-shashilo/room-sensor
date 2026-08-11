@@ -206,6 +206,14 @@ bool Provisioning_IsHealthy(void)
            (s_storage_status == STORAGE_READ_NOT_FOUND);
 }
 
+StorageHealth Provisioning_GetStorageHealth(void)
+{
+    /* Redundancy health of the registration record. A readable VALID+IO
+       registration stays operational (Provisioning_IsHealthy true) yet reports
+       DEGRADED_IO here, so system diagnostics surface the damaged mirror. */
+    return Storage_GetHealth(RECORD_TYPE_REGISTRATION);
+}
+
 static bool Registration_Save(const DeviceRegistration *reg)
 {
     /* Ordinary mutations fail closed unless storage state is known (OK or

@@ -10,7 +10,7 @@
 #include "device_identity.h"
 #include "self_test.h"
 #include "platform_reset.h"
-#include "app.h"
+#include "command_runtime_status.h"
 
 #define COMMAND_SCHEMA_VERSION       1U
 #define COMMAND_RESPONSE_MAX_SIZE    1024U
@@ -120,11 +120,12 @@ typedef struct
     DeviceRuntime display;
     ResetCause reset_cause;
 
-    /* Authoritative current runtime status of the whole system. GET_STATUS
-       MUST use this for storage/config/identity/provisioning health instead of
-       the SelfTestReport (which only records what a previous diagnostic
-       observed). Populated live by App_GetStatus(). */
-    const AppStatus       *status;
+    /* Authoritative current runtime-status snapshot, filled by App (owning the
+       underlying state) before Command_Run(). GET_STATUS MUST use this for
+       storage/config/identity/provisioning health instead of the SelfTestReport
+       (which only records what a previous diagnostic observed). Command has NO
+       dependency on App concrete types; this is a plain portable DTO. */
+    const CommandRuntimeStatus *runtime_status;
 } CommandServices;
 
 typedef struct

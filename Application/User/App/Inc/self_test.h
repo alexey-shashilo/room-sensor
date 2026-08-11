@@ -10,7 +10,8 @@ typedef enum
     SELF_TEST_NOT_RUN = 0,
     SELF_TEST_PASS,
     SELF_TEST_FAIL,
-    SELF_TEST_SKIPPED
+    SELF_TEST_SKIPPED,
+    SELF_TEST_DEGRADED   /* usable, but a redundancy mirror (A/B) is degraded */
 } SelfTestResult;
 
 typedef struct
