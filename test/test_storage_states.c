@@ -582,6 +582,83 @@ static void TestBankValidation(void)
     }
 }
 
+/* Recovery must NOT destroy the final valid record. Any pair with a readable
+   valid copy (VALID+CORRUPT, CORRUPT+VALID, VALID+ERASED, ERASED+VALID) is
+   repairable by a normal Storage_Write, so explicit destructive recovery is
+   NOT_NEEDED and performs ZERO erase calls. */
+static void TestRecoveryPreserveValid(void)
+{
+    printf("\n=== Recovery preserves valid copy (zero-erase NOT_NEEDED) ===\n");
+
+    /* VALID + CORRUPT -> NOT_NEEDED, zero erases, valid copy intact. */
+    FakeFlash_Init(); Storage_Init();
+    {
+        uint8_t a[4] = {1, 2, 3, 4};
+        Storage_Write(RECORD_TYPE_CONFIG, a, sizeof(a));  /* slot A valid */
+        FakeFlash_Corrupt(2048, 8);                       /* corrupt slot B */
+        uint8_t w[4] = {9, 9, 9, 9};
+        FakeFlash_ResetIoCounters();
+        T("VALID+CORRUPT -> NOT_NEEDED",
+          Storage_RecoverCorruptRecord(RECORD_TYPE_CONFIG, w, sizeof(w)) ==
+          STORAGE_RECOVERY_NOT_NEEDED);
+        T("  VALID+CORRUPT zero erase calls", FakeFlash_GetEraseCount() == 0);
+        {
+            StoragePayload p;
+            T("  valid copy still readable",
+              Storage_Read(RECORD_TYPE_CONFIG, &p) == STORAGE_READ_OK);
+            T("  valid payload preserved", memcmp(p.data, a, sizeof(a)) == 0);
+        }
+    }
+
+    /* CORRUPT + VALID -> NOT_NEEDED, zero erases, valid copy intact. */
+    FakeFlash_Init(); Storage_Init();
+    {
+        uint8_t a[4] = {1, 2, 3, 4};
+        Storage_Write(RECORD_TYPE_CONFIG, a, sizeof(a));  /* slot A valid */
+        Storage_Write(RECORD_TYPE_CONFIG, a, sizeof(a));  /* slot B valid (newest) */
+        FakeFlash_Corrupt(0, 8);                          /* corrupt slot A */
+        uint8_t w[4] = {9, 9, 9, 9};
+        FakeFlash_ResetIoCounters();
+        T("CORRUPT+VALID -> NOT_NEEDED",
+          Storage_RecoverCorruptRecord(RECORD_TYPE_CONFIG, w, sizeof(w)) ==
+          STORAGE_RECOVERY_NOT_NEEDED);
+        T("  CORRUPT+VALID zero erase calls", FakeFlash_GetEraseCount() == 0);
+        {
+            StoragePayload p;
+            T("  valid copy still readable",
+              Storage_Read(RECORD_TYPE_CONFIG, &p) == STORAGE_READ_OK);
+        }
+    }
+
+    /* VALID + ERASED -> NOT_NEEDED, zero erases. */
+    FakeFlash_Init(); Storage_Init();
+    {
+        uint8_t a[4] = {1, 2, 3, 4};
+        uint8_t w[4] = {9, 9, 9, 9};
+        Storage_Write(RECORD_TYPE_CONFIG, a, sizeof(a));  /* slot A valid, B erased */
+        FakeFlash_ResetIoCounters();
+        T("VALID+ERASED -> NOT_NEEDED",
+          Storage_RecoverCorruptRecord(RECORD_TYPE_CONFIG, w, sizeof(w)) ==
+          STORAGE_RECOVERY_NOT_NEEDED);
+        T("  VALID+ERASED zero erase calls", FakeFlash_GetEraseCount() == 0);
+    }
+
+    /* ERASED + VALID -> NOT_NEEDED, zero erases. */
+    FakeFlash_Init(); Storage_Init();
+    {
+        uint8_t a[4] = {1, 2, 3, 4};
+        uint8_t w[4] = {9, 9, 9, 9};
+        Storage_Write(RECORD_TYPE_CONFIG, a, sizeof(a));  /* slot A valid */
+        Storage_Write(RECORD_TYPE_CONFIG, a, sizeof(a));  /* slot B valid (newest) */
+        Platform_FlashErase(0);                           /* erase slot A -> ERASED */
+        FakeFlash_ResetIoCounters();
+        T("ERASED+VALID -> NOT_NEEDED",
+          Storage_RecoverCorruptRecord(RECORD_TYPE_CONFIG, w, sizeof(w)) ==
+          STORAGE_RECOVERY_NOT_NEEDED);
+        T("  ERASED+VALID zero erase calls", FakeFlash_GetEraseCount() == 0);
+    }
+}
+
 int main(void)
 {
     printf("Storage Slot-State Host Tests\n");
@@ -596,6 +673,7 @@ int main(void)
     TestHealthExtended();
     TestWriteFailClosed();
     TestRecoveryHarden();
+    TestRecoveryPreserveValid();
     TestFormatOwnership();
     TestBankValidation();
 

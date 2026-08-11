@@ -113,6 +113,30 @@ target_include_directories(test_boot_persistence PRIVATE
 )
 add_test(NAME test_boot_persistence COMMAND test_boot_persistence)
 
+add_executable(test_self_test
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_self_test.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/App/Src/self_test.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/App/Src/config.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/App/Src/device_identity.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Storage/Src/storage.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/veml7700/Src/veml7700.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/display/Src/display.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/fakes/fake_i2c_bus.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/fakes/fake_flash.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/fakes/fake_unique_id.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/fakes/fake_platform_time.c
+)
+target_include_directories(test_self_test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/fakes
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/App/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Platform/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Common/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Storage/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/veml7700/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/display/Inc
+)
+add_test(NAME test_self_test COMMAND test_self_test)
+
 add_executable(test_parser
     ${CMAKE_CURRENT_SOURCE_DIR}/test_parser.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Command/Src/command_parser.c
@@ -225,5 +249,3 @@ target_include_directories(test_longrun PRIVATE
 )
 target_link_libraries(test_longrun m)
 add_test(NAME test_longrun COMMAND test_longrun)
-
-enable_testing()

@@ -130,6 +130,10 @@ typedef enum
 const StorageRecordLayout *Storage_GetLayout(uint8_t record_type);
 
 bool Storage_Init(void);
+/* Non-mutating query of the boot-time Storage subsystem initialization state.
+   A diagnostic/self-test invocation MUST call this instead of Storage_Init(),
+   which owns lifecycle/global initialization and must not be re-run. */
+bool Storage_IsInitialized(void);
 StorageReadStatus Storage_Read(uint8_t record_type, StoragePayload *payload);
 bool Storage_Write(uint8_t record_type, const uint8_t *data, size_t size);
 bool Storage_Format(void);

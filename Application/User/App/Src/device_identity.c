@@ -16,6 +16,12 @@ typedef struct
 _Static_assert(sizeof(IdentityStorageV1) == 24, "IdentityStorageV1 size mismatch");
 
 static StorageReadStatus s_load_status = STORAGE_READ_NOT_FOUND;
+/* Current persistence status of the identity record. Updated by the last
+   DeviceIdentity_Load() and every DeviceIdentity_Save() so it is never stale:
+   a successful durable save -> OK; NOT_FOUND/blank -> NOT_FOUND; corrupt or
+   failed write -> CORRUPT/IO_ERROR. Historical load status remains available
+   via DeviceIdentity_GetLoadStatus(). */
+static StorageReadStatus s_persistence_status = STORAGE_READ_NOT_FOUND;
 
 static void DeriveUuid(uint8_t uuid[DEVICE_UUID_SIZE])
 {
@@ -95,6 +101,7 @@ bool DeviceIdentity_Load(DeviceIdentity *id)
     StoragePayload payload;
     StorageReadStatus rs = Storage_Read(RECORD_TYPE_IDENTITY, &payload);
     s_load_status = rs;
+    s_persistence_status = rs;
 
     if (rs != STORAGE_READ_OK)
     {
@@ -108,6 +115,7 @@ bool DeviceIdentity_Load(DeviceIdentity *id)
     if (payload.size != sizeof(IdentityStorageV1))
     {
         s_load_status = STORAGE_READ_CORRUPT;
+        s_persistence_status = STORAGE_READ_CORRUPT;
         return false;
     }
 
@@ -117,6 +125,7 @@ bool DeviceIdentity_Load(DeviceIdentity *id)
     if (!Identity_FromStorage(id, &stored))
     {
         s_load_status = STORAGE_READ_CORRUPT;
+        s_persistence_status = STORAGE_READ_CORRUPT;
         return false;
     }
     return true;
@@ -125,6 +134,39 @@ bool DeviceIdentity_Load(DeviceIdentity *id)
 StorageReadStatus DeviceIdentity_GetLoadStatus(void)
 {
     return s_load_status;
+}
+
+StorageReadStatus DeviceIdentity_GetPersistenceStatus(void)
+{
+    return s_persistence_status;
+}
+
+StorageReadStatus DeviceIdentity_SelfCheck(void)
+{
+    if (!Storage_IsInitialized())
+        return STORAGE_READ_IO_ERROR;
+
+    /* Non-mutating diagnostic inspection of the persisted identity record.
+       Reads and validates into a LOCAL candidate without touching the global
+       runtime identity, load status, or persistence status. */
+    StoragePayload payload;
+    StorageReadStatus rs = Storage_Read(RECORD_TYPE_IDENTITY, &payload);
+    if (rs == STORAGE_READ_NOT_FOUND) return STORAGE_READ_NOT_FOUND;
+    if (rs == STORAGE_READ_CORRUPT)   return STORAGE_READ_CORRUPT;
+    if (rs == STORAGE_READ_IO_ERROR)  return STORAGE_READ_IO_ERROR;
+    if (rs != STORAGE_READ_OK)        return rs;
+
+    if (payload.size != sizeof(IdentityStorageV1))
+        return STORAGE_READ_CORRUPT;
+
+    IdentityStorageV1 stored;
+    memcpy(&stored, payload.data, sizeof(stored));
+
+    DeviceIdentity local;
+    if (!Identity_FromStorage(&local, &stored))
+        return STORAGE_READ_CORRUPT;
+
+    return STORAGE_READ_OK;
 }
 
 bool DeviceIdentity_Save(const DeviceIdentity *id)
@@ -137,7 +179,10 @@ bool DeviceIdentity_Save(const DeviceIdentity *id)
     memcpy(stored.device_uuid, id->device_uuid, DEVICE_UUID_SIZE);
     stored.hardware_revision = id->hardware_revision;
 
-    return Storage_Write(RECORD_TYPE_IDENTITY, (const uint8_t *)&stored, sizeof(stored));
+    bool ok = Storage_Write(RECORD_TYPE_IDENTITY, (const uint8_t *)&stored, sizeof(stored));
+    /* A successful durable save means the current persistence state is OK. */
+    s_persistence_status = ok ? STORAGE_READ_OK : STORAGE_READ_IO_ERROR;
+    return ok;
 }
 
 void DeviceIdentity_GetShortId(const DeviceIdentity *id, char *out, size_t max_len)

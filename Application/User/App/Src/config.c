@@ -101,6 +101,35 @@ StorageReadStatus Config_GetStorageStatus(void)
     return s_storage_status;
 }
 
+StorageReadStatus Config_SelfCheck(void)
+{
+    if (!Storage_IsInitialized())
+        return STORAGE_READ_IO_ERROR;
+
+    /* Non-mutating diagnostic inspection. Reads the persisted record into a
+       local candidate and validates it. It does NOT touch the global runtime
+       config (s_config) nor the runtime persistence status (s_storage_status),
+       so a diagnostic command never changes live configuration. */
+
+    StoragePayload payload;
+    StorageReadStatus rs = Storage_Read(RECORD_TYPE_CONFIG, &payload);
+    if (rs == STORAGE_READ_NOT_FOUND) return STORAGE_READ_NOT_FOUND;
+    if (rs == STORAGE_READ_CORRUPT)   return STORAGE_READ_CORRUPT;
+    if (rs == STORAGE_READ_IO_ERROR)  return STORAGE_READ_IO_ERROR;
+    if (rs != STORAGE_READ_OK)        return rs;
+
+    if (payload.size != sizeof(ConfigStorageV1))
+        return STORAGE_READ_CORRUPT;
+
+    ConfigStorageV1 candidate;
+    memcpy(&candidate, payload.data, sizeof(candidate));
+
+    if (!Config_Validate(&candidate))
+        return STORAGE_READ_CORRUPT;
+
+    return STORAGE_READ_OK;
+}
+
 bool Config_SaveCandidate(const RoomSensorConfig *candidate)
 {
     if (candidate == NULL) return false;
@@ -110,7 +139,15 @@ bool Config_SaveCandidate(const RoomSensorConfig *candidate)
     storage.version = CONFIG_SCHEMA_VERSION;
     storage.light_calibration_q16 = FloatToQ16(candidate->runtime.light_calibration_factor);
 
-    return Storage_Write(RECORD_TYPE_CONFIG, (const uint8_t *)&storage, sizeof(storage));
+    bool ok = Storage_Write(RECORD_TYPE_CONFIG, (const uint8_t *)&storage, sizeof(storage));
+    /* Current persistence status reflects the write outcome: a successful
+       durable write makes the persisted config OK; a failed write is reported
+       as a degraded/error status rather than falsely claiming OK. */
+    if (ok)
+        s_storage_status = STORAGE_READ_OK;
+    else if (s_storage_status != STORAGE_READ_CORRUPT)
+        s_storage_status = STORAGE_READ_IO_ERROR;
+    return ok;
 }
 
 bool Config_Save(void)

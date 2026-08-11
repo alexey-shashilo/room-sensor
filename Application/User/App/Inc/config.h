@@ -49,10 +49,19 @@ ConfigApplyStatus  Config_ApplyPersistent(const RoomSensorConfig *candidate);
 const RoomSensorConfig *Config_Get(void);
 bool               Config_Validate(const ConfigStorageV1 *storage);
 
-/* Storage status observed during the last successful Config_Load attempt.
-   NOT_FOUND = fresh/blank (defaults used), OK = persisted healthy,
+/* Current known persistence state. OK = a durable record is present (loaded
+   as healthy OR last write succeeded), NOT_FOUND = fresh/blank (defaults used),
    CORRUPT = corrupt record (safe defaults used, storage degraded),
-   IO_ERROR = Flash read failure (defaults used, storage failure). */
+   IO_ERROR = Flash read/write failure. Updated by Config_Load and by every
+   Config_Save / Config_Reset path so the result is never stale. */
 StorageReadStatus Config_GetStorageStatus(void);
+
+/* Non-mutating diagnostic inspection of the persisted config record. It reads
+   and validates into a LOCAL candidate and returns the observed state without
+   touching the global runtime config or the Config_GetStorageStatus() result.
+   Intended for a side-effect-free self-test / diagnostic command.
+   OK = persisted healthy, NOT_FOUND = blank/first-boot,
+   CORRUPT = corrupt record, IO_ERROR = Flash failure. */
+StorageReadStatus Config_SelfCheck(void);
 
 #endif

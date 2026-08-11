@@ -85,6 +85,49 @@ jobs:
             build-fw/room_sensor.hex
           if-no-files-found: error
 
+      # P2: stack-usage reporting + guard. The firmware is built with
+      # -fstack-usage, producing one *.su file per translation unit. We report
+      # the top-15 project-owned functions by static (frame-only) stack usage,
+      # excluding vendor HAL/BSP noise (under cmake/stm32cubemx). The guard
+      # fails when a single project-owned function reports a static frame
+      # exceeding the stated threshold. LIMITATION: per-function static usage
+      # is NOT the call-chain (worst-case total) stack; it deliberately ignores
+      # dynamic/call usage, which is a stack-summing analysis outside this gate.
+      - name: Report stack usage (top-15 project-owned)
+        run: |
+          su_files=$(find build-fw -name '*.su' 2>/dev/null || true)
+          if [ -z "$su_files" ]; then
+            echo "WARN: no -fstack-usage .su files produced; skipping report"
+            exit 0
+          fi
+          echo "== top-15 project-owned static stack usage (bytes static = frame only) =="
+          for f in $su_files; do
+            # .su line: "<file>:<line>:<col>:<func>\t<bytes>\tstatic"
+            awk 'NF >= 3 && $3 == "static" {
+              # keep rows whose source is under Application/User (project-owned)
+              if (index($1, "Application/User") > 0) {
+                bytes=$2; f=$1;
+                sub(/^.*:[0-9]+:[0-9]+:/, "", f);   # strip file:line:col -> func
+                print bytes"\t"f
+              }
+            }' "$f"
+          done | sort -rn | head -15 | awk '{printf "%6d  %s\n", $1, $2}'
+      - name: Fail CI if a project-owned function exceeds stack threshold
+        run: |
+          # Justified threshold (bytes, static frame only). The largest
+          # project-owned static frames are the command/response path
+          # (Command_Run, HandleGetManifest) ~1152 B at -O0; 2048 leaves
+          # margin while still catching pathological regressions.
+          THRESHOLD=2048
+          worst=$(find build-fw -name '*.su' 2>/dev/null | while read f; do
+            awk 'NF >= 3 && $3 == "static" && index($1, "Application/User") > 0 { print $2 }' "$f"
+          done | sort -rn | head -1)
+          if [ -n "$worst" ] && [ "$worst" -gt "$THRESHOLD" ]; then
+            echo "ERROR: project-owned static frame of ${worst} B exceeds ${THRESHOLD} B"
+            exit 1
+          fi
+          echo "PASS: worst project-owned static frame = ${worst:-0} B (<= ${THRESHOLD} B)"
+
   portable-core-build:
     runs-on: ubuntu-24.04
     steps:

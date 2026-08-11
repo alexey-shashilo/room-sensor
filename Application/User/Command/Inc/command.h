@@ -10,6 +10,7 @@
 #include "device_identity.h"
 #include "self_test.h"
 #include "platform_reset.h"
+#include "app.h"
 
 #define COMMAND_SCHEMA_VERSION       1U
 #define COMMAND_RESPONSE_MAX_SIZE    1024U
@@ -118,6 +119,12 @@ typedef struct
     DeviceRuntime light_sensor;
     DeviceRuntime display;
     ResetCause reset_cause;
+
+    /* Authoritative current runtime status of the whole system. GET_STATUS
+       MUST use this for storage/config/identity/provisioning health instead of
+       the SelfTestReport (which only records what a previous diagnostic
+       observed). Populated live by App_GetStatus(). */
+    const AppStatus       *status;
 } CommandServices;
 
 typedef struct

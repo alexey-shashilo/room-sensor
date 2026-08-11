@@ -26,6 +26,11 @@ static uint32_t s_total_size = 0;
 static uint32_t s_page_count = 0;
 static uint32_t s_program_unit = 0;
 
+bool Storage_IsInitialized(void)
+{
+    return s_initialized;
+}
+
 /* Record types are CONFIG=1, IDENTITY=2, REGISTRATION=3. Their A/B slot
    pairs occupy consecutive pages starting at page 0: (rt-1)*2 and (rt-1)*2+1. */
 static bool SlotPage(uint8_t record_type, uint8_t slot_index, uint32_t *page_out, uint32_t *offset_out)
@@ -461,17 +466,27 @@ StorageRecoveryStatus Storage_RecoverCorruptRecord(uint8_t record_type,
     if (a.state == SLOT_STATE_IO_ERROR || b.state == SLOT_STATE_IO_ERROR)
         return STORAGE_RECOVERY_IO_ERROR;
 
-    /* No corruption to repair: healthy (both valid) or blank (both erased).
-       Do not erase a healthy/empty region as an ordinary operation. */
     bool a_valid = (a.state == SLOT_STATE_VALID);
     bool b_valid = (b.state == SLOT_STATE_VALID);
     bool a_corrupt = (a.state == SLOT_STATE_CORRUPT);
     bool b_corrupt = (b.state == SLOT_STATE_CORRUPT);
-    if ((a_valid && b_valid) || (a.state == SLOT_STATE_ERASED && b.state == SLOT_STATE_ERASED))
+
+    /* If ANY slot holds a readable valid copy, do NOT erase. A valid+corrupt,
+       valid+erased, or erased+valid region is recoverable by a normal
+       Storage_Write (which safely overwrites only the inactive/degraded mirror
+       slot), so an explicit destructive recovery is unnecessary. Erasing here
+       would destroy the final valid record. */
+    if (a_valid || b_valid)
         return STORAGE_RECOVERY_NOT_NEEDED;
 
-    /* Known readable-but-corrupt region with no IO uncertainty: repair it.
-       Erase ONLY the two owned pages; never touch other records. */
+    /* Blank (both erased) needs no repair. */
+    if (a.state == SLOT_STATE_ERASED && b.state == SLOT_STATE_ERASED)
+        return STORAGE_RECOVERY_NOT_NEEDED;
+
+    /* Remaining cases have NO valid copy AND no IO uncertainty:
+         CORRUPT+CORRUPT, CORRUPT+ERASED, ERASED+CORRUPT.
+       Repair by erasing ONLY the two owned pages and rewriting a fresh
+       sequence-1 record. Never touch other record types. */
     if (!a_corrupt && !b_corrupt)
         return STORAGE_RECOVERY_NOT_NEEDED;
 

@@ -40,6 +40,11 @@ set(ROOM_SENSOR_GIT_SHA "${GIT_SHA}" CACHE STRING "Git commit SHA")
 # Platform selection
 # ============================================================
 if(BUILD_HOST_TESTS)
+    # enable_testing() must be called here (top-level) so ctest run at the
+    # build root discovers the host tests in the test/ subdirectory. Calling it
+    # only inside test/CMakeLists.txt leaves the root CTestTestfile empty and
+    # ctest reports "Total Tests: 0".
+    enable_testing()
     add_subdirectory(test)
     return()
 endif()

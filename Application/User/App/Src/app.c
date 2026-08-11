@@ -47,9 +47,12 @@ static uint64_t          s_boot_id = 0;
 static bool              s_device_id_valid = false;
 static bool              s_device_id_persisted = false;
 
-/* Boot persistence status: distinguishes healthy (config/identity loaded from
-   Flash), blank/first-boot (NOT_FOUND), and degraded (CORRUPT/IO_ERROR where
-   runtime values are used but the persistent record is preserved untouched). */
+/* Boot persistence status for config/identity. NOT_FOUND = first boot
+   (defaults/derived used), CORRUPT/IO_ERROR = runtime values used but the
+   persistent record is preserved untouched (degraded). These boot-level
+   snapshots drive the boot persistence policy; the CURRENT runtime
+   persistence state is queried live from each module at status-report time
+   (App_GetStatus) so it is never stale. */
 static StorageReadStatus s_config_storage_status = STORAGE_READ_NOT_FOUND;
 static StorageReadStatus s_identity_storage_status = STORAGE_READ_NOT_FOUND;
 
@@ -61,6 +64,10 @@ static StorageReadStatus s_identity_storage_status = STORAGE_READ_NOT_FOUND;
 static bool              s_storage_init_ok = false;
 
 static RoomState         s_room;
+
+/* Persistent, live AppStatus snapshot. cmd_svc.status points here so GET_STATUS
+   reads current runtime health. Refreshed by App_GetStatus() / App_Run. */
+static AppStatus         s_status;
 
 static void DeviceRuntime_Init(DeviceRuntime *rt, DeviceState initial)
 {
@@ -341,12 +348,19 @@ static void App_UpdateHealth(void)
 
     bool veml_ready = (s_light_rt.state == DEVICE_STATE_READY);
     bool disp_ready = (s_disp_rt.state == DEVICE_STATE_READY);
-    bool storage_ok = (s_self_test.storage == SELF_TEST_PASS) && s_storage_init_ok;
-    bool config_ok  = (s_self_test.config == SELF_TEST_PASS);
+    /* Authoritative runtime health, NOT the SelfTest report. App_UpdateHealth
+       reflects current subsystem state, so it recovers after an explicit
+       storage recovery without a reboot and never trusts a stale diagnostic
+       snapshot (e.g. SelfTestReport) as the storage source of truth. */
+    bool storage_ok = s_storage_init_ok && Storage_IsInitialized();
+    bool config_ok  = (Config_GetStorageStatus() != STORAGE_READ_CORRUPT) &&
+                      (Config_GetStorageStatus() != STORAGE_READ_IO_ERROR);
+    bool identity_ok = (DeviceIdentity_GetPersistenceStatus() != STORAGE_READ_CORRUPT) &&
+                       (DeviceIdentity_GetPersistenceStatus() != STORAGE_READ_IO_ERROR);
 
     /* Provisioning health is runtime-CURRENT (not a boot snapshot): after an
        explicit recovery it returns to OK without a reboot. */
-    if (veml_ready && disp_ready && storage_ok && config_ok &&
+    if (veml_ready && disp_ready && storage_ok && config_ok && identity_ok &&
         Provisioning_IsHealthy())
         s_health = SYSTEM_HEALTH_OK;
     else
@@ -387,6 +401,8 @@ RoomSensor_Status App_Init(void)
         cmd_svc.bus = (struct I2cBus *)s_i2c_bus;
         cmd_svc.uptime_ms = 0;
         cmd_svc.watchdog_active = false;
+        cmd_svc.status = &s_status;
+        App_GetStatus(&s_status);
         Command_Init(&cmd_svc);
     }
 
@@ -578,6 +594,7 @@ void App_Run(void)
     }
 
     Communication_Run();
+    App_GetStatus(&s_status);   /* keep cmd_svc->status current for GET_STATUS */
     Command_Run();
 
     Platform_WatchdogRefresh();
@@ -587,15 +604,23 @@ void App_GetStatus(AppStatus *status)
 {
     if (status == NULL) return;
 
-    status->light_sensor = s_light_rt;
-    status->display = s_disp_rt;
-    status->health = s_health;
-    status->reset_cause = s_reset_cause;
-    status->watchdog_active = s_watchdog_active;
-    status->self_test = s_self_test;
-    status->storage_initialized = s_storage_init_ok;
-    status->provisioning_initialized = Provisioning_IsHealthy();
-    status->config_storage_status = s_config_storage_status;
-    status->identity_storage_status = s_identity_storage_status;
-    status->uptime_ms = Platform_GetTickMs() - s_start_ms;
+    /* Refresh the persistent live snapshot (cmd_svc.status points at s_status)
+       so GET_STATUS always reads current runtime health. */
+    s_status.light_sensor = s_light_rt;
+    s_status.display = s_disp_rt;
+    s_status.health = s_health;
+    s_status.reset_cause = s_reset_cause;
+    s_status.watchdog_active = s_watchdog_active;
+    s_status.self_test = s_self_test;
+    s_status.storage_initialized = s_storage_init_ok && Storage_IsInitialized();
+    s_status.provisioning_initialized = Provisioning_IsHealthy();
+    /* CURRENT persistence state from the owning modules (single source of
+       truth), queried at call time so it is never stale. NOT the historical
+       boot snapshot kept internally for the boot persistence policy. */
+    s_status.config_storage_status = Config_GetStorageStatus();
+    s_status.identity_storage_status = DeviceIdentity_GetPersistenceStatus();
+    s_status.uptime_ms = Platform_GetTickMs() - s_start_ms;
+
+    if (status != &s_status)
+        *status = s_status;
 }

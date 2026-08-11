@@ -19,11 +19,32 @@ static SelfTestResult ProbeToResult(bool ok)
     return ok ? SELF_TEST_PASS : SELF_TEST_FAIL;
 }
 
+/* Map persistent storage state to a self-test result.
+   OK -> PASS; NOT_FOUND (fresh/blank first boot) -> SKIPPED (runtime defaults /
+   derived identity are used, persistence simply not yet established);
+   CORRUPT / IO_ERROR -> FAIL. Runtime defaults being usable does NOT mean the
+   persistence check passed. */
+static SelfTestResult PersistenceToResult(StorageReadStatus st)
+{
+    switch (st)
+    {
+        case STORAGE_READ_OK:         return SELF_TEST_PASS;
+        case STORAGE_READ_NOT_FOUND:  return SELF_TEST_SKIPPED;
+        case STORAGE_READ_CORRUPT:    return SELF_TEST_FAIL;
+        case STORAGE_READ_IO_ERROR:   return SELF_TEST_FAIL;
+        default:                      return SELF_TEST_FAIL;
+    }
+}
+
 void SelfTest_Run(SelfTestReport *report, const I2cBus *bus)
 {
     if (report == NULL) return;
 
     memset(report, 0, sizeof(*report));
+
+    /* SelfTest is OBSERVATIONAL: it inspects current state and performs NO
+       persistence writes, no Storage_Init(), no Config_Load/Defaults mutation,
+       and no identity persistence. I2C probe/read traffic is allowed. */
 
     report->platform = (bus != NULL) ? SELF_TEST_PASS : SELF_TEST_FAIL;
     report->i2c = (bus != NULL) ? SELF_TEST_PASS : SELF_TEST_FAIL;
@@ -40,38 +61,15 @@ void SelfTest_Run(SelfTestReport *report, const I2cBus *bus)
         report->display = ProbeToResult(Display_Probe(bus, &addr));
     }
 
-    report->storage = ProbeToResult(Storage_Init());
+    /* Storage subsystem initialization is runtime state, not something a
+       diagnostic re-initializes. Queried non-mutating. */
+    report->storage = Storage_IsInitialized() ? SELF_TEST_PASS : SELF_TEST_FAIL;
 
-    bool config_ok = Config_Load();
-    report->config = config_ok ? SELF_TEST_PASS : SELF_TEST_PASS;
-    if (!config_ok)
-        Config_LoadDefaults();
+    /* Config: inspect the persisted record without mutating live config. */
+    report->config = PersistenceToResult(Config_SelfCheck());
 
-    DeviceIdentity id;
-    bool id_loaded = DeviceIdentity_Load(&id);
-    StorageReadStatus id_status = id_loaded ? STORAGE_READ_OK : DeviceIdentity_GetLoadStatus();
-
-    if (id_status == STORAGE_READ_OK)
-    {
-        report->identity = SELF_TEST_PASS;
-    }
-    else
-    {
-        /* Runtime identity is deterministic and usable in RAM even when the
-           persistent record is corrupt/IO_ERROR. Persist ONLY on a genuine
-           first boot (NOT_FOUND); never overwrite a corrupt persistent record
-           during boot (preserved for diagnostics/recovery). */
-        if (DeviceIdentity_Derive(&id))
-        {
-            report->identity = SELF_TEST_PASS;
-            if (id_status == STORAGE_READ_NOT_FOUND)
-                DeviceIdentity_Save(&id);
-        }
-        else
-        {
-            report->identity = SELF_TEST_FAIL;
-        }
-    }
+    /* Identity: inspect the persisted record without persisting anything. */
+    report->identity = PersistenceToResult(DeviceIdentity_SelfCheck());
 
     s_report = *report;
 }
