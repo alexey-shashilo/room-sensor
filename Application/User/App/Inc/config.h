@@ -59,7 +59,7 @@ StorageReadStatus Config_GetStorageStatus(void);
 /* Non-mutating diagnostic inspection of the persisted config record. It reads
    and validates into a LOCAL candidate and returns the observed state without
    touching the global runtime config or the Config_GetStorageStatus() result.
-   Intended for a side-effect-free self-test / diagnostic command.
+   Intended for a side-effect-less self-test / diagnostic command.
    OK = persisted healthy, NOT_FOUND = blank/first-boot,
    CORRUPT = corrupt record, IO_ERROR = Flash failure. */
 StorageReadStatus Config_SelfCheck(void);
