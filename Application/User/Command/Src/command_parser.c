@@ -244,6 +244,11 @@ static bool ValidateArgs(const CommandRequest *r)
                Allow the message to reach authorization, which fails closed
                (COMMAND_SECURITY_INVALID -> UNAUTHORIZED). */
             return true;
+
+        default:
+            /* Defensive: guarantee a return value on every path (avoids
+               missingReturn UB and fails closed for any unexpected value). */
+            return false;
     }
 }
 
