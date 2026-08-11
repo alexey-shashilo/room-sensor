@@ -95,6 +95,24 @@ target_include_directories(test_provisioning PRIVATE
 )
 add_test(NAME test_provisioning COMMAND test_provisioning)
 
+add_executable(test_boot_persistence
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_boot_persistence.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/App/Src/config.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/App/Src/device_identity.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Storage/Src/storage.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/fakes/fake_platform_time.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/fakes/fake_flash.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/fakes/fake_unique_id.c
+)
+target_include_directories(test_boot_persistence PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/fakes
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/App/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Platform/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Common/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Storage/Inc
+)
+add_test(NAME test_boot_persistence COMMAND test_boot_persistence)
+
 add_executable(test_parser
     ${CMAKE_CURRENT_SOURCE_DIR}/test_parser.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Command/Src/command_parser.c

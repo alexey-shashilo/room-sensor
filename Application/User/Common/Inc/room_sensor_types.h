@@ -6,6 +6,13 @@
 
 typedef enum
 {
+    /* Semantic note: ROOM_SENSOR_OK means "the runtime started and can run",
+       NOT "every subsystem is healthy". A boot with a degraded (but non-fatal)
+       persistent-storage or provisioning subsystem still returns OK so that
+       sensing continues; detailed subsystem health is exposed via AppStatus
+       (App_GetStatus) and the command interface. ROOM_SENSOR_ERROR is reserved
+       for conditions that prevent a safe runtime from starting at all (e.g.
+       the I2C bus required for drivers is unavailable). */
     ROOM_SENSOR_OK       = 0,
     ROOM_SENSOR_ERROR    = -1,
     ROOM_SENSOR_TIMEOUT  = -2,

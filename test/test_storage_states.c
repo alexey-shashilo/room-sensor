@@ -354,8 +354,9 @@ static void TestRecovery(void)
       Storage_Read(RECORD_TYPE_CONFIG, &pc) == STORAGE_READ_OK &&
       memcmp(pc.data, cfg, sizeof(cfg)) == 0);
 
-    T("explicit record recovery succeeds",
-      Storage_RecoverRecord(RECORD_TYPE_REGISTRATION, reg, sizeof(reg)));
+    T("explicit corrupt-region recovery succeeds",
+      Storage_RecoverCorruptRecord(RECORD_TYPE_REGISTRATION, reg, sizeof(reg)) ==
+      STORAGE_RECOVERY_OK);
 
     T("registration readable after recovery",
       Storage_Read(RECORD_TYPE_REGISTRATION, &pr) == STORAGE_READ_OK &&
@@ -436,6 +437,151 @@ static void TestHealthExtended(void)
     FakeFlash_SetReadFail(false, 0, 0);
 }
 
+/* CORRUPT+non-empty / ERASED+CORRUPT must fail closed in SelectWriteSlot:
+   write returns false, with ZERO erase and ZERO write calls. No fallthrough
+   into sequence logic; sequence is only ever read from VALID slots. */
+static void TestWriteFailClosed(void)
+{
+    printf("\n=== Write fail-closed on no-valid pairs ===\n");
+
+    /* A CORRUPT, B ERASED */
+    FakeFlash_Init(); Storage_Init();
+    {
+        uint8_t a[4] = {1, 2, 3, 4};
+        Storage_Write(RECORD_TYPE_CONFIG, a, sizeof(a));  /* slot A valid */
+        FakeFlash_Corrupt(0, 8);                          /* corrupt slot A */
+        uint8_t w[4] = {5, 6, 7, 8};
+        FakeFlash_ResetIoCounters();
+        T("CORRUPT+ERASED write refused", !Storage_Write(RECORD_TYPE_CONFIG, w, sizeof(w)));
+        T("  zero erase on refused write", FakeFlash_GetEraseCount() == 0);
+        T("  zero write on refused write", FakeFlash_GetWriteCount() == 0);
+    }
+
+    /* A ERASED, B CORRUPT */
+    FakeFlash_Init(); Storage_Init();
+    {
+        uint8_t a[4] = {1, 2, 3, 4};
+        Storage_Write(RECORD_TYPE_CONFIG, a, sizeof(a));  /* A */
+        Storage_Write(RECORD_TYPE_CONFIG, a, sizeof(a));  /* B (newest) */
+        Platform_FlashErase(0);                           /* erase slot A page -> ERASED */
+        FakeFlash_Corrupt(2048, 8);                       /* corrupt slot B */
+        uint8_t w[4] = {5, 6, 7, 8};
+        FakeFlash_ResetIoCounters();
+        T("ERASED+CORRUPT write refused", !Storage_Write(RECORD_TYPE_CONFIG, w, sizeof(w)));
+        T("  zero erase on refused write", FakeFlash_GetEraseCount() == 0);
+        T("  zero write on refused write", FakeFlash_GetWriteCount() == 0);
+    }
+}
+
+/* Recovery hardening: healthy/blank -> NOT_NEEDED; IO_ERROR -> refused with
+   ZERO erase calls. */
+static void TestRecoveryHarden(void)
+{
+    printf("\n=== Recovery guards ===\n");
+
+    /* both valid -> NOT_NEEDED, no erase */
+    FakeFlash_Init(); Storage_Init();
+    {
+        uint8_t a[4] = {1, 2, 3, 4};
+        Storage_Write(RECORD_TYPE_CONFIG, a, sizeof(a));
+        Storage_Write(RECORD_TYPE_CONFIG, a, sizeof(a));
+        FakeFlash_ResetIoCounters();
+        uint8_t w[4] = {9, 9, 9, 9};
+        T("healthy recovery NOT_NEEDED",
+          Storage_RecoverCorruptRecord(RECORD_TYPE_CONFIG, w, sizeof(w)) ==
+          STORAGE_RECOVERY_NOT_NEEDED);
+        T("  zero erase on healthy recovery", FakeFlash_GetEraseCount() == 0);
+    }
+
+    /* blank (both erased) -> NOT_NEEDED, no erase */
+    FakeFlash_Init(); Storage_Init();
+    {
+        uint8_t w[4] = {9, 9, 9, 9};
+        T("blank recovery NOT_NEEDED",
+          Storage_RecoverCorruptRecord(RECORD_TYPE_CONFIG, w, sizeof(w)) ==
+          STORAGE_RECOVERY_NOT_NEEDED);
+    }
+
+    /* IO_ERROR -> refused, zero erase */
+    FakeFlash_Init(); Storage_Init();
+    {
+        FakeFlash_SetReadFail(true, 0, 4096);   /* both slots unreadable */
+        uint8_t w[4] = {9, 9, 9, 9};
+        FakeFlash_ResetIoCounters();
+        T("IO recovery refused",
+          Storage_RecoverCorruptRecord(RECORD_TYPE_CONFIG, w, sizeof(w)) ==
+          STORAGE_RECOVERY_IO_ERROR);
+        T("  zero erase on IO refusal", FakeFlash_GetEraseCount() == 0);
+        FakeFlash_SetReadFail(false, 0, 0);
+    }
+}
+
+/* Storage_Format must NOT erase pages outside the Storage-owned partition,
+   even when PlatformFlashInfo.page_count is larger (extra unrelated pages). */
+static void TestFormatOwnership(void)
+{
+    printf("\n=== Storage_Format partition ownership ===\n");
+    FakeFlash_Init();
+    FakeFlash_SetPageCount(8);   /* expose 2 extra unrelated pages */
+    Storage_Init();
+
+    /* Mark the unrelated pages 6 and 7 so erasure is detectable. */
+    uint8_t *raw = (uint8_t *)FakeFlash_GetData();
+    raw[6 * FAKE_FLASH_SIZE] = 0x5A;
+    raw[6 * FAKE_FLASH_SIZE + 1] = 0x5A;
+    raw[7 * FAKE_FLASH_SIZE] = 0x5A;
+    raw[7 * FAKE_FLASH_SIZE + 1] = 0x5A;
+
+    T("Format claims only owned pages",
+      Storage_Format());
+
+    /* Owned pages 0..5 must be erased (0xFF); unrelated 6/7 preserved. */
+    int all_erased = 1;
+    for (uint32_t p = 0; p < STORAGE_OWNED_PAGES; p++)
+    {
+        for (uint32_t b = 0; b < 4U; b++)
+            if (raw[p * FAKE_FLASH_SIZE + b] != 0xFF) { all_erased = 0; break; }
+    }
+    T("owned pages 0..5 erased", all_erased);
+    T("unrelated page 6 not erased",
+      raw[6 * FAKE_FLASH_SIZE] == 0x5A && raw[6 * FAKE_FLASH_SIZE + 1] == 0x5A);
+    T("unrelated page 7 not erased",
+      raw[7 * FAKE_FLASH_SIZE] == 0x5A && raw[7 * FAKE_FLASH_SIZE + 1] == 0x5A);
+
+    FakeFlash_SetPageCount(FAKE_FLASH_PAGES);   /* restore default */
+}
+
+/* Unsupported Flash bank config (e.g. dual-bank) must fail closed: Storage_Init
+   fails, and both erase and program refuse with ZERO side effects. */
+static void TestBankValidation(void)
+{
+    printf("\n=== Unsupported Flash bank configuration ===\n");
+
+    FakeFlash_Init();
+    FakeFlash_SetBankSupported(false);
+    FakeFlash_ResetIoCounters();
+
+    T("Storage_Init fails on unsupported bank config", !Storage_Init());
+    T("erase fails closed on unsupported config",
+      Platform_FlashErase(0) == PLATFORM_FLASH_ERROR);
+    T("  zero erase on unsupported config", FakeFlash_GetEraseCount() == 0);
+    {
+        uint8_t d[8] = {0};
+        T("write fails closed on unsupported config",
+          Platform_FlashWrite(0, d, sizeof(d)) == PLATFORM_FLASH_ERROR);
+    }
+    T("  zero write on unsupported config", FakeFlash_GetWriteCount() == 0);
+
+    /* Restore supported config: storage works again. */
+    FakeFlash_Init();   /* resets bank_supported to true */
+    T("Storage_Init OK after restoring supported config", Storage_Init());
+    {
+        StoragePayload p;
+        T("storage usable after restore",
+          Storage_Read(RECORD_TYPE_CONFIG, &p) == STORAGE_READ_NOT_FOUND);
+    }
+}
+
 int main(void)
 {
     printf("Storage Slot-State Host Tests\n");
@@ -448,6 +594,10 @@ int main(void)
     TestRecovery();
     TestReadOnce();
     TestHealthExtended();
+    TestWriteFailClosed();
+    TestRecoveryHarden();
+    TestFormatOwnership();
+    TestBankValidation();
 
     printf("\n=== Summary ===\n");
     printf("  Cases: %d\n", s_case);

@@ -48,16 +48,29 @@ void SelfTest_Run(SelfTestReport *report, const I2cBus *bus)
         Config_LoadDefaults();
 
     DeviceIdentity id;
-    if (DeviceIdentity_Load(&id))
+    bool id_loaded = DeviceIdentity_Load(&id);
+    StorageReadStatus id_status = id_loaded ? STORAGE_READ_OK : DeviceIdentity_GetLoadStatus();
+
+    if (id_status == STORAGE_READ_OK)
     {
         report->identity = SELF_TEST_PASS;
     }
     else
     {
-        if (DeviceIdentity_Derive(&id) && DeviceIdentity_Save(&id))
+        /* Runtime identity is deterministic and usable in RAM even when the
+           persistent record is corrupt/IO_ERROR. Persist ONLY on a genuine
+           first boot (NOT_FOUND); never overwrite a corrupt persistent record
+           during boot (preserved for diagnostics/recovery). */
+        if (DeviceIdentity_Derive(&id))
+        {
             report->identity = SELF_TEST_PASS;
+            if (id_status == STORAGE_READ_NOT_FOUND)
+                DeviceIdentity_Save(&id);
+        }
         else
+        {
             report->identity = SELF_TEST_FAIL;
+        }
     }
 
     s_report = *report;

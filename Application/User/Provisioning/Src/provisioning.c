@@ -197,6 +197,15 @@ bool Provisioning_IsOperational(const DeviceRegistration *reg)
            Provisioning_ValidEntityId(&reg->room_id);
 }
 
+bool Provisioning_IsHealthy(void)
+{
+    /* Healthy = known-good registration storage (OK or first-boot NOT_FOUND).
+       CORRUPT / IO_ERROR = degraded. Reflects the current runtime, so after an
+       explicit recovery (Provisioning_Clear) this returns true without reboot. */
+    return (s_storage_status == STORAGE_READ_OK) ||
+           (s_storage_status == STORAGE_READ_NOT_FOUND);
+}
+
 static bool Registration_Save(const DeviceRegistration *reg)
 {
     /* Ordinary mutations fail closed unless storage state is known (OK or
@@ -272,9 +281,11 @@ bool Provisioning_Clear(void)
     {
         /* Explicit, trustworthy destructive flow: recover this ONE record by
            erasing ONLY the registration pages and writing canonical blank.
-           Identity/Config are never touched. */
-        ok = Storage_RecoverRecord(RECORD_TYPE_REGISTRATION,
-                                   (const uint8_t *)&stored, sizeof(stored));
+           Identity/Config are never touched. The API inspects slot states and
+           refuses IO_ERROR / healthy regions without erasing. */
+        StorageRecoveryStatus rs = Storage_RecoverCorruptRecord(
+            RECORD_TYPE_REGISTRATION, (const uint8_t *)&stored, sizeof(stored));
+        ok = (rs == STORAGE_RECOVERY_OK);
     }
     else
     {

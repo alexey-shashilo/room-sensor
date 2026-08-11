@@ -1,4 +1,5 @@
 build/
+build-*/
 STM32CubeIDE/Debug/
 STM32CubeIDE/Application/
 STM32CubeIDE/makefile*

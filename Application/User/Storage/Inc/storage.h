@@ -18,6 +18,14 @@
 /* Minimum logical pages required: 3 record types x 2 A/B slots = 6. */
 #define STORAGE_MIN_PAGES        6U
 
+#define STORAGE_RECORD_TYPES     3U /* CONFIG, IDENTITY, REGISTRATION */
+
+/* The number of pages Storage owns and manages (Config A/B, Identity A/B,
+   Registration A/B). Storage_Format erases ONLY these owned pages and never
+   pages beyond them, even if PlatformFlashInfo.page_count is larger (extra
+   pages belong to a broader/reserved partition, not Storage). */
+#define STORAGE_OWNED_PAGES      ((STORAGE_RECORD_TYPES) * 2U)
+
 /* Maximum Flash program (write) granularity supported by the storage layer.
    PlatformFlashInfo.program_unit must be a power of two in (0, MAX]. */
 #define STORAGE_PROGRAM_UNIT_MAX  8U
@@ -126,12 +134,30 @@ StorageReadStatus Storage_Read(uint8_t record_type, StoragePayload *payload);
 bool Storage_Write(uint8_t record_type, const uint8_t *data, size_t size);
 bool Storage_Format(void);
 
+/* Result of an explicit per-record destructive recovery attempt. */
+typedef enum
+{
+    STORAGE_RECOVERY_OK = 0,
+    STORAGE_RECOVERY_NOT_NEEDED,   /* region already healthy (valid/blank, no corruption) */
+    STORAGE_RECOVERY_IO_ERROR,     /* cannot determine state; refused WITHOUT erasing */
+    STORAGE_RECOVERY_INVALID_ARGUMENT,
+    STORAGE_RECOVERY_FAILED
+} StorageRecoveryStatus;
+
 /* Explicit destructive, per-record recovery. Erases ONLY the two pages that
-   belong to `record_type`, then writes a fresh sequence-1 record. This repairs
-   CORRUPT + CORRUPT storage. It never touches other record types and never
-   falls back to a global format. Caller MUST gate on storage health (recovery
-   is only valid for readable-but-corrupt; IO_ERROR must NOT be recovered). */
-bool Storage_RecoverRecord(uint8_t record_type, const uint8_t *data, size_t size);
+   belong to `record_type` and writes a fresh sequence-1 record.
+
+   The caller MUST first inspect slot states (snapshots taken internally):
+   - any IO_ERROR slot  -> STORAGE_RECOVERY_IO_ERROR, ZERO erase calls;
+   - region fully healthy (both valid, or both erased) -> STORAGE_RECOVERY_NOT_NEEDED;
+   - otherwise (at least one CORRUPT slot, no IO uncertainty) -> erase + reinit.
+
+   Destructive power-loss policy: this cannot preserve an already-corrupt
+   record. For registration / factory reset, if power is lost after the erase
+   the safe result is unprovisioned / NOT_FOUND. It does NOT fall back to a
+   global format and never touches other record types. */
+StorageRecoveryStatus Storage_RecoverCorruptRecord(uint8_t record_type,
+                                                   const uint8_t *data, size_t size);
 
 /* Erase ONLY the two pages of `record_type` (engineering/service operation).
    The record is left ERASED (both slots). Does not touch other records. */

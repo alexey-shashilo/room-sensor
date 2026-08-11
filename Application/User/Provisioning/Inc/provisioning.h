@@ -73,6 +73,12 @@ bool Provisioning_ValidateRegistration(const DeviceRegistration *reg);
 bool Provisioning_IsRegistered(const DeviceRegistration *reg);
 bool Provisioning_IsOperational(const DeviceRegistration *reg);
 
+/* Current provisioning storage health, reflecting the latest Init/Save/Clear
+   result (runtime-current, NOT a stale boot snapshot). True when registration
+   storage is in a known-good state (OK or NOT_FOUND); false when CORRUPT or
+   IO_ERROR. After an explicit recovery the value changes without reboot. */
+bool Provisioning_IsHealthy(void);
+
 void Provisioning_GetStatus(const DeviceRegistration *reg, ProvisioningStatus *status);
 
 bool EntityId_IsZero(const EntityId *id);

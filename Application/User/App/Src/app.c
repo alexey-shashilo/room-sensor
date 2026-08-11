@@ -44,14 +44,21 @@ static bool              s_watchdog_active = false;
 static SelfTestReport    s_self_test;
 static DeviceIdentity    s_device_id;
 static uint64_t          s_boot_id = 0;
-static bool              s_config_from_flash = false;
 static bool              s_device_id_valid = false;
 static bool              s_device_id_persisted = false;
 
-/* Persistent-storage initialization results. A failed Storage_Init keeps the
-   device sensing but disables storage-backed services and reports DEGRADED. */
+/* Boot persistence status: distinguishes healthy (config/identity loaded from
+   Flash), blank/first-boot (NOT_FOUND), and degraded (CORRUPT/IO_ERROR where
+   runtime values are used but the persistent record is preserved untouched). */
+static StorageReadStatus s_config_storage_status = STORAGE_READ_NOT_FOUND;
+static StorageReadStatus s_identity_storage_status = STORAGE_READ_NOT_FOUND;
+
+/* Boot-level Storage geometry health. A failed Storage_Init keeps the device
+   sensing but disables storage-backed services. This is treated as a static
+   Platform capability (Flash geometry cannot normally change at runtime), so
+   it is a boot invariant — unlike Provisioning health which is runtime-current
+   and derived live via Provisioning_IsHealthy(). */
 static bool              s_storage_init_ok = false;
-static bool              s_provisioning_init_ok = false;
 
 static RoomState         s_room;
 
@@ -308,7 +315,7 @@ static void App_PrintBootDiag(void)
            SelfTestResultStr(s_self_test.display));
 
     printf("CONFIG %s seq=%u calib=%.3f ID=%s\r\n",
-           s_config_from_flash ? "persisted" : "defaults",
+           (s_config_storage_status == STORAGE_READ_OK) ? "persisted" : "defaults",
            (unsigned)Config_Get()->storage.version,
            (double)Config_Get()->runtime.light_calibration_factor,
            short_id);
@@ -337,8 +344,10 @@ static void App_UpdateHealth(void)
     bool storage_ok = (s_self_test.storage == SELF_TEST_PASS) && s_storage_init_ok;
     bool config_ok  = (s_self_test.config == SELF_TEST_PASS);
 
+    /* Provisioning health is runtime-CURRENT (not a boot snapshot): after an
+       explicit recovery it returns to OK without a reboot. */
     if (veml_ready && disp_ready && storage_ok && config_ok &&
-        s_provisioning_init_ok)
+        Provisioning_IsHealthy())
         s_health = SYSTEM_HEALTH_OK;
     else
         s_health = SYSTEM_HEALTH_DEGRADED;
@@ -359,7 +368,7 @@ RoomSensor_Status App_Init(void)
     RoomState_Init(&s_room);
     SelfTest_Init(&s_self_test);
     s_storage_init_ok = Storage_Init();
-    s_provisioning_init_ok = Provisioning_Init();
+    Provisioning_Init();   /* runtime provisioning state queried live via API */
 
     DeviceLifecycle_Init(LIFECYCLE_BOOT);
 
@@ -381,6 +390,13 @@ RoomSensor_Status App_Init(void)
         Command_Init(&cmd_svc);
     }
 
+    /* Return ROOM_SENSOR_OK because the runtime started and can sense, even if
+       Storage_Init() degraded (boot-level) or provisioning is currently in a
+       CORRUPT/IO_ERROR state (recoverable at runtime). Health is exposed via
+       AppStatus and GET_STATUS; provisioning health is read live via
+       Provisioning_IsHealthy() so it recovers after an explicit recovery
+       without requiring a reboot. Persistent writes fail closed at the storage
+       layer. A failure of a boot-critical subsystem (I2C) returns ERROR above. */
     return ROOM_SENSOR_OK;
 }
 
@@ -403,10 +419,9 @@ void App_Run(void)
                 break;
 
             case LIFECYCLE_LOAD_CONFIGURATION:
-                if (Config_Load())
-                    s_config_from_flash = true;
-                else
+                if (!Config_Load())
                     Config_LoadDefaults();
+                s_config_storage_status = Config_GetStorageStatus();
                 DeviceLifecycle_TransitionTo(LIFECYCLE_LOAD_IDENTITY);
                 break;
 
@@ -424,10 +439,16 @@ void App_Run(void)
                     {
                         s_device_id = derived;
                         s_device_id_valid = true;
-                        if (DeviceIdentity_Save(&derived))
+                        /* Persist a derived identity ONLY on a genuine first
+                           boot (NOT_FOUND). A CORRUPT or IO_ERROR persistent
+                           record is preserved untouched for diagnostics/
+                           recovery — but the runtime identity stays usable. */
+                        if (DeviceIdentity_GetLoadStatus() == STORAGE_READ_NOT_FOUND &&
+                            DeviceIdentity_Save(&derived))
                             s_device_id_persisted = true;
                     }
                 }
+                s_identity_storage_status = DeviceIdentity_GetLoadStatus();
                 DeviceLifecycle_TransitionTo(LIFECYCLE_CREATE_BOOT_SESSION);
                 break;
             }
@@ -437,7 +458,10 @@ void App_Run(void)
                 BootSession bs;
                 if (BootSession_Get(&bs))
                     s_boot_id = bs.boot_id;
-                if (!s_config_from_flash)
+                /* Persist config defaults ONLY for a genuine first boot
+                   (NOT_FOUND). CORRUPT / IO_ERROR config is preserved untouched
+                   (evidence kept for diagnostics/recovery). */
+                if (s_config_storage_status == STORAGE_READ_NOT_FOUND)
                     Config_Save();
                 DeviceLifecycle_TransitionTo(LIFECYCLE_SELF_TEST);
                 break;
@@ -528,7 +552,7 @@ void App_Run(void)
                (unsigned long)s_disp_rt.consecutive_errors,
                (unsigned long)s_disp_rt.recovery_count,
                (int)s_health, (int)s_watchdog_active,
-               s_config_from_flash ? "persisted" : "defaults",
+               (s_config_storage_status == STORAGE_READ_OK) ? "persisted" : "defaults",
                (int)cr.state,
                (unsigned long)cr.send_successes,
                (unsigned long)cr.send_failures);
@@ -570,6 +594,8 @@ void App_GetStatus(AppStatus *status)
     status->watchdog_active = s_watchdog_active;
     status->self_test = s_self_test;
     status->storage_initialized = s_storage_init_ok;
-    status->provisioning_initialized = s_provisioning_init_ok;
+    status->provisioning_initialized = Provisioning_IsHealthy();
+    status->config_storage_status = s_config_storage_status;
+    status->identity_storage_status = s_identity_storage_status;
     status->uptime_ms = Platform_GetTickMs() - s_start_ms;
 }

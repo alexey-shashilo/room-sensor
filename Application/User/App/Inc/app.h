@@ -5,6 +5,7 @@
 #include "i2c_bus.h"
 #include "self_test.h"
 #include "platform_reset.h"
+#include "storage.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -34,9 +35,21 @@ typedef struct
     bool storage_initialized;
     bool provisioning_initialized;
 
+    /* Boot persistence health for config and identity. NOT_FOUND = first boot
+       (defaults/derived used and persisted once); CORRUPT/IO_ERROR = runtime
+       values used but persistent record preserved untouched (degraded). */
+    StorageReadStatus config_storage_status;
+    StorageReadStatus identity_storage_status;
+
     uint32_t uptime_ms;
 } AppStatus;
 
+/* Initializes the runtime and starts sensing.
+   Returns ROOM_SENSOR_OK when the runtime started — even if persistent storage
+   or provisioning is degraded (sensing continues; writes fail closed). Exact
+   per-subsystem health is available via App_GetStatus (AppStatus) and the
+   command interface. Returns ROOM_SENSOR_ERROR only when a safe runtime cannot
+   start (e.g. no I2C bus). See room_sensor_types.h ROOM_SENSOR_OK semantics. */
 RoomSensor_Status App_Init(void);
 void               App_Run(void);
 void               App_GetStatus(AppStatus *status);

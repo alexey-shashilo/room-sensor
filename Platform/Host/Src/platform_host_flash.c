@@ -32,6 +32,12 @@ const PlatformFlashInfo *Platform_FlashGetInfo(void)
     return &info;
 }
 
+/* Host in-memory mapping always matches the driver layout. */
+PlatformFlashStatus Platform_FlashValidateConfiguration(void)
+{
+    return PLATFORM_FLASH_OK;
+}
+
 PlatformFlashStatus Platform_FlashRead(uint32_t offset, void *data, size_t size)
 {
     if ((data == NULL) || (size == 0)) return PLATFORM_FLASH_INVALID_ARG;

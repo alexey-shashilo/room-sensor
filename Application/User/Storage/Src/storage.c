@@ -26,8 +26,6 @@ static uint32_t s_total_size = 0;
 static uint32_t s_page_count = 0;
 static uint32_t s_program_unit = 0;
 
-#define STORAGE_RECORD_TYPES 3U
-
 /* Record types are CONFIG=1, IDENTITY=2, REGISTRATION=3. Their A/B slot
    pairs occupy consecutive pages starting at page 0: (rt-1)*2 and (rt-1)*2+1. */
 static bool SlotPage(uint8_t record_type, uint8_t slot_index, uint32_t *page_out, uint32_t *offset_out)
@@ -76,6 +74,11 @@ bool Storage_Init(void)
 
     const PlatformFlashInfo *info = Platform_FlashGetInfo();
     if (info == NULL) return false;
+
+    /* Fail closed if the platform Flash mapping is unsupported (e.g. MCU in an
+       unexpected bank mode). Storage must not initialize -> no erase/write. */
+    if (Platform_FlashValidateConfiguration() != PLATFORM_FLASH_OK)
+        return false;
 
     /* Program unit must be a supported power of two. */
     if (info->program_unit == 0) return false;
@@ -304,32 +307,52 @@ static uint8_t SelectWriteSlot(uint8_t record_type, uint32_t *sequence_out)
     SlotSnapshot a = ReadSlotSnapshot(record_type, 0);
     SlotSnapshot b = ReadSlotSnapshot(record_type, 1);
 
+    /* everything + IO_ERROR -> FAIL (cannot trust any state). */
     if (a.state == SLOT_STATE_IO_ERROR || b.state == SLOT_STATE_IO_ERROR)
         return 0xFF;
 
+    /* Both erased -> write slot A with sequence 1 (seq_out=0 base). */
     if (a.state == SLOT_STATE_ERASED && b.state == SLOT_STATE_ERASED)
     {
         *sequence_out = 0;
         return 0;
     }
 
-    if (a.state == SLOT_STATE_CORRUPT && b.state == SLOT_STATE_CORRUPT)
-        return 0xFF;
-
-    if (a.state == SLOT_STATE_VALID && (b.state == SLOT_STATE_ERASED || b.state == SLOT_STATE_CORRUPT))
+    /* One valid + one erased/corrupt -> write the OTHER (inactive) slot.
+       Sequence is read ONLY from the VALID slot. */
+    if (a.state == SLOT_STATE_VALID && b.state == SLOT_STATE_ERASED)
     {
         *sequence_out = a.header.sequence;
         return 1;
     }
-    if (b.state == SLOT_STATE_VALID && (a.state == SLOT_STATE_ERASED || a.state == SLOT_STATE_CORRUPT))
+    if (b.state == SLOT_STATE_VALID && a.state == SLOT_STATE_ERASED)
     {
         *sequence_out = b.header.sequence;
         return 0;
     }
+    if (a.state == SLOT_STATE_VALID && b.state == SLOT_STATE_CORRUPT)
+    {
+        *sequence_out = a.header.sequence;
+        return 1;   /* overwrite the corrupt slot B */
+    }
+    if (b.state == SLOT_STATE_VALID && a.state == SLOT_STATE_CORRUPT)
+    {
+        *sequence_out = b.header.sequence;
+        return 0;   /* overwrite the corrupt slot A */
+    }
 
-    bool a_newer = (int32_t)(a.header.sequence - b.header.sequence) >= 0;
-    *sequence_out = a_newer ? a.header.sequence : b.header.sequence;
-    return a_newer ? 1U : 0U;
+    /* Both valid -> write the older slot (sequence from valid headers). */
+    if (a.state == SLOT_STATE_VALID && b.state == SLOT_STATE_VALID)
+    {
+        bool a_newer = (int32_t)(a.header.sequence - b.header.sequence) >= 0;
+        *sequence_out = a_newer ? a.header.sequence : b.header.sequence;
+        return a_newer ? 1U : 0U;
+    }
+
+    /* Remaining pairs have NO valid slot:
+         CORRUPT+CORRUPT, CORRUPT+ERASED, ERASED+CORRUPT
+       -> fail closed. Never fall through into sequence comparison. */
+    return 0xFF;
 }
 
 /* Build a program-aligned record in the padded buffer and program it to the
@@ -420,24 +443,48 @@ bool Storage_Write(uint8_t record_type, const uint8_t *data, size_t size)
     return WriteProgramRecord(write_offset, record_type, data, size, next_seq);
 }
 
-bool Storage_RecoverRecord(uint8_t record_type, const uint8_t *data, size_t size)
+StorageRecoveryStatus Storage_RecoverCorruptRecord(uint8_t record_type,
+                                                   const uint8_t *data, size_t size)
 {
-    if (!s_initialized) return false;
-    if (size > STORAGE_PAYLOAD_MAX) return false;
-    if ((data == NULL) && (size > 0)) return false;
+    if (!s_initialized) return STORAGE_RECOVERY_FAILED;
+    if (size > STORAGE_PAYLOAD_MAX) return STORAGE_RECOVERY_INVALID_ARGUMENT;
+    if ((data == NULL) && (size > 0)) return STORAGE_RECOVERY_INVALID_ARGUMENT;
 
     const StorageRecordLayout *layout = Storage_GetLayout(record_type);
-    if (layout == NULL) return false;
+    if (layout == NULL) return STORAGE_RECOVERY_INVALID_ARGUMENT;
 
-    /* Destructive, record-scoped recovery: erase ONLY the two owned pages.
-       Does NOT touch other record types and never calls Storage_Format. */
+    /* Inspect slot states FIRST, before any destructive erase. */
+    SlotSnapshot a = ReadSlotSnapshot(record_type, 0);
+    SlotSnapshot b = ReadSlotSnapshot(record_type, 1);
+
+    /* IO uncertainty: never erase. */
+    if (a.state == SLOT_STATE_IO_ERROR || b.state == SLOT_STATE_IO_ERROR)
+        return STORAGE_RECOVERY_IO_ERROR;
+
+    /* No corruption to repair: healthy (both valid) or blank (both erased).
+       Do not erase a healthy/empty region as an ordinary operation. */
+    bool a_valid = (a.state == SLOT_STATE_VALID);
+    bool b_valid = (b.state == SLOT_STATE_VALID);
+    bool a_corrupt = (a.state == SLOT_STATE_CORRUPT);
+    bool b_corrupt = (b.state == SLOT_STATE_CORRUPT);
+    if ((a_valid && b_valid) || (a.state == SLOT_STATE_ERASED && b.state == SLOT_STATE_ERASED))
+        return STORAGE_RECOVERY_NOT_NEEDED;
+
+    /* Known readable-but-corrupt region with no IO uncertainty: repair it.
+       Erase ONLY the two owned pages; never touch other records. */
+    if (!a_corrupt && !b_corrupt)
+        return STORAGE_RECOVERY_NOT_NEEDED;
+
     if (Platform_FlashErase(layout->slot_a_page) != PLATFORM_FLASH_OK)
-        return false;
+        return STORAGE_RECOVERY_FAILED;
     if (Platform_FlashErase(layout->slot_b_page) != PLATFORM_FLASH_OK)
-        return false;
+        return STORAGE_RECOVERY_FAILED;
 
-    /* Both slots are now ERASED; write a fresh sequence-1 record into slot A. */
-    return WriteProgramRecord(layout->slot_a_offset, record_type, data, size, 1U);
+    /* Both slots now ERASED; write a fresh sequence-1 record into slot A. */
+    if (!WriteProgramRecord(layout->slot_a_offset, record_type, data, size, 1U))
+        return STORAGE_RECOVERY_FAILED;
+
+    return STORAGE_RECOVERY_OK;
 }
 
 bool Storage_FormatRecord(uint8_t record_type)
@@ -458,10 +505,11 @@ bool Storage_Format(void)
     if (!s_initialized) return false;
 
     /* Storage_Format is the engineering/service destructive operation. It
-       erases every page described by PlatformFlashInfo — which MUST describe
-       ONLY the reserved Room Sensor persistence region (see Platform contract).
-       Platform_FlashErase is page-indexed within that region only. */
-    for (uint32_t p = 0; p < s_page_count; p++)
+       erases ONLY the pages Storage owns (STORAGE_OWNED_PAGES = Config A/B,
+       Identity A/B, Registration A/B). It NEVER erases pages beyond that owned
+       partition, even if PlatformFlashInfo.page_count is larger (extra pages
+       belong to a broader partition and are not Storage-managed). */
+    for (uint32_t p = 0; p < STORAGE_OWNED_PAGES; p++)
     {
         if (Platform_FlashErase(p) != PLATFORM_FLASH_OK)
             return false;
