@@ -1,31 +1,11 @@
 ﻿#include "command_parser.h"
 #include "command.h"
+#include "provisioning.h"
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
 #include <errno.h>
-
-static uint8_t HexVal(char c)
-{
-    if (c >= '0' && c <= '9') return (uint8_t)(c - '0');
-    if (c >= 'a' && c <= 'f') return (uint8_t)(c - 'a' + 10);
-    if (c >= 'A' && c <= 'F') return (uint8_t)(c - 'A' + 10);
-    return 0xFF;
-}
-
-static bool ParseEntityId(uint8_t out[16], const char *str, size_t len)
-{
-    if (len != 32) return false;
-    for (size_t i = 0; i < 16; i++)
-    {
-        uint8_t hi = HexVal(str[i * 2]);
-        uint8_t lo = HexVal(str[i * 2 + 1]);
-        if (hi == 0xFF || lo == 0xFF) return false;
-        out[i] = (uint8_t)(hi << 4) | lo;
-    }
-    return true;
-}
 
 static CommandType StrToType(const char *str)
 {
@@ -52,14 +32,7 @@ static void SkipW(const uint8_t *d, size_t sz, size_t *p)
         (*p)++;
 }
 
-static bool CharAt(const uint8_t *d, size_t sz, size_t *p, uint8_t expected)
-{
-    SkipW(d, sz, p);
-    if (*p >= sz || d[*p] != expected) return false;
-    (*p)++;
-    return true;
-}
-
+/* ---- Strict JSON string (no control chars, limited escapes) ---- */
 static bool ParseString(const uint8_t *d, size_t sz, size_t *p, char *out, size_t out_max)
 {
     SkipW(d, sz, p);
@@ -81,11 +54,12 @@ static bool ParseString(const uint8_t *d, size_t sz, size_t *p, char *out, size_
             else if (esc == 'n') c = '\n';
             else if (esc == 'r') c = '\r';
             else if (esc == 't') c = '\t';
-            else return false;
+            else return false;  /* reject \u and other unhandled escapes */
+            if (c == '\n' || c == '\r') return false;
         }
         else if (c < 0x20)
         {
-            return false;
+            return false;  /* unescaped control character */
         }
         if (o >= out_max - 1) return false;
         out[o++] = (char)c;
@@ -94,41 +68,115 @@ static bool ParseString(const uint8_t *d, size_t sz, size_t *p, char *out, size_
     return false;
 }
 
+/* ---- Strict JSON integer lexical form (uint, no sign permitted) ----
+   int = "0" / ( digit1-9 *DIGIT )
+   No leading '+', no fraction, no exponent. */
 static bool ParseUint(const uint8_t *d, size_t sz, size_t *p, uint32_t *val)
 {
     SkipW(d, sz, p);
-    if (*p >= sz || d[*p] < '0' || d[*p] > '9') return false;
+    size_t s = *p;
+    if (*p >= sz) return false;
 
-    uint32_t v = 0;
-    while (*p < sz && d[*p] >= '0' && d[*p] <= '9')
+    if (d[*p] == '-' || d[*p] == '+') return false;  /* reject sign */
+
+    if (d[*p] == '.' || d[*p] == 'e' || d[*p] == 'E') return false;
+
+    if (d[*p] < '0' || d[*p] > '9') return false;
+
+    /* disallow leading zero followed by more digits (strict JSON grammar) */
+    if (d[*p] == '0')
     {
-        uint8_t digit = d[*p] - '0';
-        if (v > (UINT32_MAX - digit) / 10U) return false;  /* overflow */
-        v = v * 10U + digit;
         (*p)++;
+        if (*p < sz && d[*p] >= '0' && d[*p] <= '9') return false;
+        *val = 0;
     }
-    *val = v;
+    else
+    {
+        uint32_t v = 0;
+        while (*p < sz && d[*p] >= '0' && d[*p] <= '9')
+        {
+            uint8_t digit = d[*p] - '0';
+            if (v > (UINT32_MAX - digit) / 10U) return false;  /* overflow */
+            v = v * 10U + digit;
+            (*p)++;
+        }
+        *val = v;
+    }
+
+    /* value already consumed digits; ensure no fraction/exponent follows */
+    if (*p < sz && (d[*p] == '.' || d[*p] == 'e' || d[*p] == 'E'))
+        return false;
+
+    if (*p == s) return false;
+    return true;
+}
+
+/* ---- Strict JSON number grammar before conversion ----
+   number = [ minus ] int [ frac ] [ exp ]
+   int  = "0" / ( digit1-9 *DIGIT )
+   frac = "." 1*DIGIT
+   exp  = ( "e" / "E" ) [ plus / minus ] 1*DIGIT
+
+   Rejects: +1, .5, 1., 01, 1e, 1e+, --1.  Accepts: 0, -1, 1, 1.0, 0.5,
+   1e3, -2.5e-4.
+*/
+static bool ScanNumberRegion(const uint8_t *d, size_t sz, size_t *p, size_t *start)
+{
+    *start = *p;
+    size_t i = *p;
+
+    if (i < sz && d[i] == '-') i++;
+
+    /* integer part (required) */
+    if (i >= sz) return false;
+    if (d[i] >= '1' && d[i] <= '9')
+    {
+        i++;
+        while (i < sz && d[i] >= '0' && d[i] <= '9') i++;
+    }
+    else if (d[i] == '0')
+    {
+        i++;
+    }
+    else
+    {
+        return false;  /* '.', '+', letter, or '--' */
+    }
+
+    /* fraction */
+    if (i < sz && d[i] == '.')
+    {
+        i++;
+        if (i >= sz || d[i] < '0' || d[i] > '9') return false;  /* '1.' */
+        while (i < sz && d[i] >= '0' && d[i] <= '9') i++;
+    }
+
+    /* exponent */
+    if (i < sz && (d[i] == 'e' || d[i] == 'E'))
+    {
+        i++;
+        if (i < sz && (d[i] == '+' || d[i] == '-')) i++;
+        if (i >= sz || d[i] < '0' || d[i] > '9') return false;  /* '1e', '1e+' */
+        while (i < sz && d[i] >= '0' && d[i] <= '9') i++;
+    }
+
+    *p = i;
     return true;
 }
 
 static bool ParseFloat(const uint8_t *d, size_t sz, size_t *p, float *val)
 {
     SkipW(d, sz, p);
-    size_t start = *p;
-
-    while (*p < sz && (d[*p] == '-' || d[*p] == '+' || d[*p] == '.' || (d[*p] >= '0' && d[*p] <= '9') || d[*p] == 'e' || d[*p] == 'E'))
-        (*p)++;
+    size_t start;
+    if (!ScanNumberRegion(d, sz, p, &start)) return false;
 
     size_t len = *p - start;
-    if (len == 0 || len > 127) return false;
+    if (len == 0) return false;
 
-    char buf[128];
+    char buf[64];
+    if (len >= sizeof(buf)) return false;
     memcpy(buf, d + start, len);
     buf[len] = '\0';
-
-    /* Reject NaN/Inf */
-    if (strchr(buf, 'n') || strchr(buf, 'N') || strchr(buf, 'i') || strchr(buf, 'I'))
-        return false;
 
     char *endptr;
     errno = 0;
@@ -140,6 +188,64 @@ static bool ParseFloat(const uint8_t *d, size_t sz, size_t *p, float *val)
     return true;
 }
 
+/* ---- Command-specific argument contracts ----
+   Unexpected known fields for a command are rejected (INVALID_ARGUMENT),
+   never silently ignored. */
+static bool ValidateArgs(const CommandRequest *r)
+{
+    /* Which arguments are presently populated? */
+    bool has_any =
+        r->args.has_light_period_ms || r->args.has_display_period_ms ||
+        r->args.has_telemetry_period_ms || r->args.has_light_calibration ||
+        r->args.has_installation_id || r->args.has_building_id || r->args.has_room_id;
+
+    switch (r->type)
+    {
+        case COMMAND_GET_STATUS:
+        case COMMAND_GET_CONFIG:
+        case COMMAND_GET_IDENTITY:
+        case COMMAND_GET_CAPABILITIES:
+        case COMMAND_GET_MANIFEST:
+        case COMMAND_GET_PROVISIONING_STATUS:
+        case COMMAND_SELF_TEST:
+        case COMMAND_RESET_CONFIG:
+        case COMMAND_FACTORY_RESET:
+        case COMMAND_UNREGISTER_DEVICE:
+        case COMMAND_REBOOT:
+            /* read-only / diagnostic / destructive: no arbitrary arguments */
+            return !has_any;
+
+        case COMMAND_SET_CONFIG:
+            /* only config fields; reject entity IDs */
+            if (r->args.has_installation_id || r->args.has_building_id || r->args.has_room_id)
+                return false;
+            /* empty mutation is rejected (documented policy) */
+            return
+                r->args.has_light_period_ms || r->args.has_display_period_ms ||
+                r->args.has_telemetry_period_ms || r->args.has_light_calibration;
+
+        case COMMAND_REGISTER_DEVICE:
+            /* installation_id only */
+            return r->args.has_installation_id &&
+                   !r->args.has_building_id && !r->args.has_room_id &&
+                   !r->args.has_light_period_ms && !r->args.has_display_period_ms &&
+                   !r->args.has_telemetry_period_ms && !r->args.has_light_calibration;
+
+        case COMMAND_ASSIGN_LOCATION:
+            /* installation_id + building_id + room_id exactly */
+            return r->args.has_installation_id &&
+                   r->args.has_building_id &&
+                   r->args.has_room_id &&
+                   !r->args.has_light_period_ms && !r->args.has_display_period_ms &&
+                   !r->args.has_telemetry_period_ms && !r->args.has_light_calibration;
+
+        case COMMAND_UNKNOWN:
+            /* Unknown command names are not an argument-contract violation.
+               Allow the message to reach authorization, which fails closed
+               (COMMAND_SECURITY_INVALID -> UNAUTHORIZED). */
+            return true;
+    }
+}
 
 bool CommandParser_Parse(const uint8_t *data, size_t size, CommandRequest *request)
 {
@@ -152,24 +258,39 @@ bool CommandParser_Parse(const uint8_t *data, size_t size, CommandRequest *reque
     size_t pos = 0;
     SkipW(data, size, &pos);
 
-    if (!CharAt(data, size, &pos, '{')) return false;
+    if (!(pos < size && data[pos] == '{')) return false;
+    pos++;
 
     bool has_id = false;
     bool has_cmd = false;
     char field[64];
+    bool expect_field = false;  /* after a value, a comma must follow before another field */
 
-    while (pos < size)
+    while (true)
     {
         SkipW(data, size, &pos);
+
+        /* '}' closes the object only if we are NOT expecting a field after a
+           comma, i.e. trailing comma like {"a":1,} must be rejected. */
         if (pos >= size) return false;
+        if (data[pos] == '}')
+        {
+            if (expect_field) return false;  /* trailing comma before '}' */
+            pos++;
+            break;
+        }
 
-        if (data[pos] == '}') { pos++; break; }
-
+        /* A field name (string) is required here. This rejects a leading
+           comma (object starts with ',' plus also a lone ','), a double
+           comma, and a segment not starting with a string. */
         if (!ParseString(data, size, &pos, field, sizeof(field)))
             return false;
 
-        if (!CharAt(data, size, &pos, ':'))
-            return false;
+        /* expect ':' after field name — missing colon rejected */
+        SkipW(data, size, &pos);
+        if (!(pos < size && data[pos] == ':')) return false;
+        pos++;
+        SkipW(data, size, &pos);
 
         if (strcmp(field, "id") == 0)
         {
@@ -215,7 +336,9 @@ bool CommandParser_Parse(const uint8_t *data, size_t size, CommandRequest *reque
             if (request->args.has_installation_id) return false;
             char hex[64];
             if (!ParseString(data, size, &pos, hex, sizeof(hex))) return false;
-            if (!ParseEntityId(request->args.installation_id, hex, strlen(hex))) return false;
+            EntityId id;
+            if (!EntityId_Parse(&id, hex, strlen(hex))) return false;
+            memcpy(request->args.installation_id, id.bytes, ENTITY_ID_SIZE);
             request->args.has_installation_id = true;
         }
         else if (strcmp(field, "building_id") == 0)
@@ -223,7 +346,9 @@ bool CommandParser_Parse(const uint8_t *data, size_t size, CommandRequest *reque
             if (request->args.has_building_id) return false;
             char hex[64];
             if (!ParseString(data, size, &pos, hex, sizeof(hex))) return false;
-            if (!ParseEntityId(request->args.building_id, hex, strlen(hex))) return false;
+            EntityId id;
+            if (!EntityId_Parse(&id, hex, strlen(hex))) return false;
+            memcpy(request->args.building_id, id.bytes, ENTITY_ID_SIZE);
             request->args.has_building_id = true;
         }
         else if (strcmp(field, "room_id") == 0)
@@ -231,7 +356,9 @@ bool CommandParser_Parse(const uint8_t *data, size_t size, CommandRequest *reque
             if (request->args.has_room_id) return false;
             char hex[64];
             if (!ParseString(data, size, &pos, hex, sizeof(hex))) return false;
-            if (!ParseEntityId(request->args.room_id, hex, strlen(hex))) return false;
+            EntityId id;
+            if (!EntityId_Parse(&id, hex, strlen(hex))) return false;
+            memcpy(request->args.room_id, id.bytes, ENTITY_ID_SIZE);
             request->args.has_room_id = true;
         }
         else
@@ -239,13 +366,28 @@ bool CommandParser_Parse(const uint8_t *data, size_t size, CommandRequest *reque
             return false;  /* unknown field */
         }
 
+        /* After a parsed value: skip ws, expect either ',' (more fields) or
+           '}' (end). Anything else is missing comma / trailing garbage. */
         SkipW(data, size, &pos);
-        if (pos < size && data[pos] == ',') { pos++; continue; }
+        if (pos < size && data[pos] == ',')
+        {
+            pos++;
+            expect_field = true;   /* a field MUST follow the comma */
+            continue;
+        }
+        if (pos < size && data[pos] == '}')
+        {
+            expect_field = false;
+            continue;  /* top handles '}' termination */
+        }
+        return false;  /* missing comma or trailing garbage */
     }
 
-    /* Trailing non-whitespace is rejected */
+    /* Trailing non-whitespace is rejected. */
     SkipW(data, size, &pos);
     if (pos != size) return false;
 
-    return has_cmd && has_id;
+    if (!has_cmd || !has_id) return false;
+
+    return ValidateArgs(request);
 }

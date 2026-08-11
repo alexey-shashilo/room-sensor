@@ -171,6 +171,23 @@ static void HandleGetManifest(const CommandRequest *req, CommandResponse *rsp, c
     CommandResponse_Finalize(rsp);
 }
 
+static void HandleGetProvisioningStatus(const CommandRequest *req, CommandResponse *rsp, const CommandServices *svc)
+{
+    (void)svc;
+    const ProvisioningRuntime *rt = Provisioning_GetRuntime();
+    const ProvisioningStatus *ps = &rt->status;
+
+    CommandResponse_Init(rsp, req->request_id, COMMAND_STATUS_OK);
+    CommandResponse_AppendJsonInt(rsp, "state", (uint32_t)ps->state);
+    CommandResponse_AppendJsonBool(rsp, "registered", ps->registered);
+    CommandResponse_AppendJsonBool(rsp, "installation_valid", ps->installation_valid);
+    CommandResponse_AppendJsonBool(rsp, "building_valid", ps->building_valid);
+    CommandResponse_AppendJsonBool(rsp, "room_valid", ps->room_valid);
+    CommandResponse_AppendJsonInt(rsp, "revision", ps->revision);
+    CommandResponse_AppendJsonInt(rsp, "storage_status", (uint32_t)rt->storage_status);
+    CommandResponse_Finalize(rsp);
+}
+
 static void HandleRegisterDevice(const CommandRequest *req, CommandResponse *rsp, const CommandServices *svc)
 {
     (void)svc;
@@ -182,18 +199,33 @@ static void HandleRegisterDevice(const CommandRequest *req, CommandResponse *rsp
         return;
     }
 
-    DeviceRegistration current, updated;
-    if (!Provisioning_Load(&current))
+    EntityId inst_id;
+    memcpy(inst_id.bytes, req->args.installation_id, ENTITY_ID_SIZE);
+    if (!Provisioning_ValidEntityId(&inst_id))
     {
-        CommandResponse_Init(rsp, req->request_id, COMMAND_STATUS_INTERNAL_ERROR);
-        CommandResponse_Append(rsp, "\"error\":\"cannot_read_registration\"");
+        CommandResponse_Init(rsp, req->request_id, COMMAND_STATUS_INVALID_ARGUMENT);
+        CommandResponse_Append(rsp, "\"error\":\"invalid_installation_id\"");
         CommandResponse_Finalize(rsp);
         return;
     }
 
-    if (current.registered && current.installation_valid)
+    const ProvisioningRuntime *rt = Provisioning_GetRuntime();
+    const DeviceRegistration *current = &rt->current;
+
+    if (rt->storage_status != STORAGE_READ_OK &&
+        rt->storage_status != STORAGE_READ_NOT_FOUND)
     {
-        if (memcmp(current.installation_id.bytes, req->args.installation_id, 16) != 0)
+        /* Registration storage state is unknown/error — ownership mutations
+           must fail (fail closed) until storage is recovered. */
+        CommandResponse_Init(rsp, req->request_id, COMMAND_STATUS_INTERNAL_ERROR);
+        CommandResponse_Append(rsp, "\"error\":\"storage_state_unknown\"");
+        CommandResponse_Finalize(rsp);
+        return;
+    }
+
+    if (current->registered && current->installation_valid)
+    {
+        if (memcmp(current->installation_id.bytes, req->args.installation_id, 16) != 0)
         {
             CommandResponse_Init(rsp, req->request_id, COMMAND_STATUS_CONFLICT);
             CommandResponse_Append(rsp, "\"error\":\"ownership_conflict\"");
@@ -206,10 +238,15 @@ static void HandleRegisterDevice(const CommandRequest *req, CommandResponse *rsp
         return;
     }
 
-    updated = current;
+    DeviceRegistration updated = *current;
     updated.registered = true;
     memcpy(updated.installation_id.bytes, req->args.installation_id, 16);
     updated.installation_valid = true;
+    /* building/room are cleared by the canonicalizer on save. */
+    memset(updated.building_id.bytes, 0, ENTITY_ID_SIZE);
+    memset(updated.room_id.bytes, 0, ENTITY_ID_SIZE);
+    updated.building_valid = false;
+    updated.room_valid = false;
 
     if (!Provisioning_Save(&updated))
     {
@@ -260,31 +297,6 @@ static void HandleFactoryReset(const CommandRequest *req, CommandResponse *rsp, 
     CommandResponse_Finalize(rsp);
 }
 
-static void HandleGetProvisioningStatus(const CommandRequest *req, CommandResponse *rsp, const CommandServices *svc)
-{
-    (void)svc;
-    DeviceRegistration reg;
-    ProvisioningStatus ps;
-
-    if (!Provisioning_Load(&reg))
-    {
-        CommandResponse_Init(rsp, req->request_id, COMMAND_STATUS_INTERNAL_ERROR);
-        CommandResponse_Append(rsp, "\"error\":\"cannot_read_registration\"");
-        CommandResponse_Finalize(rsp);
-        return;
-    }
-    Provisioning_GetStatus(&reg, &ps);
-
-    CommandResponse_Init(rsp, req->request_id, COMMAND_STATUS_OK);
-    CommandResponse_AppendJsonInt(rsp, "state", (uint32_t)ps.state);
-    CommandResponse_AppendJsonBool(rsp, "registered", ps.registered);
-    CommandResponse_AppendJsonBool(rsp, "installation_valid", ps.installation_valid);
-    CommandResponse_AppendJsonBool(rsp, "building_valid", ps.building_valid);
-    CommandResponse_AppendJsonBool(rsp, "room_valid", ps.room_valid);
-    CommandResponse_AppendJsonInt(rsp, "revision", ps.revision);
-    CommandResponse_Finalize(rsp);
-}
-
 static void HandleAssignLocation(const CommandRequest *req, CommandResponse *rsp, const CommandServices *svc)
 {
     (void)svc;
@@ -296,16 +308,35 @@ static void HandleAssignLocation(const CommandRequest *req, CommandResponse *rsp
         return;
     }
 
-    DeviceRegistration current;
-    if (!Provisioning_Load(&current))
+    EntityId inst_id, bld_id, room_id;
+    memcpy(inst_id.bytes, req->args.installation_id, ENTITY_ID_SIZE);
+    memcpy(bld_id.bytes, req->args.building_id, ENTITY_ID_SIZE);
+    memcpy(room_id.bytes, req->args.room_id, ENTITY_ID_SIZE);
+
+    /* Reject zero / all-FF IDs (invalid domain values). */
+    if (!Provisioning_ValidEntityId(&inst_id) ||
+        !Provisioning_ValidEntityId(&bld_id) ||
+        !Provisioning_ValidEntityId(&room_id))
     {
-        CommandResponse_Init(rsp, req->request_id, COMMAND_STATUS_INTERNAL_ERROR);
-        CommandResponse_Append(rsp, "\"error\":\"cannot_read_registration\"");
+        CommandResponse_Init(rsp, req->request_id, COMMAND_STATUS_INVALID_ARGUMENT);
+        CommandResponse_Append(rsp, "\"error\":\"invalid_entity_id\"");
         CommandResponse_Finalize(rsp);
         return;
     }
 
-    if (!current.registered || !current.installation_valid)
+    const ProvisioningRuntime *rt = Provisioning_GetRuntime();
+    const DeviceRegistration *current = &rt->current;
+
+    if (rt->storage_status != STORAGE_READ_OK &&
+        rt->storage_status != STORAGE_READ_NOT_FOUND)
+    {
+        CommandResponse_Init(rsp, req->request_id, COMMAND_STATUS_INTERNAL_ERROR);
+        CommandResponse_Append(rsp, "\"error\":\"storage_state_unknown\"");
+        CommandResponse_Finalize(rsp);
+        return;
+    }
+
+    if (!current->registered || !current->installation_valid)
     {
         CommandResponse_Init(rsp, req->request_id, COMMAND_STATUS_INVALID_ARGUMENT);
         CommandResponse_Append(rsp, "\"error\":\"device_not_registered\"");
@@ -313,7 +344,8 @@ static void HandleAssignLocation(const CommandRequest *req, CommandResponse *rsp
         return;
     }
 
-    if (memcmp(current.installation_id.bytes, req->args.installation_id, 16) != 0)
+    /* Wrong owner: installation mismatch is a CONFLICT. */
+    if (memcmp(current->installation_id.bytes, req->args.installation_id, 16) != 0)
     {
         CommandResponse_Init(rsp, req->request_id, COMMAND_STATUS_CONFLICT);
         CommandResponse_Append(rsp, "\"error\":\"installation_mismatch\"");
@@ -321,9 +353,9 @@ static void HandleAssignLocation(const CommandRequest *req, CommandResponse *rsp
         return;
     }
 
-    if (current.building_valid && current.room_valid &&
-        memcmp(current.building_id.bytes, req->args.building_id, 16) == 0 &&
-        memcmp(current.room_id.bytes, req->args.room_id, 16) == 0)
+    if (current->building_valid && current->room_valid &&
+        memcmp(current->building_id.bytes, req->args.building_id, 16) == 0 &&
+        memcmp(current->room_id.bytes, req->args.room_id, 16) == 0)
     {
         CommandResponse_Init(rsp, req->request_id, COMMAND_STATUS_OK);
         CommandResponse_AppendJson(rsp, "result", "already_assigned");
@@ -331,12 +363,13 @@ static void HandleAssignLocation(const CommandRequest *req, CommandResponse *rsp
         return;
     }
 
-    memcpy(current.building_id.bytes, req->args.building_id, 16);
-    memcpy(current.room_id.bytes, req->args.room_id, 16);
-    current.building_valid = true;
-    current.room_valid = true;
+    DeviceRegistration updated = *current;
+    memcpy(updated.building_id.bytes, req->args.building_id, 16);
+    memcpy(updated.room_id.bytes, req->args.room_id, 16);
+    updated.building_valid = true;
+    updated.room_valid = true;
 
-    if (!Provisioning_Save(&current))
+    if (!Provisioning_Save(&updated))
     {
         CommandResponse_Init(rsp, req->request_id, COMMAND_STATUS_INTERNAL_ERROR);
         CommandResponse_Append(rsp, "\"error\":\"persist_failed\"");

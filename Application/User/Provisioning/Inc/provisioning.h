@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <stddef.h>
+#include "storage.h"
 
 #define REGISTRATION_SCHEMA_VERSION 1U
 
@@ -49,7 +50,20 @@ typedef struct
     uint32_t revision;
 } ProvisioningStatus;
 
+/* Runtime provisioning owner — loaded once at boot and kept in RAM so that
+   GET_PROVISIONING_STATUS performs zero Flash reads and mutation handlers
+   operate on a single authoritative copy. storage_status records how the
+   runtime was loaded (OK / NOT_FOUND / CORRUPT / IO_ERROR). */
+typedef struct
+{
+    DeviceRegistration current;
+    ProvisioningStatus status;
+    StorageReadStatus  storage_status;
+} ProvisioningRuntime;
+
 bool Provisioning_Init(void);
+
+const ProvisioningRuntime *Provisioning_GetRuntime(void);
 
 bool Provisioning_Load(DeviceRegistration *reg);
 bool Provisioning_Save(const DeviceRegistration *reg);
@@ -64,5 +78,6 @@ void Provisioning_GetStatus(const DeviceRegistration *reg, ProvisioningStatus *s
 bool EntityId_IsZero(const EntityId *id);
 bool EntityId_Parse(EntityId *out, const char *hex, size_t len);
 void EntityId_Format(const EntityId *id, char *out, size_t max_len);
+bool Provisioning_ValidEntityId(const EntityId *id);
 
 #endif

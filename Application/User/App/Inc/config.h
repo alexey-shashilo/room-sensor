@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include "storage.h"
 
 #define CONFIG_SCHEMA_VERSION 1U
 
@@ -47,5 +48,11 @@ bool               Config_ResetToDefaults(void);
 ConfigApplyStatus  Config_ApplyPersistent(const RoomSensorConfig *candidate);
 const RoomSensorConfig *Config_Get(void);
 bool               Config_Validate(const ConfigStorageV1 *storage);
+
+/* Storage status observed during the last successful Config_Load attempt.
+   NOT_FOUND = fresh/blank (defaults used), OK = persisted healthy,
+   CORRUPT = corrupt record (safe defaults used, storage degraded),
+   IO_ERROR = Flash read failure (defaults used, storage failure). */
+StorageReadStatus Config_GetStorageStatus(void);
 
 #endif

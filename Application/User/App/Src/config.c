@@ -6,6 +6,7 @@
 #define Q16_SCALE 65536.0f
 
 static RoomSensorConfig s_config;
+static StorageReadStatus s_storage_status = STORAGE_READ_NOT_FOUND;
 
 static float Q16ToFloat(uint32_t q16)
 {
@@ -61,23 +62,43 @@ bool Config_Load(void)
 {
     StoragePayload payload;
     StorageReadStatus rs = Storage_Read(RECORD_TYPE_CONFIG, &payload);
+    s_storage_status = rs;
+
     if (rs == STORAGE_READ_NOT_FOUND)
-        return false;  /* defaults will be used */
+        return false;  /* fresh/never-written: safe defaults are used */
+    if (rs == STORAGE_READ_CORRUPT)
+        return false;  /* corrupt record: safe defaults used, storage degraded */
+    if (rs == STORAGE_READ_IO_ERROR)
+        return false;  /* Flash failure: safe defaults used, report failure */
     if (rs != STORAGE_READ_OK)
-        return false;  /* corrupt — defaults will be used */
+        return false;
 
     ConfigStorageV1 candidate;
     if (payload.size != sizeof(candidate))
+    {
+        s_storage_status = STORAGE_READ_CORRUPT;
         return false;
+    }
 
     memcpy(&candidate, payload.data, sizeof(candidate));
 
     if (!Config_Validate(&candidate))
+    {
+        s_storage_status = STORAGE_READ_CORRUPT;
         return false;
+    }
 
+    /* Ignore persisted validity flags; the storage CRC guarantees the full
+       record (including any flags) is intact as-written. */
     s_config.storage = candidate;
     s_config.runtime.light_calibration_factor = Q16ToFloat(candidate.light_calibration_q16);
+    s_storage_status = STORAGE_READ_OK;
     return true;
+}
+
+StorageReadStatus Config_GetStorageStatus(void)
+{
+    return s_storage_status;
 }
 
 bool Config_SaveCandidate(const RoomSensorConfig *candidate)

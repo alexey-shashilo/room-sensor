@@ -36,12 +36,6 @@ void Command_UpdateRuntime(uint32_t uptime, bool wdg, const DeviceRuntime *light
     s_services.reset_cause = rc;
 }
 
-void Command_SetSourceTrust(CommandSourceTrust trust)
-{
-    /* deprecated — prefer message-scoped Command_ProcessInput */
-    (void)trust;
-}
-
 void Command_SetPort(const CommunicationPort *port)
 {
     s_cmd_port = port;

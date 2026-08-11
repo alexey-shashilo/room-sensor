@@ -3,11 +3,17 @@
 
 static uint8_t s_flash[FAKE_FLASH_SIZE * FAKE_FLASH_PAGES];
 static bool s_write_fail = false;
+static bool s_read_fail = false;
+static uint32_t s_read_fail_start = 0;
+static uint32_t s_read_fail_end = 0;
 
 void FakeFlash_Init(void)
 {
     memset(s_flash, 0xFF, sizeof(s_flash));
     s_write_fail = false;
+    s_read_fail = false;
+    s_read_fail_start = 0;
+    s_read_fail_end = 0;
 }
 
 void FakeFlash_Corrupt(uint32_t offset, size_t size)
@@ -20,6 +26,13 @@ void FakeFlash_Corrupt(uint32_t offset, size_t size)
 void FakeFlash_SetWriteFail(bool fail)
 {
     s_write_fail = fail;
+}
+
+void FakeFlash_SetReadFail(bool fail, uint32_t start_offset, uint32_t end_offset)
+{
+    s_read_fail = fail;
+    s_read_fail_start = start_offset;
+    s_read_fail_end = end_offset;
 }
 
 void *FakeFlash_GetData(void)
@@ -43,6 +56,11 @@ PlatformFlashStatus Platform_FlashRead(uint32_t offset, void *data, size_t size)
     if ((data == NULL) || (size == 0)) return PLATFORM_FLASH_INVALID_ARG;
     if (offset > sizeof(s_flash)) return PLATFORM_FLASH_INVALID_ARG;
     if (size > sizeof(s_flash) - offset) return PLATFORM_FLASH_INVALID_ARG;
+
+    if (s_read_fail &&
+        offset < s_read_fail_end && (offset + size) > s_read_fail_start)
+        return PLATFORM_FLASH_ERROR;
+
     memcpy(data, s_flash + offset, size);
     return PLATFORM_FLASH_OK;
 }

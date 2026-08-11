@@ -15,6 +15,8 @@ typedef struct
 
 _Static_assert(sizeof(IdentityStorageV1) == 24, "IdentityStorageV1 size mismatch");
 
+static StorageReadStatus s_load_status = STORAGE_READ_NOT_FOUND;
+
 static void DeriveUuid(uint8_t uuid[DEVICE_UUID_SIZE])
 {
     uint8_t uid[PLATFORM_UNIQUE_ID_SIZE];
@@ -92,16 +94,37 @@ bool DeviceIdentity_Load(DeviceIdentity *id)
 
     StoragePayload payload;
     StorageReadStatus rs = Storage_Read(RECORD_TYPE_IDENTITY, &payload);
+    s_load_status = rs;
+
     if (rs != STORAGE_READ_OK)
+    {
+        /* NOT_FOUND / CORRUPT / IO_ERROR all mean the record is not usable;
+           the caller derives a runtime identity and reports degradation via
+           DeviceIdentity_GetLoadStatus(). No failure is treated as a fresh
+           first boot unless it was genuinely NOT_FOUND. */
         return false;
+    }
 
     if (payload.size != sizeof(IdentityStorageV1))
+    {
+        s_load_status = STORAGE_READ_CORRUPT;
         return false;
+    }
 
     IdentityStorageV1 stored;
     memcpy(&stored, payload.data, sizeof(stored));
 
-    return Identity_FromStorage(id, &stored);
+    if (!Identity_FromStorage(id, &stored))
+    {
+        s_load_status = STORAGE_READ_CORRUPT;
+        return false;
+    }
+    return true;
+}
+
+StorageReadStatus DeviceIdentity_GetLoadStatus(void)
+{
+    return s_load_status;
 }
 
 bool DeviceIdentity_Save(const DeviceIdentity *id)

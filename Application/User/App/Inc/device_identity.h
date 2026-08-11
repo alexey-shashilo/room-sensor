@@ -4,6 +4,7 @@
 #include <stddef.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include "storage.h"
 
 #define DEVICE_UUID_SIZE            16U
 #define IDENTITY_SCHEMA_VERSION     2U
@@ -20,5 +21,10 @@ bool DeviceIdentity_Derive(DeviceIdentity *id);
 bool DeviceIdentity_Save(const DeviceIdentity *id);
 bool DeviceIdentity_Validate(const DeviceIdentity *id);
 void DeviceIdentity_GetShortId(const DeviceIdentity *id, char *out, size_t max_len);
+
+/* Storage status observed during the last DeviceIdentity_Load attempt.
+   NOT_FOUND = blank, CORRUPT = invalid/corrupt record (derive used,
+   degradation flagged), IO_ERROR = Flash failure. */
+StorageReadStatus DeviceIdentity_GetLoadStatus(void);
 
 #endif

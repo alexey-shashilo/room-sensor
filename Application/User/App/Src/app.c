@@ -13,6 +13,7 @@
 #include "communication.h"
 #include "communication_debug.h"
 #include "command.h"
+#include "provisioning.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -352,6 +353,7 @@ RoomSensor_Status App_Init(void)
     RoomState_Init(&s_room);
     SelfTest_Init(&s_self_test);
     Storage_Init();
+    Provisioning_Init();
 
     DeviceLifecycle_Init(LIFECYCLE_BOOT);
 

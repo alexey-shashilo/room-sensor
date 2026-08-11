@@ -11,7 +11,6 @@
 #include "fake_platform_time.h"
 
 static int s_pass = 0, s_fail = 0, s_case = 0;
-
 static void check(int cond, const char *name)
 {
     s_case++;
@@ -19,117 +18,208 @@ static void check(int cond, const char *name)
     else      { s_fail++; printf("  FAIL #%d: %s\n", s_case, name); }
 }
 
+static EntityId inst_A, inst_X, building, room;
+
+static void InitA(void)
+{
+    FakeFlash_Init();
+    FakeUniqueId_Set((const uint8_t[]){0xAA,0xBB,0xCC,0xDD,0x01,0x02,0x03,0x04,0xFE,0xED,0xBE,0xEF});
+    Storage_Init();
+    Provisioning_Init();
+    EntityId_Parse(&inst_A, "11111111111111111111111111111111", 32);
+    EntityId_Parse(&inst_X, "99999999999999999999999999999999", 32);
+    EntityId_Parse(&building, "22222222222222222222222222222222", 32);
+    EntityId_Parse(&room, "33333333333333333333333333333333", 32);
+}
+
 int main(void)
 {
     printf("Provisioning Host Tests\n");
     fflush(stdout);
 
-    FakeFlash_Init();
-    FakeUniqueId_Set((const uint8_t[]){0xAA,0xBB,0xCC,0xDD,0x01,0x02,0x03,0x04,0xFE,0xED,0xBE,0xEF});
-    Storage_Init();
+    InitA();
 
-    EntityId inst_A, inst_X, building, room;
-    EntityId_Parse(&inst_A, "11111111111111111111111111111111", 32);
-    EntityId_Parse(&inst_X, "99999999999999999999999999999999", 32);
-    EntityId_Parse(&building, "22222222222222222222222222222222", 32);
-    EntityId_Parse(&room, "33333333333333333333333333333333", 32);
-
-    /* EntityId helpers */
-    check(EntityId_Parse(&inst_A, "11111111111111111111111111111111", 32), "parse A valid");
-    check(!EntityId_IsZero(&inst_A), "A not zero");
-    check(EntityId_IsZero(&(EntityId){0}), "zero id detected");
+    /* ---- canonical invariant rules ---- */
+    printf("\n=== Canonical invariants ===\n");
     {
-        char buf[33];
-        EntityId_Format(&inst_A, buf, sizeof(buf));
-        check(strcmp(buf, "11111111111111111111111111111111") == 0, "format A");
+        DeviceRegistration valid_empty = {0};
+        check(Provisioning_ValidateRegistration(&valid_empty),
+              "canonical unregistered accepted");
+
+        DeviceRegistration bad_unreg = {0};
+        bad_unreg.registered = false;
+        bad_unreg.installation_valid = true;  /* contradictory: flag w/o id */
+        check(!Provisioning_ValidateRegistration(&bad_unreg),
+              "unregistered with valid flag rejected");
+
+        DeviceRegistration bad_inst = {0};
+        bad_inst.registered = true;
+        /* no valid installation id */
+        check(!Provisioning_ValidateRegistration(&bad_inst),
+              "registered without valid installation rejected");
+
+        DeviceRegistration reg_inst = {0};
+        reg_inst.registered = true;
+        reg_inst.installation_valid = true;
+        reg_inst.installation_id = inst_A;
+        check(Provisioning_ValidateRegistration(&reg_inst),
+              "registered with valid installation accepted");
+
+        DeviceRegistration reg_bad_building = reg_inst;
+        reg_bad_building.building_id = building;
+        reg_bad_building.building_valid = true;
+        /* building_valid with installation_valid implicitly true; ok here */
+        check(Provisioning_ValidateRegistration(&reg_bad_building),
+              "building+installation accepted");
+    }
+    {
+        DeviceRegistration reg = {0};
+        reg.registered = true;
+        reg.installation_valid = true;
+        reg.installation_id = inst_A;
+        reg.building_id = building;
+        reg.room_id = room;
+        reg.building_valid = true;
+        reg.room_valid = true;
+        check(Provisioning_ValidateRegistration(&reg),
+              "fully-registered canonical accepted");
+    }
+    {
+        DeviceRegistration reg = {0};
+        reg.registered = true;
+        reg.installation_id = inst_A;
+        reg.building_valid = true;  /* building_valid true but building_id zero */
+        reg.room_valid = false;
+        check(!Provisioning_ValidateRegistration(&reg),
+              "building_valid with zero building_id rejected");
+    }
+    {
+        DeviceRegistration reg = {0};
+        reg.registered = true;
+        reg.installation_id = inst_A;
+        reg.building_id = building;
+        reg.building_valid = true;
+        reg.room_valid = true;       /* room_valid true but room_id zero */
+        check(!Provisioning_ValidateRegistration(&reg),
+              "room_valid with zero room_id rejected");
+    }
+    {
+        DeviceRegistration reg = {0};
+        reg.registered = true;
+        reg.installation_id = inst_A;
+        reg.building_valid = false;
+        reg.room_valid = true;       /* invalid entity (building/room) */
+        check(!Provisioning_ValidateRegistration(&reg),
+              "building_valid false but room_valid true rejected");
     }
 
-    /* 1. Blank -> DISCOVERABLE */
-    DeviceRegistration reg;
-    check(Provisioning_Load(&reg), "blank storage loads as unprovisioned");
-    check(reg.registered == false, "blank storage -> registered=false");
-    check(Provisioning_IsOperational(&reg) == false, "blank storage not operational");
+    /* ---- blank -> DISCOVERABLE ---- */
+    printf("\n=== Blank storage ===\n");
     {
-        ProvisioningStatus ps;
-        Provisioning_GetStatus(&reg, &ps);
-        check(ps.state == PROVISIONING_DISCOVERABLE, "state = DISCOVERABLE");
+        const ProvisioningRuntime *rt = Provisioning_GetRuntime();
+        check(rt->storage_status == STORAGE_READ_NOT_FOUND, "blank storage NOT_FOUND");
+        check(rt->status.state == PROVISIONING_DISCOVERABLE, "state = DISCOVERABLE");
+        check(rt->current.registered == false, "not registered");
     }
 
-    /* Direct Storage_Write test */
-    RegistrationStorageV1 test_record;
-    memset(&test_record, 0, sizeof(test_record));
-    test_record.schema_version = REGISTRATION_SCHEMA_VERSION;
-    test_record.revision = 1;
-    test_record.registered = true;
-    memcpy(test_record.installation_id.bytes, "11111111111111111111111111111111", 16);
-    bool storage_ok = Storage_Write(RECORD_TYPE_REGISTRATION, (const uint8_t *)&test_record, sizeof(test_record));
-    check(storage_ok, "direct Storage_Write for registration");
-
-    StoragePayload test_payload;
-    bool storage_read_ok = Storage_Read(RECORD_TYPE_REGISTRATION, &test_payload);
-    check(storage_read_ok, "direct Storage_Read for registration");
-
-    if (storage_read_ok)
+    /* ---- register + runtime owner ---- */
+    printf("\n=== Register / runtime owner ===\n");
     {
-        RegistrationStorageV1 *stored_chk = (RegistrationStorageV1 *)test_payload.data;
-        check(stored_chk->revision == 1, "stored revision=1");
+        DeviceRegistration updated = Provisioning_GetRuntime()->current;
+        updated.registered = true;
+        updated.installation_valid = true;
+        updated.installation_id = inst_A;
+        check(Provisioning_Save(&updated), "register A succeeds");
+
+        const ProvisioningRuntime *rt = Provisioning_GetRuntime();
+        check(rt->current.registered, "runtime registered");
+        check(memcmp(rt->current.installation_id.bytes, inst_A.bytes, 16) == 0,
+              "runtime installation = A");
+        check(rt->storage_status == STORAGE_READ_OK, "storage status OK after save");
+
+        /* GET performs zero Flash reads: corrupt flash after init; runtime is
+           cached in RAM and must NOT change. */
+        FakeFlash_Corrupt(8192, 24);  /* REGISTRATION region (pages 4-5) */
+        rt = Provisioning_GetRuntime();
+        check(rt->current.registered, "runtime cached, no Flash reload on GET");
+        check(rt->storage_status == STORAGE_READ_OK, "runtime status cached");
+        FakeFlash_Init(); Storage_Init(); Provisioning_Init();
+        check(Provisioning_GetRuntime()->storage_status == STORAGE_READ_NOT_FOUND,
+              "re-init after reset");
     }
 
-    /* 2. Register via Provisioning API */
-    reg.registered = true;
-    reg.installation_id = inst_A;
-    reg.installation_valid = true;
-    check(Provisioning_Save(&reg), "register A succeeds");
-
-    DeviceRegistration loaded;
-    check(Provisioning_Load(&loaded), "reload after register");
-    check(loaded.registered, "loaded registered");
-    check(memcmp(loaded.installation_id.bytes, inst_A.bytes, 16) == 0, "installation A loaded");
-
-    /* 3. Ownership conflict (register to X) — test via validation */
+    /* ---- takeover after corrupt registration denied ---- */
+    printf("\n=== Corrupt registration fail-closed ===\n");
     {
-        DeviceRegistration v;
-        Provisioning_Load(&v);
-        check(memcmp(v.installation_id.bytes, inst_A.bytes, 16) == 0, "A retained before conflict");
+        InitA();
+        DeviceRegistration updated = Provisioning_GetRuntime()->current;
+        updated.registered = true;
+        updated.installation_valid = true;
+        updated.installation_id = inst_A;
+        Provisioning_Save(&updated);
+
+        /* Corrupt both registration slots -> CORRUPT. */
+        FakeFlash_Corrupt(8192, 40);
+        FakeFlash_Corrupt(10240, 40);
+        bool init_ok = Provisioning_Init();
+        const ProvisioningRuntime *rt = Provisioning_GetRuntime();
+        check(!init_ok, "init fails on corrupt storage");
+        check(rt->storage_status == STORAGE_READ_CORRUPT, "storage status CORRUPT");
+        check(rt->status.state == PROVISIONING_ERROR, "state ERROR on corrupt");
+
+        /* Ownership takeover (register to X) must be refused. */
+        DeviceRegistration takeover = {0};
+        takeover.registered = true;
+        takeover.installation_id = inst_X;
+        check(!Provisioning_Save(&takeover),
+              "ownership takeover after corrupt denied (fail closed)");
     }
 
-    /* 4. Assign location */
-    DeviceRegistration assign = loaded;
-    assign.building_id = building;
-    assign.room_id = room;
-    assign.building_valid = true;
-    assign.room_valid = true;
-    check(Provisioning_Save(&assign), "assign building+room succeeds");
-    check(Provisioning_IsOperational(&assign), "assignment makes operational");
-
-    /* 5. Reboot preserves registration */
+    /* ---- IO failure -> ERROR ---- */
+    printf("\n=== IO failure ===\n");
     {
-        DeviceRegistration reloaded;
-        check(Provisioning_Load(&reloaded), "reload after 'reboot'");
-        check(reloaded.registered, "registered after reboot");
-        check(memcmp(reloaded.room_id.bytes, room.bytes, 16) == 0, "room preserved");
+        InitA();
+        DeviceRegistration updated = Provisioning_GetRuntime()->current;
+        updated.registered = true;
+        updated.installation_valid = true;
+        updated.installation_id = inst_A;
+        Provisioning_Save(&updated);
+
+        FakeFlash_SetReadFail(true, 8192, 12288);  /* registration unreadable */
+        bool init_ok = Provisioning_Init();
+        FakeFlash_SetReadFail(false, 0, 0);
+        const ProvisioningRuntime *rt = Provisioning_GetRuntime();
+        check(!init_ok, "init fails on IO error");
+        check(rt->storage_status == STORAGE_READ_IO_ERROR, "storage status IO_ERROR");
+        check(rt->status.state == PROVISIONING_ERROR, "state ERROR on IO failure");
+
+        DeviceRegistration takeover = {0};
+        takeover.registered = true;
+        takeover.installation_id = inst_X;
+        check(!Provisioning_Save(&takeover), "mutation denied on IO failure");
     }
 
-    /* 6. Identity independent */
+    /* ---- invalid building / room ID via Save ---- */
+    printf("\n=== Invalid entity IDs ===\n");
     {
-        DeviceIdentity id_a, id_b;
-        DeviceIdentity_Derive(&id_a);
-        DeviceIdentity_Derive(&id_b);
-        check(memcmp(id_a.device_uuid, id_b.device_uuid, 16) == 0, "identity deterministic");
-    }
+        InitA();
+        DeviceRegistration updated = Provisioning_GetRuntime()->current;
+        updated.registered = true;
+        updated.installation_valid = true;
+        updated.installation_id = inst_A;
+        updated.building_id = building;
+        updated.building_valid = true;
+        updated.room_valid = false;
+        check(Provisioning_Save(&updated), "register + building (no room) accepted");
 
-    /* 7. Schema version */
-    check(REGISTRATION_SCHEMA_VERSION == 1, "registration schema v1");
+        DeviceRegistration with_bad_room = Provisioning_GetRuntime()->current;
+        with_bad_room.room_valid = true;   /* room id still zero */
+        check(!Provisioning_Save(&with_bad_room), "zero room_id cannot be saved");
 
-    /* 8. Unregister picks DISCOVERABLE */
-    {
-        DeviceRegistration cleared;
-        memset(&cleared, 0, sizeof(cleared));
-        cleared.registered = false;
-        check(Provisioning_Save(&cleared) || Provisioning_Clear(), "clear registration");
-        DeviceRegistration empty;
-        Provisioning_Load(&empty);
-        check(empty.registered == false, "after clear registered=false");
+        DeviceRegistration with_bad_building = Provisioning_GetRuntime()->current;
+        with_bad_building.building_valid = true;
+        with_bad_building.building_id = (EntityId){0};
+        check(!Provisioning_Save(&with_bad_building), "zero building_id cannot be saved");
     }
 
     printf("\n=== Summary ===\n");

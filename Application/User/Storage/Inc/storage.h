@@ -9,15 +9,14 @@
 #define STORAGE_RECORD_FORMAT_VERSION  1U
 #define STORAGE_PAYLOAD_MAX            256U
 
-/* Each slot occupies its own physical erase page (2048 bytes on G474).
-   Config: pages 0-1, Identity: pages 2-3, Registration: pages 4-5 */
-#define STORAGE_ERASE_UNIT     2048U
-
 /* Record types */
 #define RECORD_TYPE_INVALID     0U
 #define RECORD_TYPE_CONFIG      1U
 #define RECORD_TYPE_IDENTITY    2U
 #define RECORD_TYPE_REGISTRATION 3U
+
+/* Minimum logical pages required: 3 record types x 2 A/B slots = 6. */
+#define STORAGE_MIN_PAGES        6U
 
 typedef struct
 {
@@ -58,6 +57,9 @@ typedef struct
     uint32_t slot_b_offset;
 } StorageRecordLayout;
 
+/* Erased unit geometry is supplied by the Platform via Platform_FlashGetInfo().
+   The portable Storage core does NOT hardcode any erase-unit / page size. */
+
 typedef enum
 {
     STORAGE_READ_OK = 0,
@@ -67,6 +69,25 @@ typedef enum
     STORAGE_READ_INVALID_ARGUMENT
 } StorageReadStatus;
 
+/* Explicit per-slot state. A slot is ERASED only when the Flash read
+   succeeded and the complete slot confirmed the erased representation. */
+typedef enum
+{
+    SLOT_STATE_ERASED = 0,
+    SLOT_STATE_VALID,
+    SLOT_STATE_CORRUPT,
+    SLOT_STATE_IO_ERROR
+} SlotState;
+
+/* Aggregate storage health of a record region. */
+typedef enum
+{
+    STORAGE_HEALTH_HEALTHY = 0,
+    STORAGE_HEALTH_DEGRADED,
+    STORAGE_HEALTH_CORRUPT,
+    STORAGE_HEALTH_IO_ERROR
+} StorageHealth;
+
 const StorageRecordLayout *Storage_GetLayout(uint8_t record_type);
 
 bool Storage_Init(void);
@@ -75,5 +96,17 @@ bool Storage_Write(uint8_t record_type, const uint8_t *data, size_t size);
 bool Storage_Format(void);
 void Storage_GetInfo(StorageInfo *info);
 bool Storage_GetPageInfo(uint8_t record_type, StorageInfo *info);
+
+/* Per-slot classification. Owns ALL header/payload validation.
+   Returns SLOT_STATE_ERASED / VALID / CORRUPT / IO_ERROR.
+   header and/or payload may be NULL to skip filling. */
+SlotState Storage_ReadSlot(
+    uint8_t expected_record_type,
+    uint8_t slot_index,
+    StorageRecordHeader *header,
+    StoragePayload *payload);
+
+/* Aggregate storage health for a record region. */
+StorageHealth Storage_GetHealth(uint8_t record_type);
 
 #endif

@@ -115,6 +115,26 @@ jobs:
       - name: Run host tests
         run: ctest --test-dir build-host --output-on-failure --timeout 30
 
+  sanitizers:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install tools
+        run: sudo apt-get update && sudo apt-get install -y cmake gcc libc6-dev
+
+      - name: Build host tests with ASan + UBSan
+        run: >
+          cmake -S . -B build-san
+          -DBUILD_HOST_TESTS=ON
+          -DCMAKE_BUILD_TYPE=Debug
+          -DCMAKE_C_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer"
+          -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
+          && cmake --build build-san --parallel $(nproc)
+
+      - name: Run full host suite under sanitizers
+        run: ctest --test-dir build-san --output-on-failure --timeout 60
+
   policy-checks:
     runs-on: ubuntu-24.04
     steps:

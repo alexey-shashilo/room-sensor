@@ -130,9 +130,11 @@ typedef struct
 bool Command_Init(CommandServices *services);
 void Command_UpdateRuntime(uint32_t uptime, bool wdg, const DeviceRuntime *light, const DeviceRuntime *disp, ResetCause rc);
 void Command_Run(void);
+/* Legacy entry point retained for backward compatibility/tests. It enqueues a
+   command as COMMAND_SOURCE_UNTRUSTED (fail closed). Prefer the message-scoped
+   command entry point Command_ProcessInput() for production transport. */
 bool Command_ProcessBuffer(const uint8_t *data, size_t size);
 bool Command_ProcessInput(const CommandInput *input);
-void Command_SetSourceTrust(CommandSourceTrust trust);
 CommandSecurityClass Command_GetSecurityClass(CommandType type);
 bool CommandAuthorization_IsAllowed(CommandType type, CommandSourceTrust trust);
 
