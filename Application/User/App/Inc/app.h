@@ -28,6 +28,12 @@ typedef struct
 
     SelfTestReport self_test;
 
+    /* Persistent-storage initialization results (exposed for diagnostics).
+       false means storage-backed services (provisioning, config, identity
+       persistence) are unavailable and writes fail closed. */
+    bool storage_initialized;
+    bool provisioning_initialized;
+
     uint32_t uptime_ms;
 } AppStatus;
 

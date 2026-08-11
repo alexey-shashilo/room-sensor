@@ -262,6 +262,180 @@ static void TestHealth(void)
     }
 }
 
+/* Deterministic proof of the P0 invariant: for every valid payload size and
+   every supported program unit (power of two in (0, STORAGE_PROGRAM_UNIT_MAX]),
+   the aligned length never exceeds the program buffer capacity, so no aligned
+   write can ever read past the buffer. */
+static void TestProgramBounds(void)
+{
+    printf("\n=== Program-buffer capacity invariant ===\n");
+    int ok = 1;
+    for (uint32_t unit = 1; unit <= STORAGE_PROGRAM_UNIT_MAX; unit <<= 1)
+    {
+        for (size_t size = 0; size <= STORAGE_PAYLOAD_MAX; size++)
+        {
+            size_t total = STORAGE_HEADER_SIZE + size;
+            size_t aligned = (total + unit - 1U) & ~((size_t)(unit - 1U));
+            if (aligned < total || aligned > STORAGE_PROGRAM_BUFFER_MAX)
+            {
+                ok = 0;
+                printf("  FAIL unit=%u size=%zu aligned=%zu cap=%u\n",
+                       (unsigned)unit, size, aligned,
+                       (unsigned)STORAGE_PROGRAM_BUFFER_MAX);
+            }
+        }
+    }
+    T("all sizes/units: aligned within program buffer", ok);
+    T("max payload aligned == capacity (exact boundary)",
+      ((STORAGE_HEADER_SIZE + STORAGE_PAYLOAD_MAX + STORAGE_PROGRAM_UNIT_MAX - 1U) &
+       ~((size_t)(STORAGE_PROGRAM_UNIT_MAX - 1U))) == STORAGE_PROGRAM_BUFFER_MAX);
+}
+
+/* Memory-safety & program-alignment boundary tests. The max-payload case is
+   the exact aligned-buffer OOB regression (previously aligned=280 > raw[278]).
+   These run under ASan/UBSan in CI. */
+static void TestMemoryBoundaries(void)
+{
+    printf("\n=== Storage write boundaries (memory safety) ===\n");
+    const size_t sizes[] = {0U, 1U, 7U, 8U, 9U,
+                            STORAGE_PAYLOAD_MAX - 1U, STORAGE_PAYLOAD_MAX};
+    for (size_t i = 0; i < sizeof(sizes) / sizeof(sizes[0]); i++)
+    {
+        FakeFlash_Init();
+        Storage_Init();
+        uint8_t buf[STORAGE_PAYLOAD_MAX];
+        for (size_t j = 0; j < sizes[i]; j++) buf[j] = (uint8_t)(j + 1U);
+
+        bool wok = Storage_Write(RECORD_TYPE_CONFIG, buf, sizes[i]);
+        StoragePayload p;
+        StorageReadStatus rs = Storage_Read(RECORD_TYPE_CONFIG, &p);
+        char name[72];
+        snprintf(name, sizeof(name), "write+read size=%zu no OOB round-trip", sizes[i]);
+        T(name, wok && rs == STORAGE_READ_OK && p.size == sizes[i] &&
+                (sizes[i] == 0 || memcmp(p.data, buf, sizes[i]) == 0));
+    }
+}
+
+/* Record-scoped recovery: repairs both-corrupt registration without touching
+   config or identity, and ordinary write remains fail-closed. */
+static void TestRecovery(void)
+{
+    printf("\n=== Record recovery ===\n");
+
+    FakeFlash_Init(); Storage_Init();
+
+    uint8_t cfg[4] = {1, 2, 3, 4};
+    Storage_Write(RECORD_TYPE_CONFIG, cfg, sizeof(cfg));
+
+    uint8_t id[24];
+    for (size_t i = 0; i < sizeof(id); i++) id[i] = (uint8_t)(i + 100);
+    Storage_Write(RECORD_TYPE_IDENTITY, id, sizeof(id));
+
+    /* Corrupt both registration slots (pages 4-5 -> offsets 8192, 10240). */
+    FakeFlash_Corrupt(8192, 40);
+    FakeFlash_Corrupt(10240, 40);
+
+    uint8_t reg[60];
+    memset(reg, 0xAB, sizeof(reg));
+
+    StoragePayload pr;
+    T("both-corrupt read -> CORRUPT",
+      Storage_Read(RECORD_TYPE_REGISTRATION, &pr) == STORAGE_READ_CORRUPT);
+
+    T("ordinary write refused on both-corrupt (fail closed)",
+      !Storage_Write(RECORD_TYPE_REGISTRATION, reg, sizeof(reg)));
+
+    /* Config/Identity remain untouched by the corruption and by recovery. */
+    StoragePayload pi, pc;
+    T("identity unaffected by registration corruption",
+      Storage_Read(RECORD_TYPE_IDENTITY, &pi) == STORAGE_READ_OK &&
+      memcmp(pi.data, id, sizeof(id)) == 0);
+    T("config unaffected by registration corruption",
+      Storage_Read(RECORD_TYPE_CONFIG, &pc) == STORAGE_READ_OK &&
+      memcmp(pc.data, cfg, sizeof(cfg)) == 0);
+
+    T("explicit record recovery succeeds",
+      Storage_RecoverRecord(RECORD_TYPE_REGISTRATION, reg, sizeof(reg)));
+
+    T("registration readable after recovery",
+      Storage_Read(RECORD_TYPE_REGISTRATION, &pr) == STORAGE_READ_OK &&
+      pr.size == sizeof(reg) && memcmp(pr.data, reg, sizeof(reg)) == 0);
+    T("identity still valid after registration recovery",
+      Storage_Read(RECORD_TYPE_IDENTITY, &pi) == STORAGE_READ_OK &&
+      memcmp(pi.data, id, sizeof(id)) == 0);
+    T("config still valid after registration recovery",
+      Storage_Read(RECORD_TYPE_CONFIG, &pc) == STORAGE_READ_OK &&
+      memcmp(pc.data, cfg, sizeof(cfg)) == 0);
+
+    /* Storage_FormatRecord erases ONLY the selected record's two pages. */
+    T("FormatRecord(registration) succeeds",
+      Storage_FormatRecord(RECORD_TYPE_REGISTRATION));
+    T("registration erased after FormatRecord",
+      Storage_Read(RECORD_TYPE_REGISTRATION, &pr) == STORAGE_READ_NOT_FOUND);
+    T("identity unaffected after FormatRecord(registration)",
+      Storage_Read(RECORD_TYPE_IDENTITY, &pi) == STORAGE_READ_OK &&
+      memcmp(pi.data, id, sizeof(id)) == 0);
+    T("config unaffected after FormatRecord(registration)",
+      Storage_Read(RECORD_TYPE_CONFIG, &pc) == STORAGE_READ_OK &&
+      memcmp(pc.data, cfg, sizeof(cfg)) == 0);
+}
+
+/* Each slot is read exactly once per Storage_Read (no re-read/re-classify). */
+static void TestReadOnce(void)
+{
+    printf("\n=== Single-read slot snapshot ===\n");
+    FakeFlash_Init(); Storage_Init();
+    uint8_t a[8] = {1, 2, 3, 4, 5, 6, 7, 8};
+    Storage_Write(RECORD_TYPE_CONFIG, a, sizeof(a));  /* slot A */
+    Storage_Write(RECORD_TYPE_CONFIG, a, sizeof(a));  /* slot B */
+
+    FakeFlash_ResetReadCount();
+    StoragePayload p;
+    Storage_Read(RECORD_TYPE_CONFIG, &p);
+    /* VALID+VALID: header+payload for each of 2 slots = exactly 4 reads. */
+    T("each slot read once per Storage_Read (4 reads, no re-read)",
+      FakeFlash_GetReadCount() == 4);
+}
+
+/* Extended health semantics (usable-degraded vs unrecoverable corruption). */
+static void TestHealthExtended(void)
+{
+    printf("\n=== Health semantics ===\n");
+    uint8_t a[4] = {1, 2, 3, 4};
+
+    FakeFlash_Init(); Storage_Init();
+    Storage_Write(RECORD_TYPE_CONFIG, a, sizeof(a));
+    Storage_Write(RECORD_TYPE_CONFIG, a, sizeof(a));
+    T("VALID+VALID -> healthy", Storage_GetHealth(RECORD_TYPE_CONFIG) == STORAGE_HEALTH_HEALTHY);
+
+    FakeFlash_Init(); Storage_Init();
+    Storage_Write(RECORD_TYPE_CONFIG, a, sizeof(a));
+    T("VALID+ERASED -> degraded", Storage_GetHealth(RECORD_TYPE_CONFIG) == STORAGE_HEALTH_DEGRADED);
+
+    FakeFlash_Init(); Storage_Init();
+    Storage_Write(RECORD_TYPE_CONFIG, a, sizeof(a));
+    FakeFlash_Corrupt(2048, 8);
+    T("VALID+CORRUPT -> degraded", Storage_GetHealth(RECORD_TYPE_CONFIG) == STORAGE_HEALTH_DEGRADED);
+
+    FakeFlash_Init(); Storage_Init();
+    Storage_Write(RECORD_TYPE_CONFIG, a, sizeof(a));
+    Storage_Write(RECORD_TYPE_CONFIG, a, sizeof(a));
+    FakeFlash_Corrupt(0, 8);
+    FakeFlash_Corrupt(2048, 8);
+    T("both corrupt -> corrupt", Storage_GetHealth(RECORD_TYPE_CONFIG) == STORAGE_HEALTH_CORRUPT);
+
+    FakeFlash_Init(); Storage_Init();
+    Storage_Write(RECORD_TYPE_CONFIG, a, sizeof(a));
+    FakeFlash_SetReadFail(true, 2048, 4096);   /* slot B IO_ERROR */
+    T("VALID+IO -> degraded_io", Storage_GetHealth(RECORD_TYPE_CONFIG) == STORAGE_HEALTH_DEGRADED_IO);
+    FakeFlash_SetReadFail(false, 0, 0);
+
+    FakeFlash_Init(); Storage_Init();
+    FakeFlash_SetReadFail(true, 0, 4096);      /* both slots IO_ERROR */
+    T("both IO -> io_error", Storage_GetHealth(RECORD_TYPE_CONFIG) == STORAGE_HEALTH_IO_ERROR);
+    FakeFlash_SetReadFail(false, 0, 0);
+}
+
 int main(void)
 {
     printf("Storage Slot-State Host Tests\n");
@@ -269,6 +443,11 @@ int main(void)
 
     TestMatrix();
     TestHealth();
+    TestProgramBounds();
+    TestMemoryBoundaries();
+    TestRecovery();
+    TestReadOnce();
+    TestHealthExtended();
 
     printf("\n=== Summary ===\n");
     printf("  Cases: %d\n", s_case);

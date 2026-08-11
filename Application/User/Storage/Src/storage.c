@@ -24,6 +24,7 @@ static bool s_initialized = false;
 static uint32_t s_page_size = 0;
 static uint32_t s_total_size = 0;
 static uint32_t s_page_count = 0;
+static uint32_t s_program_unit = 0;
 
 #define STORAGE_RECORD_TYPES 3U
 
@@ -41,18 +42,22 @@ static bool SlotPage(uint8_t record_type, uint8_t slot_index, uint32_t *page_out
     return true;
 }
 
+static bool SlotPagePair(uint8_t record_type, uint32_t *pa, uint32_t *pb,
+                         uint32_t *oa, uint32_t *ob)
+{
+    if (pa == NULL || pb == NULL || oa == NULL || ob == NULL) return false;
+    if (!SlotPage(record_type, 0, pa, oa)) return false;
+    if (!SlotPage(record_type, 1, pb, ob)) return false;
+    return true;
+}
+
 const StorageRecordLayout *Storage_GetLayout(uint8_t record_type)
 {
     static StorageRecordLayout layout;
-    if (!s_initialized ||
-        (record_type != RECORD_TYPE_CONFIG &&
-         record_type != RECORD_TYPE_IDENTITY &&
-         record_type != RECORD_TYPE_REGISTRATION))
-        return NULL;
+    if (!s_initialized) return NULL;
 
     uint32_t pa, pb, oa, ob;
-    if (!SlotPage(record_type, 0, &pa, &oa)) return NULL;
-    if (!SlotPage(record_type, 1, &pb, &ob)) return NULL;
+    if (!SlotPagePair(record_type, &pa, &pb, &oa, &ob)) return NULL;
     layout.slot_a_page = pa;
     layout.slot_b_page = pb;
     layout.slot_a_offset = oa;
@@ -62,34 +67,48 @@ const StorageRecordLayout *Storage_GetLayout(uint8_t record_type)
 
 bool Storage_Init(void)
 {
+    /* Deterministic: never leave stale "initialized" on a re-init that fails. */
+    s_initialized = false;
+    s_page_size = 0;
+    s_total_size = 0;
+    s_page_count = 0;
+    s_program_unit = 0;
+
     const PlatformFlashInfo *info = Platform_FlashGetInfo();
     if (info == NULL) return false;
 
-    /* Layout validation */
+    /* Program unit must be a supported power of two. */
+    if (info->program_unit == 0) return false;
+    if (info->program_unit > STORAGE_PROGRAM_UNIT_MAX) return false;
+    if ((info->program_unit & (info->program_unit - 1U)) != 0U) return false;
+
+    /* Geometry validation (overflow-safe). */
     if (info->page_size == 0) return false;
     if (info->page_count < STORAGE_MIN_PAGES) return false;
-    if (info->total_size < (uint32_t)STORAGE_MIN_PAGES * info->page_size) return false;
     if (info->page_size < STORAGE_HEADER_SIZE + 1U) return false;
+    if (info->total_size == 0) return false;
 
-    s_page_size  = info->page_size;
-    s_total_size = info->total_size;
-    s_page_count = info->page_count;
+    uint64_t min_total = (uint64_t)info->page_count * (uint64_t)info->page_size;
+    if (min_total != (uint64_t)info->total_size) return false;
 
-    if (s_total_size == 0) return false;
-    if ((uint64_t)s_page_count * (uint64_t)s_page_size != (uint64_t)s_total_size)
-        return false;
+    s_page_size   = info->page_size;
+    s_total_size  = info->total_size;
+    s_page_count  = info->page_count;
+    s_program_unit = info->program_unit;
 
-    /* A/B slots must be distinct and within bounds. */
+    /* A/B slots must be distinct, in bounds, and program-buffer safe. */
     for (uint8_t t = 0; t < STORAGE_RECORD_TYPES; t++)
     {
         uint8_t rt = (uint8_t)(t + RECORD_TYPE_CONFIG);
         uint32_t pa, pb, oa, ob;
-        if (!SlotPage(rt, 0, &pa, &oa)) return false;
-        if (!SlotPage(rt, 1, &pb, &ob)) return false;
+        if (!SlotPagePair(rt, &pa, &pb, &oa, &ob)) return false;
         if (pa == pb) return false;
         if (pa >= s_page_count || pb >= s_page_count) return false;
-        if (oa >= s_total_size || ob >= s_total_size) return false;
-        if (oa + s_page_size > s_total_size || ob + s_page_size > s_total_size) return false;
+        if (oa > s_total_size || ob > s_total_size) return false;
+        if (s_page_size > s_total_size - oa) return false;
+        if (s_page_size > s_total_size - ob) return false;
+        /* Largest aligned record must fit in a page. */
+        if (STORAGE_PROGRAM_BUFFER_MAX > s_page_size) return false;
     }
 
     s_initialized = true;
@@ -113,8 +132,6 @@ SlotState Storage_ReadSlot(
     if (Platform_FlashRead(offset, &hdr, STORAGE_HEADER_SIZE) != PLATFORM_FLASH_OK)
         return SLOT_STATE_IO_ERROR;
 
-    /* Confirm erased representation from complete header field set.
-       Represents the full erased (0xFF) header, not just magic. */
     const uint8_t *raw_hdr = (const uint8_t *)&hdr;
     bool all_ff = true;
     for (size_t i = 0; i < STORAGE_HEADER_SIZE; i++)
@@ -124,12 +141,10 @@ SlotState Storage_ReadSlot(
 
     if (all_ff)
     {
-        /* Erased confirmed by the complete header. No payload expected. */
         if (header != NULL) memset(header, 0, sizeof(*header));
         return SLOT_STATE_ERASED;
     }
 
-    /* Structural validation */
     if (hdr.magic != STORAGE_MAGIC) return SLOT_STATE_CORRUPT;
     if (hdr.record_format_version != STORAGE_RECORD_FORMAT_VERSION) return SLOT_STATE_CORRUPT;
     if (hdr.record_type != expected_record_type) return SLOT_STATE_CORRUPT;
@@ -140,7 +155,7 @@ SlotState Storage_ReadSlot(
     uint32_t expected_crc = hdr.crc32;
     hdr.crc32 = 0;
 
-    uint8_t raw[STORAGE_HEADER_SIZE + STORAGE_PAYLOAD_MAX];
+    uint8_t raw[STORAGE_RAW_MAX];
     memcpy(raw, &hdr, STORAGE_HEADER_SIZE);
 
     if (hdr.payload_size > 0)
@@ -172,73 +187,84 @@ SlotState Storage_ReadSlot(
     return SLOT_STATE_VALID;
 }
 
+/* Read one slot into a full snapshot with a single hardware read. */
+static SlotSnapshot ReadSlotSnapshot(uint8_t record_type, uint8_t slot_index)
+{
+    SlotSnapshot snap;
+    memset(&snap, 0, sizeof(snap));
+    snap.state = Storage_ReadSlot(record_type, slot_index, &snap.header, &snap.payload);
+    return snap;
+}
+
+static void CopyPayload(const SlotSnapshot *snap, StoragePayload *payload)
+{
+    if (payload == NULL || snap == NULL) return;
+    *payload = snap->payload;
+}
+
+/* Pick the newest-valid payload from the two snapshots. Returns 0/1. */
+static uint8_t SelectNewest(const SlotSnapshot *a, const SlotSnapshot *b)
+{
+    return ((int32_t)(a->header.sequence - b->header.sequence) >= 0) ? 0U : 1U;
+}
+
 StorageReadStatus Storage_Read(uint8_t record_type, StoragePayload *payload)
 {
     if (payload == NULL) return STORAGE_READ_INVALID_ARGUMENT;
     if (!s_initialized) return STORAGE_READ_IO_ERROR;
     if (Storage_GetLayout(record_type) == NULL) return STORAGE_READ_INVALID_ARGUMENT;
 
-    StorageRecordHeader hdr_a, hdr_b;
-    SlotState a = Storage_ReadSlot(record_type, 0, &hdr_a, NULL);
-    SlotState b = Storage_ReadSlot(record_type, 1, &hdr_b, NULL);
+    SlotSnapshot a = ReadSlotSnapshot(record_type, 0);
+    SlotSnapshot b = ReadSlotSnapshot(record_type, 1);
 
     /* ================================================================
-       Result matrix (documented policy)
+       Result matrix (documented policy). Each slot is read exactly once.
+       IO_ERROR fully dominates unless a peer slot is VALID.
        ================================================================
-       A ERASED,  B ERASED  -> NOT_FOUND
-       A VALID,   B ERASED  -> OK A
-       A ERASED,  B VALID   -> OK B
-       A VALID,   B CORRUPT -> OK A
-       A CORRUPT, B VALID   -> OK B
-       A VALID,   B VALID   -> newest sequence
-       A CORRUPT, B CORRUPT -> CORRUPT
-       A CORRUPT, B ERASED  -> CORRUPT
-       A ERASED,  B CORRUPT -> CORRUPT
-       A IO_ERROR,B ERASED  -> IO_ERROR   (cannot trust erased)
-       A IO_ERROR,B CORRUPT -> IO_ERROR
-       A IO_ERROR,B IO_ERROR-> IO_ERROR
-       A IO_ERROR,B VALID   -> OK (valid B, degraded read)
-       ----------------------------------------------------------------
-       IO_ERROR policy: an I/O failure on a slot whose peer is NOT fully
-       VALID yields IO_ERROR (state cannot be safely determined). When a
-       peer slot is fully VALID we prefer the validated record and treat
-       storage as degraded; the caller may consult Storage_GetHealth().
-       In no case is a failed read reinterpreted as an erased page.
+       ERASED  + ERASED   -> NOT_FOUND
+       VALID   + ERASED   -> OK A
+       ERASED  + VALID    -> OK B
+       VALID   + CORRUPT  -> OK A          (health = DEGRADED)
+       CORRUPT + VALID    -> OK B          (health = DEGRADED)
+       VALID   + VALID    -> newest
+       CORRUPT + CORRUPT  -> CORRUPT
+       CORRUPT + ERASED   -> CORRUPT
+       ERASED  + CORRUPT  -> CORRUPT
+       IO_ERROR+ ERASED   -> IO_ERROR
+       IO_ERROR+ CORRUPT  -> IO_ERROR
+       IO_ERROR+ IO_ERROR -> IO_ERROR
+       VALID   + IO_ERROR -> OK (valid peer)
+                          (health = DEGRADED_IO; degradation is surfaced)
+       ERASED  + IO_ERROR -> IO_ERROR
+       ================================================================
+       IO_ERROR is NEVER reclassified as CORRUPT or ERASED. When a peer is
+       fully VALID we return the validated payload and record DEGRADED_IO in
+       Storage_GetHealth() so the degradation is not hidden.
        ================================================================ */
 
-    if (a == SLOT_STATE_IO_ERROR && b == SLOT_STATE_IO_ERROR) return STORAGE_READ_IO_ERROR;
-    if (a == SLOT_STATE_IO_ERROR && b == SLOT_STATE_VALID)
-        return Storage_ReadSlot(record_type, 1, NULL, payload) == SLOT_STATE_VALID
-               ? STORAGE_READ_OK : STORAGE_READ_IO_ERROR;
-    if (b == SLOT_STATE_IO_ERROR && a == SLOT_STATE_VALID)
-        return Storage_ReadSlot(record_type, 0, NULL, payload) == SLOT_STATE_VALID
-               ? STORAGE_READ_OK : STORAGE_READ_IO_ERROR;
-    if (a == SLOT_STATE_IO_ERROR || b == SLOT_STATE_IO_ERROR) return STORAGE_READ_IO_ERROR;
+    bool a_valid = (a.state == SLOT_STATE_VALID);
+    bool b_valid = (b.state == SLOT_STATE_VALID);
 
-    /* Neither slot has an I/O error from here on. */
-    if (a == SLOT_STATE_ERASED && b == SLOT_STATE_ERASED) return STORAGE_READ_NOT_FOUND;
+    if (a_valid && b_valid)
+    {
+        CopyPayload((SelectNewest(&a, &b) == 0U) ? &a : &b, payload);
+        return STORAGE_READ_OK;
+    }
+    if (a_valid && b.state == SLOT_STATE_CORRUPT) { CopyPayload(&a, payload); return STORAGE_READ_OK; }
+    if (b_valid && a.state == SLOT_STATE_CORRUPT) { CopyPayload(&b, payload); return STORAGE_READ_OK; }
+    if (a_valid && b.state == SLOT_STATE_ERASED)  { CopyPayload(&a, payload); return STORAGE_READ_OK; }
+    if (b_valid && a.state == SLOT_STATE_ERASED)  { CopyPayload(&b, payload); return STORAGE_READ_OK; }
+    if (a_valid && b.state == SLOT_STATE_IO_ERROR){ CopyPayload(&a, payload); return STORAGE_READ_OK; }
+    if (b_valid && a.state == SLOT_STATE_IO_ERROR){ CopyPayload(&b, payload); return STORAGE_READ_OK; }
 
-    if (a == SLOT_STATE_VALID && b == SLOT_STATE_CORRUPT)
-        return Storage_ReadSlot(record_type, 0, NULL, payload) == SLOT_STATE_VALID
-               ? STORAGE_READ_OK : STORAGE_READ_CORRUPT;
-    if (a == SLOT_STATE_CORRUPT && b == SLOT_STATE_VALID)
-        return Storage_ReadSlot(record_type, 1, NULL, payload) == SLOT_STATE_VALID
-               ? STORAGE_READ_OK : STORAGE_READ_CORRUPT;
+    if (a.state == SLOT_STATE_IO_ERROR || b.state == SLOT_STATE_IO_ERROR)
+        return STORAGE_READ_IO_ERROR;
 
-    if (a == SLOT_STATE_CORRUPT || b == SLOT_STATE_CORRUPT) return STORAGE_READ_CORRUPT;
+    if (a.state == SLOT_STATE_ERASED && b.state == SLOT_STATE_ERASED)
+        return STORAGE_READ_NOT_FOUND;
 
-    if (a == SLOT_STATE_ERASED && b == SLOT_STATE_VALID)
-        return Storage_ReadSlot(record_type, 1, NULL, payload) == SLOT_STATE_VALID
-               ? STORAGE_READ_OK : STORAGE_READ_CORRUPT;
-    if (a == SLOT_STATE_VALID && b == SLOT_STATE_ERASED)
-        return Storage_ReadSlot(record_type, 0, NULL, payload) == SLOT_STATE_VALID
-               ? STORAGE_READ_OK : STORAGE_READ_CORRUPT;
-
-    /* Both VALID -> newest sequence. */
-    bool a_newer = (int32_t)(hdr_a.sequence - hdr_b.sequence) >= 0;
-    uint8_t pick = a_newer ? 0U : 1U;
-    return Storage_ReadSlot(record_type, pick, NULL, payload) == SLOT_STATE_VALID
-           ? STORAGE_READ_OK : STORAGE_READ_CORRUPT;
+    /* Any remaining non-erased, no-valid case is corrupt. */
+    return STORAGE_READ_CORRUPT;
 }
 
 StorageHealth Storage_GetHealth(uint8_t record_type)
@@ -246,57 +272,125 @@ StorageHealth Storage_GetHealth(uint8_t record_type)
     if (!s_initialized) return STORAGE_HEALTH_IO_ERROR;
     if (Storage_GetLayout(record_type) == NULL) return STORAGE_HEALTH_IO_ERROR;
 
-    SlotState a = Storage_ReadSlot(record_type, 0, NULL, NULL);
-    SlotState b = Storage_ReadSlot(record_type, 1, NULL, NULL);
+    SlotSnapshot a = ReadSlotSnapshot(record_type, 0);
+    SlotSnapshot b = ReadSlotSnapshot(record_type, 1);
 
-    if (a == SLOT_STATE_IO_ERROR || b == SLOT_STATE_IO_ERROR)
+    bool a_valid = (a.state == SLOT_STATE_VALID);
+    bool b_valid = (b.state == SLOT_STATE_VALID);
+
+    if (a_valid && b_valid) return STORAGE_HEALTH_HEALTHY;
+    if (a_valid && b.state == SLOT_STATE_IO_ERROR) return STORAGE_HEALTH_DEGRADED_IO;
+    if (b_valid && a.state == SLOT_STATE_IO_ERROR) return STORAGE_HEALTH_DEGRADED_IO;
+    if (a.state == SLOT_STATE_IO_ERROR || b.state == SLOT_STATE_IO_ERROR)
         return STORAGE_HEALTH_IO_ERROR;
-    if (a == SLOT_STATE_CORRUPT || b == SLOT_STATE_CORRUPT)
+
+    if (a_valid || b_valid)
+    {
+        /* one usable copy; mirror erased or corrupt -> degraded */
+        return STORAGE_HEALTH_DEGRADED;
+    }
+
+    if (a.state == SLOT_STATE_CORRUPT || b.state == SLOT_STATE_CORRUPT)
         return STORAGE_HEALTH_CORRUPT;
-    if (a == SLOT_STATE_VALID && b == SLOT_STATE_VALID)
+
+    if (a.state == SLOT_STATE_ERASED && b.state == SLOT_STATE_ERASED)
         return STORAGE_HEALTH_HEALTHY;
-    /* one valid, other erased -> healthy (mirrored slots are optional) */
-    return STORAGE_HEALTH_HEALTHY;
+
+    return STORAGE_HEALTH_CORRUPT;
 }
 
 static uint8_t SelectWriteSlot(uint8_t record_type, uint32_t *sequence_out)
 {
-    StorageRecordHeader hdr_a, hdr_b;
-    SlotState a = Storage_ReadSlot(record_type, 0, &hdr_a, NULL);
-    SlotState b = Storage_ReadSlot(record_type, 1, &hdr_b, NULL);
+    SlotSnapshot a = ReadSlotSnapshot(record_type, 0);
+    SlotSnapshot b = ReadSlotSnapshot(record_type, 1);
 
-    /* Fail closed on any I/O uncertainty. */
-    if (a == SLOT_STATE_IO_ERROR || b == SLOT_STATE_IO_ERROR)
+    if (a.state == SLOT_STATE_IO_ERROR || b.state == SLOT_STATE_IO_ERROR)
         return 0xFF;
 
-    /* Both erased -> write slot A. */
-    if (a == SLOT_STATE_ERASED && b == SLOT_STATE_ERASED)
+    if (a.state == SLOT_STATE_ERASED && b.state == SLOT_STATE_ERASED)
     {
         *sequence_out = 0;
         return 0;
     }
 
-    /* Both corrupt -> unsafe to derive a newer state; fail closed. */
-    if (a == SLOT_STATE_CORRUPT && b == SLOT_STATE_CORRUPT)
+    if (a.state == SLOT_STATE_CORRUPT && b.state == SLOT_STATE_CORRUPT)
         return 0xFF;
 
-    /* One valid + one erased/corrupt -> write the OTHER (non-active) slot. */
-    if (a == SLOT_STATE_VALID && (b == SLOT_STATE_ERASED || b == SLOT_STATE_CORRUPT))
+    if (a.state == SLOT_STATE_VALID && (b.state == SLOT_STATE_ERASED || b.state == SLOT_STATE_CORRUPT))
     {
-        *sequence_out = hdr_a.sequence;
+        *sequence_out = a.header.sequence;
         return 1;
     }
-    if (b == SLOT_STATE_VALID && (a == SLOT_STATE_ERASED || a == SLOT_STATE_CORRUPT))
+    if (b.state == SLOT_STATE_VALID && (a.state == SLOT_STATE_ERASED || a.state == SLOT_STATE_CORRUPT))
     {
-        *sequence_out = hdr_b.sequence;
+        *sequence_out = b.header.sequence;
         return 0;
     }
 
-    /* Both valid -> write the older slot. */
-    bool a_newer = (int32_t)(hdr_a.sequence - hdr_b.sequence) >= 0;
-    uint32_t base = a_newer ? hdr_a.sequence : hdr_b.sequence;
-    *sequence_out = base;
-    return a_newer ? 1U : 0U;  /* overwrite the older (inactive) slot */
+    bool a_newer = (int32_t)(a.header.sequence - b.header.sequence) >= 0;
+    *sequence_out = a_newer ? a.header.sequence : b.header.sequence;
+    return a_newer ? 1U : 0U;
+}
+
+/* Build a program-aligned record in the padded buffer and program it to the
+   (already erased) target slot. Guarantees no OOB read: aligned <= buffer. */
+static bool WriteProgramRecord(uint32_t write_offset,
+                               uint8_t record_type, const uint8_t *data, size_t size,
+                               uint32_t seq)
+{
+    if (size > STORAGE_PAYLOAD_MAX) return false;
+    if ((data == NULL) && (size > 0)) return false;
+    if (!s_initialized) return false;
+    /* program_unit must be a supported power of two (validated at Init; the
+       guard makes the alignment computation safe on every code path). */
+    if (s_program_unit == 0 ||
+        (s_program_unit & (s_program_unit - 1U)) != 0U)
+        return false;
+
+    size_t total = STORAGE_HEADER_SIZE + size;
+    size_t aligned = (total + s_program_unit - 1U) & ~((size_t)(s_program_unit - 1U));
+
+    /* Program-buffer capacity invariant (defensive, also asserted statically). */
+    if (aligned < total) return false;
+    if (aligned > STORAGE_PROGRAM_BUFFER_MAX) return false;
+    /* Record must fit inside the slot page. */
+    if (aligned > s_page_size) return false;
+
+    StorageRecordHeader hdr;
+    memset(&hdr, 0, sizeof(hdr));
+    hdr.magic = STORAGE_MAGIC;
+    hdr.record_format_version = STORAGE_RECORD_FORMAT_VERSION;
+    hdr.payload_size = (uint16_t)size;
+    hdr.record_type = record_type;
+    hdr.sequence = seq;
+
+    /* Entire program buffer initialized to erased (0xFF) so all padding bytes
+       between `total` and `aligned` are explicitly set, never uninitialized. */
+    uint8_t program_buf[STORAGE_PROGRAM_BUFFER_MAX];
+    memset(program_buf, 0xFF, sizeof(program_buf));
+
+    memcpy(program_buf, &hdr, STORAGE_HEADER_SIZE);
+    if (size > 0)
+        memcpy(program_buf + STORAGE_HEADER_SIZE, data, size);
+
+    hdr.crc32 = 0;
+    memcpy(program_buf, &hdr, STORAGE_HEADER_SIZE);
+
+    uint32_t crc = Storage_Crc32(program_buf, total);
+    hdr.crc32 = crc;
+    memcpy(program_buf, &hdr, STORAGE_HEADER_SIZE);
+
+    if (Platform_FlashWrite(write_offset, program_buf, aligned) != PLATFORM_FLASH_OK)
+        return false;
+
+    /* Verify the program-aligned bytes as written. */
+    uint8_t verify[STORAGE_PROGRAM_BUFFER_MAX];
+    if (Platform_FlashRead(write_offset, verify, total) != PLATFORM_FLASH_OK)
+        return false;
+    if (memcmp(program_buf, verify, total) != 0)
+        return false;
+
+    return true;
 }
 
 bool Storage_Write(uint8_t record_type, const uint8_t *data, size_t size)
@@ -311,7 +405,7 @@ bool Storage_Write(uint8_t record_type, const uint8_t *data, size_t size)
     uint32_t current_seq;
     uint8_t write_slot = SelectWriteSlot(record_type, &current_seq);
     if (write_slot == 0xFF)
-        return false;  /* write fail-closed: slot state unknown or unsafe */
+        return false;  /* fail closed: slot state unknown or unsafe */
 
     uint32_t write_page = (write_slot == 0) ? layout->slot_a_page : layout->slot_b_page;
     uint32_t write_offset = (write_slot == 0) ? layout->slot_a_offset : layout->slot_b_offset;
@@ -319,50 +413,54 @@ bool Storage_Write(uint8_t record_type, const uint8_t *data, size_t size)
     uint32_t next_seq = current_seq + 1;
     if (next_seq == 0) next_seq = 1;
 
-    StorageRecordHeader hdr;
-    memset(&hdr, 0, sizeof(hdr));
-    hdr.magic = STORAGE_MAGIC;
-    hdr.record_format_version = STORAGE_RECORD_FORMAT_VERSION;
-    hdr.payload_size = (uint16_t)size;
-    hdr.record_type = record_type;
-    hdr.sequence = next_seq;
-
-    uint8_t raw[STORAGE_HEADER_SIZE + STORAGE_PAYLOAD_MAX];
-    memset(raw, 0xFF, sizeof(raw));
-    memcpy(raw, &hdr, STORAGE_HEADER_SIZE);
-    if (size > 0)
-        memcpy(raw + STORAGE_HEADER_SIZE, data, size);
-
-    hdr.crc32 = 0;
-    memcpy(raw, &hdr, STORAGE_HEADER_SIZE);
-
-    uint32_t crc = Storage_Crc32(raw, STORAGE_HEADER_SIZE + size);
-    hdr.crc32 = crc;
-    memcpy(raw, &hdr, STORAGE_HEADER_SIZE);
-
-    size_t total = STORAGE_HEADER_SIZE + size;
-    size_t aligned = (total + 7U) & ~((size_t)7U);
-
-    /* Erase only the inactive slot page — the active valid page is preserved. */
+    /* Erase only the inactive slot page; the active valid page is preserved. */
     if (Platform_FlashErase(write_page) != PLATFORM_FLASH_OK)
         return false;
 
-    if (Platform_FlashWrite(write_offset, raw, aligned) != PLATFORM_FLASH_OK)
+    return WriteProgramRecord(write_offset, record_type, data, size, next_seq);
+}
+
+bool Storage_RecoverRecord(uint8_t record_type, const uint8_t *data, size_t size)
+{
+    if (!s_initialized) return false;
+    if (size > STORAGE_PAYLOAD_MAX) return false;
+    if ((data == NULL) && (size > 0)) return false;
+
+    const StorageRecordLayout *layout = Storage_GetLayout(record_type);
+    if (layout == NULL) return false;
+
+    /* Destructive, record-scoped recovery: erase ONLY the two owned pages.
+       Does NOT touch other record types and never calls Storage_Format. */
+    if (Platform_FlashErase(layout->slot_a_page) != PLATFORM_FLASH_OK)
+        return false;
+    if (Platform_FlashErase(layout->slot_b_page) != PLATFORM_FLASH_OK)
         return false;
 
-    uint8_t verify[STORAGE_HEADER_SIZE + STORAGE_PAYLOAD_MAX];
-    if (Platform_FlashRead(write_offset, verify, total) != PLATFORM_FLASH_OK)
-        return false;
+    /* Both slots are now ERASED; write a fresh sequence-1 record into slot A. */
+    return WriteProgramRecord(layout->slot_a_offset, record_type, data, size, 1U);
+}
 
-    if (memcmp(raw, verify, total) != 0)
-        return false;
+bool Storage_FormatRecord(uint8_t record_type)
+{
+    if (!s_initialized) return false;
+    const StorageRecordLayout *layout = Storage_GetLayout(record_type);
+    if (layout == NULL) return false;
 
+    if (Platform_FlashErase(layout->slot_a_page) != PLATFORM_FLASH_OK)
+        return false;
+    if (Platform_FlashErase(layout->slot_b_page) != PLATFORM_FLASH_OK)
+        return false;
     return true;
 }
 
 bool Storage_Format(void)
 {
     if (!s_initialized) return false;
+
+    /* Storage_Format is the engineering/service destructive operation. It
+       erases every page described by PlatformFlashInfo — which MUST describe
+       ONLY the reserved Room Sensor persistence region (see Platform contract).
+       Platform_FlashErase is page-indexed within that region only. */
     for (uint32_t p = 0; p < s_page_count; p++)
     {
         if (Platform_FlashErase(p) != PLATFORM_FLASH_OK)
@@ -385,13 +483,12 @@ bool Storage_GetPageInfo(uint8_t record_type, StorageInfo *info)
     if (!s_initialized) return false;
     if (Storage_GetLayout(record_type) == NULL) return false;
 
-    StorageRecordHeader hdr_a, hdr_b;
-    SlotState a = Storage_ReadSlot(record_type, 0, &hdr_a, NULL);
-    SlotState b = Storage_ReadSlot(record_type, 1, &hdr_b, NULL);
+    SlotSnapshot a = ReadSlotSnapshot(record_type, 0);
+    SlotSnapshot b = ReadSlotSnapshot(record_type, 1);
 
-    info->slot_a_valid = (a == SLOT_STATE_VALID);
-    info->slot_b_valid = (b == SLOT_STATE_VALID);
-    info->slot_a_sequence = info->slot_a_valid ? hdr_a.sequence : 0;
-    info->slot_b_sequence = info->slot_b_valid ? hdr_b.sequence : 0;
-    return !(a == SLOT_STATE_IO_ERROR || b == SLOT_STATE_IO_ERROR);
+    info->slot_a_valid = (a.state == SLOT_STATE_VALID);
+    info->slot_b_valid = (b.state == SLOT_STATE_VALID);
+    info->slot_a_sequence = info->slot_a_valid ? a.header.sequence : 0;
+    info->slot_b_sequence = info->slot_b_valid ? b.header.sequence : 0;
+    return !(a.state == SLOT_STATE_IO_ERROR || b.state == SLOT_STATE_IO_ERROR);
 }

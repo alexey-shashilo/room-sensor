@@ -15,6 +15,14 @@ bool EntityId_IsZero(const EntityId *id)
     return memcmp(id->bytes, zero, ENTITY_ID_SIZE) == 0;
 }
 
+static bool IsAllFF(const EntityId *id)
+{
+    if (id == NULL) return false;
+    uint8_t ff[ENTITY_ID_SIZE];
+    memset(ff, 0xFF, ENTITY_ID_SIZE);
+    return memcmp(id->bytes, ff, ENTITY_ID_SIZE) == 0;
+}
+
 static int HexVal(char c)
 {
     if (c >= '0' && c <= '9') return c - '0';
@@ -127,6 +135,48 @@ static void DeriveCanonical(bool registered,
     }
 }
 
+/* Strict validation of a raw persisted RegistrationStorageV1 record, BEFORE any
+   canonicalization. Corrupt persisted data is rejected, never silently
+   repaired. Semantics (section 12):
+     registered=false      -> EVERY entity ID MUST be zero.
+     registered=true       -> installation_id is a valid (non-zero, non-FF) ID.
+     building_id:          zero=not assigned; valid non-zero=assigned;
+                           all-FF (or any invalid non-zero) = CORRUPT.
+     room_id:              zero=not assigned; valid only if building assigned;
+                           all-FF = CORRUPT; present while building absent = CORRUPT.
+   All-FF is the erased representation and is therefore never a valid ID. */
+static bool ValidateRawStored(const RegistrationStorageV1 *s)
+{
+    if (s == NULL) return false;
+
+    bool inst_zero = EntityId_IsZero(&s->installation_id);
+    bool bld_zero  = EntityId_IsZero(&s->building_id);
+    bool room_zero = EntityId_IsZero(&s->room_id);
+    bool inst_ff   = IsAllFF(&s->installation_id);
+    bool bld_ff    = IsAllFF(&s->building_id);
+    bool room_ff   = IsAllFF(&s->room_id);
+
+    if (!s->registered)
+    {
+        /* unregistered: every ID must be zero (all-FF is non-zero -> corrupt). */
+        return inst_zero && bld_zero && room_zero;
+    }
+
+    /* registered: installation must be a valid (non-zero, non-FF) ID. */
+    if (inst_zero || inst_ff) return false;
+
+    /* building: zero=not assigned; a non-zero, non-FF value is assigned & valid. */
+    if (!bld_zero && bld_ff) return false;
+    bool bld_assigned = !bld_zero;
+
+    /* room: zero=not assigned; otherwise it must be a valid ID AND require an
+       assigned building (room without building is corrupt). */
+    if (!room_zero && room_ff) return false;
+    if (!room_zero && !bld_assigned) return false;
+
+    return true;
+}
+
 bool Provisioning_ValidateRegistration(const DeviceRegistration *reg)
 {
     return ValidateFlags(reg);
@@ -147,13 +197,11 @@ bool Provisioning_IsOperational(const DeviceRegistration *reg)
            Provisioning_ValidEntityId(&reg->room_id);
 }
 
-static bool Registration_SaveRaw(const DeviceRegistration *reg, bool force)
+static bool Registration_Save(const DeviceRegistration *reg)
 {
-    /* Fail closed unless storage state is known OR this is an explicit
-       recovery (force). If storage is corrupt/IO, ordinary mutations are
-       prohibited until storage is recovered. */
-    if (!force &&
-        s_storage_status != STORAGE_READ_OK &&
+    /* Ordinary mutations fail closed unless storage state is known (OK or
+       NOT_FOUND). CORRUPT / IO_ERROR require explicit recovery, never here. */
+    if (s_storage_status != STORAGE_READ_OK &&
         s_storage_status != STORAGE_READ_NOT_FOUND)
         return false;
 
@@ -182,7 +230,7 @@ static bool Registration_SaveRaw(const DeviceRegistration *reg, bool force)
 bool Provisioning_Save(const DeviceRegistration *reg)
 {
     if (reg == NULL) return false;
-    return Registration_SaveRaw(reg, false);
+    return Registration_Save(reg);
 }
 
 bool Provisioning_Load(DeviceRegistration *reg)
@@ -208,8 +256,40 @@ bool Provisioning_Clear(void)
     memset(&blank, 0, sizeof(blank));
     blank.registered = false;
 
-    /* Explicit recovery path: allow clearing even if storage is corrupt. */
-    return Registration_SaveRaw(&blank, true);
+    RegistrationStorageV1 stored;
+    memset(&stored, 0, sizeof(stored));
+    stored.schema_version = REGISTRATION_SCHEMA_VERSION;
+    stored.revision = s_revision + 1;
+    stored.registered = false;
+
+    bool ok;
+    if (s_storage_status == STORAGE_READ_IO_ERROR)
+    {
+        /* IO uncertainty: do NOT attempt destructive recovery. Fail closed. */
+        return false;
+    }
+    else if (s_storage_status == STORAGE_READ_CORRUPT)
+    {
+        /* Explicit, trustworthy destructive flow: recover this ONE record by
+           erasing ONLY the registration pages and writing canonical blank.
+           Identity/Config are never touched. */
+        ok = Storage_RecoverRecord(RECORD_TYPE_REGISTRATION,
+                                   (const uint8_t *)&stored, sizeof(stored));
+    }
+    else
+    {
+        ok = Storage_Write(RECORD_TYPE_REGISTRATION,
+                           (const uint8_t *)&stored, sizeof(stored));
+    }
+
+    if (!ok) return false;
+
+    /* Commit runtime ONLY on successful persistence/recovery. */
+    s_revision = stored.revision;
+    s_storage_status = STORAGE_READ_OK;
+    s_current = blank;
+    Provisioning_GetStatus(&s_current, &s_status);
+    return true;
 }
 
 bool Provisioning_Init(void)
@@ -261,6 +341,17 @@ bool Provisioning_Init(void)
         return false;
     }
 
+    /* Strict semantic validation of the raw persisted record BEFORE any
+       canonicalization. Invalid non-zero persisted IDs are treated as corrupt,
+       never silently discarded or repaired. */
+    if (!ValidateRawStored(&stored))
+    {
+        memset(&s_current, 0, sizeof(s_current));
+        s_storage_status = STORAGE_READ_CORRUPT;
+        s_status.state = PROVISIONING_ERROR;
+        return false;
+    }
+
     DeriveCanonical(stored.registered,
                     &stored.installation_id,
                     &stored.building_id,
@@ -268,7 +359,8 @@ bool Provisioning_Init(void)
                     &s_current);
 
     /* A persisted "registered" record requires a valid installation ID;
-       otherwise the record is contradictory / corrupt. */
+       otherwise the record is contradictory / corrupt. (Defense-in-depth;
+       ValidateRawStored already enforces this.) */
     if (s_current.registered && !s_current.installation_valid)
     {
         memset(&s_current, 0, sizeof(s_current));

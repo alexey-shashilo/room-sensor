@@ -9,6 +9,7 @@
 #define FLASH_START_ADDR    0x0807D000U  /* 512KB - 12KB = 500KB offset */
 #define STORAGE_PAGE_SIZE   2048U
 #define FLASH_TOTAL_SIZE    0x3000U      /* 12 KiB = 6 × 2048 */
+#define STORAGE_PROGRAM_UNIT 8U          /* doubleword = 8-byte program granularity */
 
 static uint32_t FlashAddr(uint32_t offset)
 {
@@ -21,7 +22,8 @@ const PlatformFlashInfo *Platform_FlashGetInfo(void)
         .start_address = FLASH_START_ADDR,
         .page_size     = STORAGE_PAGE_SIZE,
         .total_size    = FLASH_TOTAL_SIZE,
-        .page_count    = 6
+        .page_count    = 6,
+        .program_unit  = STORAGE_PROGRAM_UNIT
     };
     return &info;
 }
@@ -44,32 +46,26 @@ PlatformFlashStatus Platform_FlashWrite(uint32_t offset, const void *data, size_
     if ((data == NULL) || (size == 0)) return PLATFORM_FLASH_INVALID_ARG;
     if (offset > FLASH_TOTAL_SIZE) return PLATFORM_FLASH_INVALID_ARG;
     if (size > FLASH_TOTAL_SIZE - offset) return PLATFORM_FLASH_INVALID_ARG;
-    if ((offset % 8U) != 0U) return PLATFORM_FLASH_INVALID_ARG;
-    if ((size % 8U) != 0U) return PLATFORM_FLASH_INVALID_ARG;
+    if ((offset % STORAGE_PROGRAM_UNIT) != 0U) return PLATFORM_FLASH_INVALID_ARG;
+    if ((size % STORAGE_PROGRAM_UNIT) != 0U) return PLATFORM_FLASH_INVALID_ARG;
 
     HAL_FLASH_Unlock();
 
     const uint8_t *src = (const uint8_t *)data;
     uint32_t addr = FlashAddr(offset);
 
-    for (size_t i = 0; i < size; i += 8U)
+    for (size_t i = 0; i < size; i += STORAGE_PROGRAM_UNIT)
     {
-        uint64_t val;
-        val  = (uint64_t)src[i];
-        val |= (uint64_t)src[i + 1] << 8U;
-        val |= (uint64_t)src[i + 2] << 16U;
-        val |= (uint64_t)src[i + 3] << 24U;
-        val |= (uint64_t)src[i + 4] << 32U;
-        val |= (uint64_t)src[i + 5] << 40U;
-        val |= (uint64_t)src[i + 6] << 48U;
-        val |= (uint64_t)src[i + 7] << 56U;
+        uint64_t val = 0;
+        for (size_t b = 0; b < STORAGE_PROGRAM_UNIT; b++)
+            val |= (uint64_t)src[i + b] << (8U * b);
 
         if (HAL_FLASH_Program(FLASH_TYPEPROGRAM_DOUBLEWORD, addr, val) != HAL_OK)
         {
             HAL_FLASH_Lock();
             return PLATFORM_FLASH_ERROR;
         }
-        addr += 8U;
+        addr += STORAGE_PROGRAM_UNIT;
     }
 
     HAL_FLASH_Lock();

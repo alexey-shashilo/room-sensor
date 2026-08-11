@@ -12,12 +12,15 @@ extern "C" {
 
 #define FAKE_FLASH_SIZE 2048U
 #define FAKE_FLASH_PAGES 6U
+#define FAKE_FLASH_PROGRAM_UNIT 8U
 
 void   FakeFlash_Init(void);
 void   FakeFlash_Corrupt(uint32_t offset, size_t size);
 void   FakeFlash_SetWriteFail(bool fail);
 void   FakeFlash_SetReadFail(bool fail, uint32_t start_offset, uint32_t end_offset);
 void  *FakeFlash_GetData(void);
+void   FakeFlash_ResetReadCount(void);
+uint32_t FakeFlash_GetReadCount(void);
 
 #ifdef __cplusplus
 }

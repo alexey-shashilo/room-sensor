@@ -18,6 +18,7 @@ typedef struct
     uint32_t page_size;
     uint32_t total_size;
     uint32_t page_count;
+    uint32_t program_unit;   /* minimum write granularity in bytes (power of two) */
 } PlatformFlashInfo;
 
 const PlatformFlashInfo *Platform_FlashGetInfo(void);

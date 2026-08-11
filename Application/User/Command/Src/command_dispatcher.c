@@ -27,6 +27,9 @@ static void HandleGetStatus(const CommandRequest *req, CommandResponse *rsp, con
     CommandResponse_AppendJson(rsp, "illuminance", svc->room->illuminance_valid ? "valid" : "invalid");
     CommandResponse_Append(rsp, "},");
     CommandResponse_AppendJsonBool(rsp, "watchdog", svc->watchdog_active);
+    CommandResponse_AppendJsonBool(rsp, "storage_ok",
+                                   (svc->self_test != NULL) &&
+                                   (svc->self_test->storage == SELF_TEST_PASS));
     CommandResponse_Finalize(rsp);
 }
 

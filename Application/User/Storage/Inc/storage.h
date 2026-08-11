@@ -18,6 +18,10 @@
 /* Minimum logical pages required: 3 record types x 2 A/B slots = 6. */
 #define STORAGE_MIN_PAGES        6U
 
+/* Maximum Flash program (write) granularity supported by the storage layer.
+   PlatformFlashInfo.program_unit must be a power of two in (0, MAX]. */
+#define STORAGE_PROGRAM_UNIT_MAX  8U
+
 typedef struct
 {
     uint32_t magic;
@@ -32,6 +36,22 @@ typedef struct
 } __attribute__((packed)) StorageRecordHeader;
 
 #define STORAGE_HEADER_SIZE  sizeof(StorageRecordHeader)
+
+/* Record on Flash = header + payload (no padding written on wire). */
+#define STORAGE_RAW_MAX  (STORAGE_HEADER_SIZE + STORAGE_PAYLOAD_MAX)
+
+/* Capacity of the program buffer. Writes are rounded up to program_unit, and
+   program_unit <= STORAGE_PROGRAM_UNIT_MAX, so the aligned length is always
+   <= this capacity. All padding bytes are initialized to erased (0xFF). */
+#define STORAGE_PROGRAM_BUFFER_MAX \
+    ((STORAGE_RAW_MAX + STORAGE_PROGRAM_UNIT_MAX - 1U) & \
+     ~((size_t)(STORAGE_PROGRAM_UNIT_MAX - 1U)))
+
+_Static_assert(STORAGE_HEADER_SIZE == 22U, "StorageRecordHeader size mismatch");
+_Static_assert(STORAGE_RAW_MAX == 278U, "STORAGE_RAW_MAX mismatch");
+_Static_assert(STORAGE_PROGRAM_BUFFER_MAX == 280U, "STORAGE_PROGRAM_BUFFER_MAX mismatch");
+_Static_assert((STORAGE_PROGRAM_UNIT_MAX & (STORAGE_PROGRAM_UNIT_MAX - 1U)) == 0U,
+               "STORAGE_PROGRAM_UNIT_MAX must be a power of two");
 
 typedef struct
 {
@@ -79,13 +99,24 @@ typedef enum
     SLOT_STATE_IO_ERROR
 } SlotState;
 
+/* A complete, single-read snapshot of one slot. Storage_Read and friends read
+   each slot exactly ONCE into a SlotSnapshot; selection uses snapshots only
+   (no re-read, no IO failure re-classification). */
+typedef struct
+{
+    SlotState           state;
+    StorageRecordHeader header;
+    StoragePayload      payload;
+} SlotSnapshot;
+
 /* Aggregate storage health of a record region. */
 typedef enum
 {
     STORAGE_HEALTH_HEALTHY = 0,
-    STORAGE_HEALTH_DEGRADED,
-    STORAGE_HEALTH_CORRUPT,
-    STORAGE_HEALTH_IO_ERROR
+    STORAGE_HEALTH_DEGRADED,      /* usable valid data but degraded mirror */
+    STORAGE_HEALTH_DEGRADED_IO,   /* usable valid data + IO_ERROR peer */
+    STORAGE_HEALTH_CORRUPT,       /* no usable valid record */
+    STORAGE_HEALTH_IO_ERROR       /* cannot determine usable state */
 } StorageHealth;
 
 const StorageRecordLayout *Storage_GetLayout(uint8_t record_type);
@@ -94,6 +125,18 @@ bool Storage_Init(void);
 StorageReadStatus Storage_Read(uint8_t record_type, StoragePayload *payload);
 bool Storage_Write(uint8_t record_type, const uint8_t *data, size_t size);
 bool Storage_Format(void);
+
+/* Explicit destructive, per-record recovery. Erases ONLY the two pages that
+   belong to `record_type`, then writes a fresh sequence-1 record. This repairs
+   CORRUPT + CORRUPT storage. It never touches other record types and never
+   falls back to a global format. Caller MUST gate on storage health (recovery
+   is only valid for readable-but-corrupt; IO_ERROR must NOT be recovered). */
+bool Storage_RecoverRecord(uint8_t record_type, const uint8_t *data, size_t size);
+
+/* Erase ONLY the two pages of `record_type` (engineering/service operation).
+   The record is left ERASED (both slots). Does not touch other records. */
+bool Storage_FormatRecord(uint8_t record_type);
+
 void Storage_GetInfo(StorageInfo *info);
 bool Storage_GetPageInfo(uint8_t record_type, StorageInfo *info);
 

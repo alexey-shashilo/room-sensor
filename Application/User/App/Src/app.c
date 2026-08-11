@@ -48,6 +48,11 @@ static bool              s_config_from_flash = false;
 static bool              s_device_id_valid = false;
 static bool              s_device_id_persisted = false;
 
+/* Persistent-storage initialization results. A failed Storage_Init keeps the
+   device sensing but disables storage-backed services and reports DEGRADED. */
+static bool              s_storage_init_ok = false;
+static bool              s_provisioning_init_ok = false;
+
 static RoomState         s_room;
 
 static void DeviceRuntime_Init(DeviceRuntime *rt, DeviceState initial)
@@ -329,10 +334,11 @@ static void App_UpdateHealth(void)
 
     bool veml_ready = (s_light_rt.state == DEVICE_STATE_READY);
     bool disp_ready = (s_disp_rt.state == DEVICE_STATE_READY);
-    bool storage_ok = (s_self_test.storage == SELF_TEST_PASS);
+    bool storage_ok = (s_self_test.storage == SELF_TEST_PASS) && s_storage_init_ok;
     bool config_ok  = (s_self_test.config == SELF_TEST_PASS);
 
-    if (veml_ready && disp_ready && storage_ok && config_ok)
+    if (veml_ready && disp_ready && storage_ok && config_ok &&
+        s_provisioning_init_ok)
         s_health = SYSTEM_HEALTH_OK;
     else
         s_health = SYSTEM_HEALTH_DEGRADED;
@@ -352,8 +358,8 @@ RoomSensor_Status App_Init(void)
 
     RoomState_Init(&s_room);
     SelfTest_Init(&s_self_test);
-    Storage_Init();
-    Provisioning_Init();
+    s_storage_init_ok = Storage_Init();
+    s_provisioning_init_ok = Provisioning_Init();
 
     DeviceLifecycle_Init(LIFECYCLE_BOOT);
 
@@ -563,5 +569,7 @@ void App_GetStatus(AppStatus *status)
     status->reset_cause = s_reset_cause;
     status->watchdog_active = s_watchdog_active;
     status->self_test = s_self_test;
+    status->storage_initialized = s_storage_init_ok;
+    status->provisioning_initialized = s_provisioning_init_ok;
     status->uptime_ms = Platform_GetTickMs() - s_start_ms;
 }
