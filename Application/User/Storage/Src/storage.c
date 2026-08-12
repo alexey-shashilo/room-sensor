@@ -489,7 +489,7 @@ StorageRepairStatus Storage_EnsureRedundancy(uint8_t record_type)
     uint32_t peer_offset = (peer_slot == 0) ? layout->slot_a_offset : layout->slot_b_offset;
 
     uint32_t payload_size = valid_src->header.payload_size;
-    if (payload_size == 0 || payload_size > STORAGE_PAYLOAD_MAX)
+    if (payload_size > STORAGE_PAYLOAD_MAX)
         return STORAGE_REPAIR_REFUSED;
 
     uint32_t next_seq = valid_src->header.sequence + 1;

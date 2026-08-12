@@ -59,11 +59,15 @@ jobs:
           sudo apt-get install -y cmake gcc-arm-none-eabi binutils-arm-none-eabi
 
       - name: Configure firmware
+        # Warning policy (-Wall -Wextra -Wpedantic -Werror) is enforced ONLY via
+        # target_compile_options on the project-owned `room_sensor` target in
+        # CMakeLists.txt. No global C-flags Werror is passed here, so vendor STM32
+        # HAL/CMSIS/CubeMX code (separate stm32cubemx/STM32_Drivers targets) is
+        # never promoted by project warning policy.
         run: >
           cmake -S . -B build-fw
           -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }}
           -DCMAKE_TOOLCHAIN_FILE=cmake/gcc-arm-none-eabi.cmake
-          -DCMAKE_C_FLAGS=-Werror
 
       - name: Build firmware
         run: cmake --build build-fw --target room_sensor --parallel $(nproc) 2>&1
@@ -110,11 +114,12 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y cmake gcc
 
       - name: Build portable core (no ARM toolchain)
+        # Warning policy enforced via target_compile_options in
+        # cmake/room_sensor_core.cmake (core_add_library). No global -Werror.
         run: >
           cmake -S . -B build-core
           -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }}
           -DBUILD_HOST_PLATFORM=ON
-          -DCMAKE_C_FLAGS=-Werror
           && cmake --build build-core --parallel $(nproc) 2>&1
 
   host-integration-tests:
@@ -126,8 +131,9 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y cmake gcc libc6-dev
 
       - name: Build host tests
+        # Warning policy enforced via add_compile_options in test/CMakeLists.txt
+        # (project-owned tests). No global -Werror.
         run: cmake -S . -B build-host -DBUILD_HOST_TESTS=ON -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }}
-          -DCMAKE_C_FLAGS=-Werror
           && cmake --build build-host --parallel $(nproc)
 
       - name: Run host tests
@@ -142,11 +148,15 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y cmake gcc libc6-dev
 
       - name: Build host tests with ASan + UBSan
+        # Sanitizer flags must be global (applied at both compile and link).
+        # Werror is NOT set here: the project-owned test targets enforce it via
+        # add_compile_options in test/CMakeLists.txt, so vendor/system headers
+        # compiled into the sanitizer build are never promoted by Werror.
         run: >
           cmake -S . -B build-san
           -DBUILD_HOST_TESTS=ON
           -DCMAKE_BUILD_TYPE=Debug
-          -DCMAKE_C_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer -Werror"
+          -DCMAKE_C_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer"
           -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
           && cmake --build build-san --parallel $(nproc)
 
@@ -232,3 +242,23 @@ jobs:
             exit 1
           fi
           echo "PASS: Telemetry has no App dependency"
+
+      # Warning-policy scoping guard: -Werror must be enforced ONLY via
+      # target_compile_options / add_compile_options on project-owned targets,
+      # NEVER via the global CMAKE_C_FLAGS (which would promote vendor
+      # STM32 HAL/CMSIS/CubeMX warnings into project policy failures).
+      # Anchored to real `cmake -S` invocations so prose comments never match.
+      - name: Assert -Werror is target-scoped, not a global C flag
+        run: |
+          if grep -rnE 'cmake[[:space:]].*-DCMAKE_C_FLAGS=[^ ]*Werror' .github/ CMakeLists.txt cmake/ test/ --include='*.yml' --include='*.yaml' --include='*.txt' --include='*.cmake' 2>/dev/null; then
+            echo "ERROR: Werror passed via global CMAKE_C_FLAGS (vendor HAL/CMSIS promoted). Move to target_compile_options."
+            exit 1
+          fi
+          # Required: every project-owned target applies the warning policy.
+          for pat in 'target_compile_options(${CMAKE_PROJECT_NAME} PRIVATE -Wall -Wextra -Wpedantic -Werror' 'target_compile_options(${TARGET} PRIVATE -Wall -Wextra -Wpedantic -Werror)' 'add_compile_options(-Wall -Wextra -Wpedantic -Werror)'; do
+            if ! grep -rqF "$pat" CMakeLists.txt cmake/ test/ ; then
+              echo "ERROR: missing project-owned warning policy: $pat"
+              exit 1
+            fi
+          done
+          echo "PASS: -Werror enforced via target_compile_options on project-owned targets only"

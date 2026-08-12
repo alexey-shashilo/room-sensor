@@ -59,6 +59,11 @@ if(BUILD_HOST_PLATFORM)
 
     add_executable(room_sensor_host)
     set_target_properties(room_sensor_host PROPERTIES WIN32_EXECUTABLE FALSE)
+    # Host-side project production sources (host_main + platform_host_*) are
+    # project-owned: apply the same warning-as-error policy. room_sensor_core
+    # already enforces it via core_add_library (PUBLIC propagate not needed for
+    # options; this target's own sources are compiled here).
+    target_compile_options(room_sensor_host PRIVATE -Wall -Wextra -Wpedantic -Werror)
 
     target_sources(room_sensor_host PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/Platform/Host/Src/host_main.c

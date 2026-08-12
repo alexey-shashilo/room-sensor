@@ -794,6 +794,29 @@ static void TestEnsureRedundancy(void)
         T("  valid source still readable",
           Storage_Read(RECORD_TYPE_CONFIG, &p) == STORAGE_READ_OK && memcmp(p.data, a, sizeof(a)) == 0);
     }
+
+    /* Zero-length record: consistent contract. A valid zero-size record must
+       be readable, degraded single-copy, mirrorable (DONE), and after mirror
+       establishment both slots hold a still-readable size-0 record. This cements
+       that Storage_EnsureRedundancy and Storage_WriteEx/Read share the same
+       zero-length semantics (no mixed contract). */
+    FakeFlash_Init(); Storage_Init();
+    {
+        T("zero-size write -> OK",
+          Storage_WriteEx(RECORD_TYPE_CONFIG, NULL, 0) == STORAGE_WRITE_OK);
+        StoragePayload p;
+        T("zero-size read -> OK (size 0)",
+          Storage_Read(RECORD_TYPE_CONFIG, &p) == STORAGE_READ_OK && p.size == 0);
+        T("zero-size single copy -> health DEGRADED",
+          Storage_GetHealth(RECORD_TYPE_CONFIG) == STORAGE_HEALTH_DEGRADED);
+        T("zero-size EnsureRedundancy -> DONE",
+          Storage_EnsureRedundancy(RECORD_TYPE_CONFIG) == STORAGE_REPAIR_DONE);
+        T("zero-size health -> HEALTHY",
+          Storage_GetHealth(RECORD_TYPE_CONFIG) == STORAGE_HEALTH_HEALTHY);
+        StoragePayload p2;
+        T("zero-size still readable after mirror (size 0)",
+          Storage_Read(RECORD_TYPE_CONFIG, &p2) == STORAGE_READ_OK && p2.size == 0);
+    }
 }
 
 int main(void)
