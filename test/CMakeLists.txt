@@ -4,6 +4,11 @@ project(room_sensor_host_tests C)
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 
+# Project-owned sources compiled with warnings-as-errors. Only the hand-written
+# Application/ test sources are in this directory; any third-party/system
+# headers are still -I's, not compiled here, so -Werror never sees vendor code.
+add_compile_options(-Wall -Wextra -Wpedantic -Werror)
+
 add_definitions(-DVEML7700_UNIT_TEST)
 
 add_executable(test_veml7700
@@ -112,6 +117,77 @@ target_include_directories(test_boot_persistence PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Storage/Inc
 )
 add_test(NAME test_boot_persistence COMMAND test_boot_persistence)
+
+add_executable(test_config_redundancy
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_config_redundancy.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/App/Src/config.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/App/Src/device_identity.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Storage/Src/storage.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/fakes/fake_platform_time.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/fakes/fake_flash.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/fakes/fake_unique_id.c
+)
+target_include_directories(test_config_redundancy PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/fakes
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/App/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Platform/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Common/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Storage/Inc
+)
+add_test(NAME test_config_redundancy COMMAND test_config_redundancy)
+
+# App-level first-boot boot-orchestration regression. Links app.c (the real
+# boot policy) plus the modules and host platform bindings it needs.
+add_executable(test_boot_health
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_boot_health.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/App/Src/app.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/App/Src/config.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/App/Src/device_identity.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/App/Src/room_state.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/App/Src/self_test.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/veml7700/Src/veml7700.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/display/Src/display.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Storage/Src/storage.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Provisioning/Src/provisioning.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Device/Src/device_lifecycle.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Device/Src/boot_session.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Device/Src/device_manifest.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Device/Src/device_capabilities.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Device/Src/firmware_metadata.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Device/Src/device_manifest_serializer.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Communication/Src/communication.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Communication/Src/communication_debug.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Telemetry/Src/telemetry.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Telemetry/Src/telemetry_serializer.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Command/Src/command.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Command/Src/command_dispatcher.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Command/Src/command_parser.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Command/Src/command_response.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Platform/Host/Src/platform_host_reset.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Platform/Host/Src/platform_host_watchdog.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Platform/Host/Src/platform_host_hardware.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/fakes/fake_platform_time.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/fakes/fake_flash.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/fakes/fake_i2c_bus.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/fakes/fake_unique_id.c
+)
+target_include_directories(test_boot_health PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/fakes
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/App/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Platform/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Common/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Storage/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Device/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Command/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Communication/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Telemetry/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Provisioning/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/veml7700/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/display/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Platform/Host/Inc
+)
+target_link_libraries(test_boot_health m)
+add_test(NAME test_boot_health COMMAND test_boot_health)
 
 add_executable(test_self_test
     ${CMAKE_CURRENT_SOURCE_DIR}/test_self_test.c

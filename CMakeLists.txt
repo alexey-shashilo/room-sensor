@@ -95,7 +95,13 @@ else()
     )
 
     target_include_directories(${CMAKE_PROJECT_NAME} PUBLIC ${CORE_INC})
-    target_compile_options(${CMAKE_PROJECT_NAME} PRIVATE -Wall -Wextra -Wpedantic)
+    # -Werror is enforced on the PROJECT-OWNED firmware target only (CORE_SRC +
+    # Application/User/Platform STM32 sources). The STM32CubeMX/HAL driver code
+    # is built as the separate `stm32cubemx`/`STM32_Drivers` targets, WITHOUT
+    # -Werror, so vendor warnings never fail CI. `main.c` and the other
+    # CubeMX-generated Core/Src files are folded into this target and must also
+    # stay warning-free; they do.
+    target_compile_options(${CMAKE_PROJECT_NAME} PRIVATE -Wall -Wextra -Wpedantic -Werror)
 
     target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
         ROOM_SENSOR_GIT_SHA="${GIT_SHA}"

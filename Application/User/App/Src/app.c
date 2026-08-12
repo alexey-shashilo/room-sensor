@@ -45,16 +45,16 @@ static SelfTestReport    s_self_test;
 static DeviceIdentity    s_device_id;
 static uint64_t          s_boot_id = 0;
 static bool              s_device_id_valid = false;
-static bool              s_device_id_persisted = false;
 
-/* Boot persistence status for config/identity. NOT_FOUND = first boot
-   (defaults/derived used), CORRUPT/IO_ERROR = runtime values used but the
-   persistent record is preserved untouched (degraded). These boot-level
-   snapshots drive the boot persistence policy; the CURRENT runtime
-   persistence state is queried live from each module at status-report time
-   (App_GetStatus) so it is never stale. */
-static StorageReadStatus s_config_storage_status = STORAGE_READ_NOT_FOUND;
-static StorageReadStatus s_identity_storage_status = STORAGE_READ_NOT_FOUND;
+/* Boot-LOAD snapshot for config/identity. NOT_FOUND = first boot (defaults or
+   derived identity used and persisted once); CORRUPT/IO_ERROR = runtime values
+   used but the persistent record is preserved untouched (degraded). These are
+   HISTORICAL boot-load snapshots that drive the first-boot persistence policy
+   only. The CURRENT runtime persistence state is always queried live from each
+   module (Config_GetStorageStatus / DeviceIdentity_GetPersistenceStatus) at
+   status-report time and for runtime diagnostics, so it is never stale. */
+static StorageReadStatus s_config_boot_load_status = STORAGE_READ_NOT_FOUND;
+static StorageReadStatus s_identity_boot_load_status = STORAGE_READ_NOT_FOUND;
 
 /* Boot-level Storage geometry health. A failed Storage_Init keeps the device
    sensing but disables storage-backed services. This is treated as a static
@@ -312,6 +312,32 @@ static const char *SelfTestResultStr(SelfTestResult r)
     }
 }
 
+static const char *StorageReadStatus_Str(StorageReadStatus s)
+{
+    switch (s)
+    {
+        case STORAGE_READ_OK:               return "OK";
+        case STORAGE_READ_NOT_FOUND:        return "NOT_FOUND";
+        case STORAGE_READ_CORRUPT:          return "CORRUPT";
+        case STORAGE_READ_IO_ERROR:         return "IO_ERROR";
+        case STORAGE_READ_INVALID_ARGUMENT: return "INVALID_ARGUMENT";
+        default:                            return "UNKNOWN";
+    }
+}
+
+static const char *StorageHealth_Str(StorageHealth h)
+{
+    switch (h)
+    {
+        case STORAGE_HEALTH_HEALTHY:     return "HEALTHY";
+        case STORAGE_HEALTH_DEGRADED:    return "DEGRADED";
+        case STORAGE_HEALTH_DEGRADED_IO: return "DEGRADED_IO";
+        case STORAGE_HEALTH_CORRUPT:     return "CORRUPT";
+        case STORAGE_HEALTH_IO_ERROR:    return "IO_ERROR";
+        default:                         return "UNKNOWN";
+    }
+}
+
 static void App_PrintBootDiag(void)
 {
     char short_id[16];
@@ -328,14 +354,19 @@ static void App_PrintBootDiag(void)
            SelfTestResultStr(s_self_test.light_sensor),
            SelfTestResultStr(s_self_test.display));
 
-    printf("CONFIG %s seq=%u calib=%.3f ID=%s\r\n",
-           (s_config_storage_status == STORAGE_READ_OK) ? "persisted" : "defaults",
+    printf("CONFIG boot_source=%s cur=read=%s health=%s seq=%u calib=%.3f ID=%s\r\n",
+           (s_config_boot_load_status == STORAGE_READ_OK) ? "persisted" : "defaults",
+           StorageReadStatus_Str(Config_GetStorageStatus()),
+           StorageHealth_Str(Config_GetStorageHealth()),
            (unsigned)Config_Get()->storage.version,
            (double)Config_Get()->runtime.light_calibration_factor,
            short_id);
 
-    printf("ID valid=%d persisted=%d\r\n",
-           (int)s_device_id_valid, (int)s_device_id_persisted);
+    printf("IDENTITY valid=%d boot_source=%s cur=read=%s health=%s\r\n",
+           (int)s_device_id_valid,
+           (s_identity_boot_load_status == STORAGE_READ_OK) ? "persisted" : "derived",
+           StorageReadStatus_Str(DeviceIdentity_GetPersistenceStatus()),
+           StorageHealth_Str(DeviceIdentity_GetStorageHealth()));
 
     printf("TELEMETRY schema=%u period=%lu\r\n",
            (unsigned)TELEMETRY_SCHEMA_VERSION,
@@ -347,19 +378,19 @@ static void App_PrintBootDiag(void)
 
 /* Boot maintenance: establish A/B redundancy for each known-valid persistent
    record so a normal first boot (or a power loss during a prior mirror write)
-   reaches HEALTHY rather than remaining single-copy forever. Safe mirror repair
+   reaches HEALTHY rather than remaining single-copy forever. App delegates to
+   the Config and DeviceIdentity OWNER modules (Config_EnsureRedundancy /
+   DeviceIdentity_EnsureRedundancy) — App never manipulates CONFIG/IDENTITY
+   persistent records directly, so the owner caches of read-status and mirror
+   health are refreshed by the owner and can never go stale. Safe mirror repair
    never erases the valid source and refuses IO uncertainty. A BLANK/absent
    provisioning record is deliberately left untouched (factory-new DISCOVERABLE
    state is healthy); registration mirrors form only from a real persisted
-   record. This is non-destructive by construction. */
+   record. Non-destructive by construction. */
 static void App_BootEnsureRedundancy(void)
 {
-    /* Config and Identity are the two boot-critical persistent records.
-       Storage_EnsureRedundancy returns NOT_FOUND (both erased), NOT_NEEDED
-       (already redundant), DONE (mirror established), or REFUSED (IO error /
-       no valid source: no mutation, preserved for explicit recovery). */
-    Storage_EnsureRedundancy(RECORD_TYPE_CONFIG);
-    Storage_EnsureRedundancy(RECORD_TYPE_IDENTITY);
+    Config_EnsureRedundancy();
+    DeviceIdentity_EnsureRedundancy();
 }
 
 static void App_UpdateHealth(void)
@@ -471,7 +502,7 @@ void App_Run(void)
             case LIFECYCLE_LOAD_CONFIGURATION:
                 if (!Config_Load())
                     Config_LoadDefaults();
-                s_config_storage_status = Config_GetStorageStatus();
+                s_config_boot_load_status = Config_GetStorageStatus();
                 DeviceLifecycle_TransitionTo(LIFECYCLE_LOAD_IDENTITY);
                 break;
 
@@ -480,7 +511,6 @@ void App_Run(void)
                 if (DeviceIdentity_Load(&s_device_id))
                 {
                     s_device_id_valid = true;
-                    s_device_id_persisted = true;
                 }
                 else
                 {
@@ -493,12 +523,11 @@ void App_Run(void)
                            boot (NOT_FOUND). A CORRUPT or IO_ERROR persistent
                            record is preserved untouched for diagnostics/
                            recovery — but the runtime identity stays usable. */
-                        if (DeviceIdentity_GetLoadStatus() == STORAGE_READ_NOT_FOUND &&
-                            DeviceIdentity_Save(&derived))
-                            s_device_id_persisted = true;
+                        if (DeviceIdentity_GetLoadStatus() == STORAGE_READ_NOT_FOUND)
+                            DeviceIdentity_Save(&derived);
                     }
                 }
-                s_identity_storage_status = DeviceIdentity_GetLoadStatus();
+                s_identity_boot_load_status = DeviceIdentity_GetLoadStatus();
                 DeviceLifecycle_TransitionTo(LIFECYCLE_CREATE_BOOT_SESSION);
                 break;
             }
@@ -511,7 +540,7 @@ void App_Run(void)
                 /* Persist config defaults ONLY for a genuine first boot
                    (NOT_FOUND). CORRUPT / IO_ERROR config is preserved untouched
                    (evidence kept for diagnostics/recovery). */
-                if (s_config_storage_status == STORAGE_READ_NOT_FOUND)
+                if (s_config_boot_load_status == STORAGE_READ_NOT_FOUND)
                     Config_Save();
                 /* Establish redundancy so first-boot / power-loss-heal devices
                    reach HEALTHY mirrors (Config + Identity). */
@@ -591,7 +620,8 @@ void App_Run(void)
         printf("APP uptime=%lu\r\n"
                "LIGHT state=%d room_lux=%.0f ops=%lu err=%lu consec=%lu rec=%lu\r\n"
                "DISPLAY state=%d ops=%lu err=%lu consec=%lu rec=%lu\r\n"
-               "HEALTH=%d WDG=%d CFG=%s COMM=%d sent=%lu failed=%lu\r\n",
+               "HEALTH=%d WDG=%d CFG read=%s health=%s "
+               "IDENT read=%s health=%s COMM=%d sent=%lu failed=%lu\r\n",
                (unsigned long)(now - s_start_ms),
                (int)s_light_rt.state,
                (double)s_room.illuminance_lux,
@@ -605,7 +635,10 @@ void App_Run(void)
                (unsigned long)s_disp_rt.consecutive_errors,
                (unsigned long)s_disp_rt.recovery_count,
                (int)s_health, (int)s_watchdog_active,
-               (s_config_storage_status == STORAGE_READ_OK) ? "persisted" : "defaults",
+               StorageReadStatus_Str(Config_GetStorageStatus()),
+               StorageHealth_Str(Config_GetStorageHealth()),
+               StorageReadStatus_Str(DeviceIdentity_GetPersistenceStatus()),
+               StorageHealth_Str(DeviceIdentity_GetStorageHealth()),
                (int)cr.state,
                (unsigned long)cr.send_successes,
                (unsigned long)cr.send_failures);

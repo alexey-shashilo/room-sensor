@@ -75,4 +75,16 @@ StorageWriteStatus Config_GetLastWriteStatus(void);
    CORRUPT = corrupt record, IO_ERROR = Flash failure. */
 StorageReadStatus Config_SelfCheck(void);
 
+/* Config-owned mirror establishment. This is the ONLY way App/boot may repair
+   the config record's A/B mirrors: it calls Storage_EnsureRedundancy internally
+   and then non-destructively refreshes BOTH the current readable status
+   (Config_GetStorageStatus) and the redundancy health (Config_GetStorageHealth)
+   from actual Flash, so the module's cached state can never disagree with the
+   physical mirror after a repair. It mutates the persisted mirror if and only
+   if there is a valid source and a degraded peer (never erases a valid source,
+   never persists the runtime value). Returns the Storage repair classification
+   (DONE / NOT_NEEDED / NOT_FOUND / REFUSED); health reflects the outcome in
+   every case. */
+StorageRepairStatus Config_EnsureRedundancy(void);
+
 #endif

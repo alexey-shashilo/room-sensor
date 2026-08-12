@@ -43,7 +43,8 @@ set(CORE_INC
 function(core_add_library TARGET)
     add_library(${TARGET} STATIC ${CORE_SRC})
     target_include_directories(${TARGET} PUBLIC ${CORE_INC})
-    target_compile_options(${TARGET} PRIVATE -Wall -Wextra -Wpedantic)
+    # Project-owned portable core compiled with warnings as errors.
+    target_compile_options(${TARGET} PRIVATE -Wall -Wextra -Wpedantic -Werror)
     target_compile_definitions(${TARGET} PUBLIC
         ROOM_SENSOR_VERSION="0.2.0-dev"
         ROOM_SENSOR_BUILD_TYPE="${CMAKE_BUILD_TYPE}"

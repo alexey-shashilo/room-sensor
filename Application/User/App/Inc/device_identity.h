@@ -56,4 +56,16 @@ StorageWriteStatus DeviceIdentity_GetLastWriteStatus(void);
    IO_ERROR = Flash failure. */
 StorageReadStatus DeviceIdentity_SelfCheck(void);
 
+/* Identity-owned mirror establishment. This is the ONLY way App/boot may repair
+   the identity record's A/B mirrors: it calls Storage_EnsureRedundancy
+   internally, then non-destructively refreshes BOTH the current persistence
+   status (DeviceIdentity_GetPersistenceStatus) and the redundancy health
+   (DeviceIdentity_GetStorageHealth) from actual Flash, so the module's cached
+   state can never disagree with the physical mirror after a repair. It mutates
+   the persisted mirror if and only if there is a valid source and a degraded
+   peer; it never regenerates the runtime identity and never rewrites the valid
+   source. Returns the Storage repair classification (DONE / NOT_NEEDED /
+   NOT_FOUND / REFUSED); health reflects the outcome in every case. */
+StorageRepairStatus DeviceIdentity_EnsureRedundancy(void);
+
 #endif

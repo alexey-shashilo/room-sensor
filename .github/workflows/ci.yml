@@ -63,6 +63,7 @@ jobs:
           cmake -S . -B build-fw
           -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }}
           -DCMAKE_TOOLCHAIN_FILE=cmake/gcc-arm-none-eabi.cmake
+          -DCMAKE_C_FLAGS=-Werror
 
       - name: Build firmware
         run: cmake --build build-fw --target room_sensor --parallel $(nproc) 2>&1
@@ -113,6 +114,7 @@ jobs:
           cmake -S . -B build-core
           -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }}
           -DBUILD_HOST_PLATFORM=ON
+          -DCMAKE_C_FLAGS=-Werror
           && cmake --build build-core --parallel $(nproc) 2>&1
 
   host-integration-tests:
@@ -125,6 +127,7 @@ jobs:
 
       - name: Build host tests
         run: cmake -S . -B build-host -DBUILD_HOST_TESTS=ON -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }}
+          -DCMAKE_C_FLAGS=-Werror
           && cmake --build build-host --parallel $(nproc)
 
       - name: Run host tests
@@ -143,7 +146,7 @@ jobs:
           cmake -S . -B build-san
           -DBUILD_HOST_TESTS=ON
           -DCMAKE_BUILD_TYPE=Debug
-          -DCMAKE_C_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer"
+          -DCMAKE_C_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer -Werror"
           -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
           && cmake --build build-san --parallel $(nproc)
 

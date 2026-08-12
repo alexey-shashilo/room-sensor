@@ -185,6 +185,27 @@ StorageWriteStatus DeviceIdentity_GetLastWriteStatus(void)
     return s_last_write_status;
 }
 
+StorageRepairStatus DeviceIdentity_EnsureRedundancy(void)
+{
+    if (!Storage_IsInitialized())
+    {
+        s_persistence_status = STORAGE_READ_IO_ERROR;
+        s_storage_health = STORAGE_HEALTH_IO_ERROR;
+        return STORAGE_REPAIR_REFUSED;
+    }
+
+    StorageRepairStatus repair = Storage_EnsureRedundancy(RECORD_TYPE_IDENTITY);
+
+    /* Non-destructively re-derive the CURRENT readable persistence state and
+       mirror health from actual Flash, so the module's cached state reflects
+       the repair outcome in every case (DONE, NOT_NEEDED, NOT_FOUND, REFUSED).
+       This keeps DeviceIdentity_GetPersistenceStatus() /
+       DeviceIdentity_GetStorageHealth() in step with the physical mirrors after
+       a direct Storage repair. */
+    DeviceIdentity_RefreshReadState();
+    return repair;
+}
+
 StorageReadStatus DeviceIdentity_SelfCheck(void)
 {
     if (!Storage_IsInitialized())
