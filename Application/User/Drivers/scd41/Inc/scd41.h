@@ -49,12 +49,13 @@
      get_data_ready_status      : reference driver waits 1 ms before reading.
      read_measurement           : reference driver waits 1 ms before reading.
    The runtime keeps these non-blocking: it does NOT inject a blocking
-   HAL_Delay() into this portable driver (see task timing audit §9/§10/§17). The
-   App scheduler's poll cadence (SCD41_RUNTIME_POLL_INTERVAL_MS) spaced far
-   above 1 ms covers the 1 ms command-to-read window; stop_periodic is not in
-   the periodic data path. No calibration/factory-reset/FRC/ASC/altitude or
-   pressure commands are issued here, and SelfTest only performs an ACK probe —
-   none disturb an active periodic measurement. */
+   platform delay() into this portable driver (see task timing audit
+   §9/§10/§17). The App scheduler's poll cadence
+   (SCD41_RUNTIME_POLL_INTERVAL_MS) spaced far above 1 ms covers the 1 ms
+   command-to-read window; stop_periodic is not in the periodic data path.
+   No calibration/factory-reset/FRC/ASC/altitude or pressure commands are
+   issued here, and SelfTest only performs an ACK probe — none disturb an
+   active periodic measurement. */
 
 typedef struct
 {
