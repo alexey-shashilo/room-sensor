@@ -73,6 +73,20 @@ void FakeI2cBus_SetAlsRead(FakeI2cBus *fake, uint16_t raw);
    scripted data-ready word so not-ready reads return a zero word. */
 void FakeI2cBus_SetScd41DataReady(FakeI2cBus *fake, bool ready);
 
+/* Inject a raw SCD41 data-ready response as explicit wire bytes (MSB-first
+   word + CRC). Used by independent fixed-vector tests; the caller supplies the
+   exact bytes, so it does not rely on any encode helper. */
+void FakeI2cBus_SetScd41RawDataReady(FakeI2cBus *fake, uint8_t msb, uint8_t lsb);
+
+/* Inject a raw SCD41 measurement response (9 bytes exactly) verbatim. The
+   caller supplies the full MSB-first word+CRC triplets, so fixed wire vectors
+   can be tested independently of any word encode helper. */
+void FakeI2cBus_SetScd41RawRead(FakeI2cBus *fake, const uint8_t raw9[9]);
+
+/* Inject a raw 3-byte single-word command response verbatim (word + CRC),
+   used by fixed-vector tests that do not rely on an encode helper. */
+void FakeI2cBus_SetRawRead(FakeI2cBus *fake, const uint8_t *data, size_t size);
+
 /* Schedule a 9-byte SCD41 measurement response from raw 16-bit words. Each
    word is followed by its CRC-8. `corrupt_co2/temp/rh` optionally corrupt the
    corresponding CRC byte so a specific word fails validation. */

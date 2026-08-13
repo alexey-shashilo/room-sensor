@@ -55,11 +55,12 @@ static DriverStatus fake_read(void *ctx, uint16_t addr, uint8_t *data, size_t si
     f->read_call_count++;
 
     /* After GET_DATA_READY (0xE4B8), a 3-byte read returns the data-ready word
-       followed by its CRC. */
+       followed by its CRC. The 16-bit word is transmitted MSB-first (the
+       official SCD4x wire order). */
     if (f->last_scd41_cmd == SCD41_FAKE_CMD_GET_DATA_READY && size == 3U)
     {
-        data[0] = (uint8_t)(f->data_ready_word & 0xFFU);
-        data[1] = (uint8_t)(f->data_ready_word >> 8U);
+        data[0] = (uint8_t)(f->data_ready_word >> 8U);   /* MSB */
+        data[1] = (uint8_t)(f->data_ready_word & 0xFFU); /* LSB */
         uint8_t crc_in[2] = { data[0], data[1] };
         data[2] = FakeI2cBus_Scd41Crc(crc_in, 2U);
         return f->read_result;
@@ -115,6 +116,25 @@ void FakeI2cBus_SetScd41DataReady(FakeI2cBus *fake, bool ready)
     fake->data_ready_word = ready ? 0x0400U : 0x0000U;
 }
 
+void FakeI2cBus_SetScd41RawDataReady(FakeI2cBus *fake, uint8_t msb, uint8_t lsb)
+{
+    fake->data_ready_word = (uint16_t)(((uint16_t)msb << 8U) | (uint16_t)lsb);
+}
+
+void FakeI2cBus_SetScd41RawRead(FakeI2cBus *fake, const uint8_t raw9[9])
+{
+    memcpy(fake->read_response, raw9, 9);
+    fake->read_response_size = 9U;
+}
+
+void FakeI2cBus_SetRawRead(FakeI2cBus *fake, const uint8_t *data, size_t size)
+{
+    if (size > sizeof(fake->read_response))
+        size = sizeof(fake->read_response);
+    memcpy(fake->read_response, data, size);
+    fake->read_response_size = size;
+}
+
 void FakeI2cBus_SetScd41Measurement(FakeI2cBus *fake,
                                     uint16_t co2,
                                     uint16_t temp_raw,
@@ -124,14 +144,15 @@ void FakeI2cBus_SetScd41Measurement(FakeI2cBus *fake,
                                     bool corrupt_rh)
 {
     uint8_t *buf = fake->read_response;
-    buf[0] = (uint8_t)(co2 & 0xFFU);
-    buf[1] = (uint8_t)(co2 >> 8U);
+    /* Each SCD4x 16-bit word is transmitted MSB-first, followed by its CRC. */
+    buf[0] = (uint8_t)(co2 >> 8U);           /* CO2 MSB */
+    buf[1] = (uint8_t)(co2 & 0xFFU);         /* CO2 LSB */
     buf[2] = FakeI2cBus_Scd41Crc(&buf[0], 2U);
-    buf[3] = (uint8_t)(temp_raw & 0xFFU);
-    buf[4] = (uint8_t)(temp_raw >> 8U);
+    buf[3] = (uint8_t)(temp_raw >> 8U);      /* T MSB */
+    buf[4] = (uint8_t)(temp_raw & 0xFFU);    /* T LSB */
     buf[5] = FakeI2cBus_Scd41Crc(&buf[3], 2U);
-    buf[6] = (uint8_t)(rh_raw & 0xFFU);
-    buf[7] = (uint8_t)(rh_raw >> 8U);
+    buf[6] = (uint8_t)(rh_raw >> 8U);        /* RH MSB */
+    buf[7] = (uint8_t)(rh_raw & 0xFFU);      /* RH LSB */
     buf[8] = FakeI2cBus_Scd41Crc(&buf[6], 2U);
 
     if (corrupt_co2) buf[2] ^= 0xFFU;

@@ -27,7 +27,12 @@ uint8_t SCD41_Crc8(const uint8_t *data, size_t count)
 }
 
 /* Validate one 16-bit word (2 bytes) followed by its CRC byte. Returns the word
-   on success, or DRIVER_STATUS_CRC_ERROR via *status if the CRC mismatches. */
+   on success, or DRIVER_STATUS_CRC_ERROR via *status if the CRC mismatches.
+
+   SCD4x transmits each 16-bit word MSB-first (big-endian): p[0] is the most
+   significant byte, p[1] the least significant. A previous implementation
+   decoded word = ((uint16_t)p[1] << 8U) | p[0] i.e. treated the first received
+   byte as LSB, which is wrong for the SCD4x wire protocol. */
 static uint16_t ReadWordWithCrc(const uint8_t *p, DriverStatus *status)
 {
     uint8_t crc = SCD41_Crc8(&p[0], 2U);
@@ -37,7 +42,7 @@ static uint16_t ReadWordWithCrc(const uint8_t *p, DriverStatus *status)
         return 0U;
     }
     *status = DRIVER_STATUS_OK;
-    return (uint16_t)((uint16_t)p[0] | ((uint16_t)p[1] << 8U));
+    return (uint16_t)(((uint16_t)p[0] << 8U) | (uint16_t)p[1]);
 }
 
 DriverStatus SCD41_Init(Scd41 *dev, const I2cBus *bus)

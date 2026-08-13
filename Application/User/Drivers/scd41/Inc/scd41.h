@@ -41,6 +41,21 @@
    set (SCD4x datasheet). */
 #define SCD41_DATA_READY_MASK     0x07FFU
 
+/* Official SCD4x command finish times (Sensirion SCD4x datasheet / reference
+   driver "embedded-scd4x"):
+     start_periodic_measurement : no read-back, no mandated delay.
+     stop_periodic_measurement  : first new data ~1 s; command completes in
+                                  500 ms (reference driver sleeps 500 ms).
+     get_data_ready_status      : reference driver waits 1 ms before reading.
+     read_measurement           : reference driver waits 1 ms before reading.
+   The runtime keeps these non-blocking: it does NOT inject a blocking
+   HAL_Delay() into this portable driver (see task timing audit §9/§10/§17). The
+   App scheduler's poll cadence (SCD41_RUNTIME_POLL_INTERVAL_MS) spaced far
+   above 1 ms covers the 1 ms command-to-read window; stop_periodic is not in
+   the periodic data path. No calibration/factory-reset/FRC/ASC/altitude or
+   pressure commands are issued here, and SelfTest only performs an ACK probe —
+   none disturb an active periodic measurement. */
+
 typedef struct
 {
     uint16_t co2_ppm;

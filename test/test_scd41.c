@@ -634,6 +634,158 @@ int main(void)
               "41 GET_CAPABILITIES telemetry_schema=3");
     }
 
+    /* ============ Fixed raw wire vectors (independent of encode helpers) === */
+    printf("\n=== Fixed wire vectors: SCD4x is MSB-first big-endian ===\n");
+
+    /* 3.1 generic big-endian word: wire bytes 12 34 + CRC(0x12,0x34)=0x37 must
+       decode to 0x1234, never 0x3412. */
+    {
+        FakeI2cBus fake; I2cBus bus; Scd41 dev; Scd41Measurement m;
+        setup(&fake, &bus, &dev);
+        /* read_measurement response; place a word 0x1234 as the CO2 word. */
+        uint8_t raw[9];
+        raw[0]=0x12; raw[1]=0x34; raw[2]=0x37;               /* CO2 =0x1234 */
+        raw[3]=0x6F; raw[4]=0x61;                            /* T  raw */
+        raw[6]=0x6E; raw[7]=0x00;                            /* RH raw */
+        /* fill T/RH CRC with the correct SCD4x CRC for their bytes */
+        raw[5]=SCD41_Crc8(&raw[3],2U);
+        raw[8]=SCD41_Crc8(&raw[6],2U);
+        FakeI2cBus_SetScd41RawRead(&fake, raw);
+        check(SCD41_ReadMeasurement(&dev, &m) == DRIVER_STATUS_OK,
+              "wire 12 34 decodes as 0x1234 (MSB-first)");
+        check(m.co2_ppm == 0x1234U,
+              "CO2 word 0x1234 decoded to 0x1234");
+        check(m.co2_ppm != 0x3412U,
+              "CO2 word is NOT byte-swapped to 0x3412");
+    }
+
+    /* Independent known CRC vectors (from official Sensirion SCD4x spec). */
+    {
+        uint8_t a[2]={0x12,0x34}; check(SCD41_Crc8(a,2)==0x37U,
+              "CRC(12 34)=0x37 (official)");
+        uint8_t b[2]={0xBE,0xEF}; check(SCD41_Crc8(b,2)==0x92U,
+              "CRC(BE EF)=0x92 (official)");
+        uint8_t c[2]={0x58,0x00}; check(SCD41_Crc8(c,2)==0x51U,
+              "CRC(58 00)=0x51 (official)");
+        uint8_t d[2]={0x00,0x00}; check(SCD41_Crc8(d,2)==0x81U,
+              "CRC(00 00)=0x81 (official)");
+    }
+
+    /* Data-ready wire semantics, swap-sensitive.
+       ready word 0x0008 has bit3 set -> lower 11 bits !=0 -> ready=true.
+       byte-swapped wire 08 00 would decode as 0x0800 -> mask -> ready=false,
+       so this vector fails under the old LSB-first decoder. */
+    {
+        FakeI2cBus fake; I2cBus bus; Scd41 dev; bool ready=false;
+        setup(&fake, &bus, &dev);
+        /* not ready: wire 00 00 + CRC(00 00)=0x81. */
+        FakeI2cBus_SetScd41RawDataReady(&fake, 0x00, 0x00);
+        check(SCD41_GetDataReady(&dev, &ready) == DRIVER_STATUS_OK,
+              "data-ready query ok (not ready)");
+        check(!ready, "data-ready word 0x0000 -> ready=false");
+        /* ready: wire 00 08 + CRC(00 08)=0x38. */
+        FakeI2cBus_SetScd41RawDataReady(&fake, 0x00, 0x08);
+        ready = false;
+        check(SCD41_GetDataReady(&dev, &ready) == DRIVER_STATUS_OK,
+              "data-ready query ok (ready)");
+        check(ready, "data-ready word 0x0008 -> ready=true");
+    }
+
+    /* Realistic CO2 measurement raw vector (MSB-first), CO2=0x02E2 = 738 ppm.
+       byte-swapped 0xE202 = 57858 ppm obviously wrong. */
+    {
+        FakeI2cBus fake; I2cBus bus; Scd41 dev; Scd41Measurement m;
+        setup(&fake, &bus, &dev);
+        uint8_t raw[9];
+        /* CO2 raw word = 0x02E2 (738 ppm). T raw 0x6F61 -> ~31.14C.
+           RH raw 0x6E00 -> ~43.01%. CRCs computed with the official helper. */
+        raw[0]=0x02; raw[1]=0xE2; raw[2]=SCD41_Crc8(&raw[0],2U);
+        raw[3]=0x6F; raw[4]=0x61; raw[5]=SCD41_Crc8(&raw[3],2U);
+        raw[6]=0x6E; raw[7]=0x00; raw[8]=SCD41_Crc8(&raw[6],2U);
+        FakeI2cBus_SetScd41RawRead(&fake, raw);
+        check(SCD41_ReadMeasurement(&dev, &m) == DRIVER_STATUS_OK,
+              "realistic CO2 raw vector decodes");
+        check(m.co2_ppm == 0x02E2U, "CO2 raw 0x02E2 -> 738 ppm");
+        check(m.co2_ppm != 0xE202U, "CO2 not byte-swapped to 0xE202 (57858)");
+        check(m.valid, "realistic vector valid=true");
+        /* Temperature: raw 0x6F61 -> -45+175*0x6F61/65535 = ~31.14 C. */
+        check(fabsf(m.temperature_c - 31.14f) < 0.05f,
+              "temperature conversion raw 0x6F61 -> ~31.14 C");
+        /* RH: raw 0x6E00 -> 100*0x6E00/65535 = ~43.01%. */
+        check(fabsf(m.relative_humidity_pct - 43.01f) < 0.05f,
+              "RH conversion raw 0x6E00 -> ~43.01%");
+    }
+
+    /* Atomicity & CRC rejection on raw vectors: corrupt ANY one word CRC and
+       the whole sample is rejected with valid=false (no partial commit). */
+    {
+        /* CO2 CRC corruption. */
+        FakeI2cBus fake; I2cBus bus; Scd41 dev; Scd41Measurement m;
+        setup(&fake, &bus, &dev);
+        uint8_t raw[9] = {0x02,0xE2,0x00, 0x6F,0x61,0x00, 0x6E,0x00,0x00};
+        raw[2]=SCD41_Crc8(&raw[0],2U) ^ 0xFFU;              /* corrupt CO2 CRC */
+        raw[5]=SCD41_Crc8(&raw[3],2U);
+        raw[8]=SCD41_Crc8(&raw[6],2U);
+        FakeI2cBus_SetScd41RawRead(&fake, raw);
+        check(SCD41_ReadMeasurement(&dev, &m) == DRIVER_STATUS_CRC_ERROR,
+              "CO2 CRC corruption -> CRC_ERROR");
+        check(!m.valid, "CO2 CRC error: no partial sample (valid=false)");
+
+        /* Temperature CRC corruption. */
+        FakeI2cBus fake2; I2cBus bus2; Scd41 dev2; Scd41Measurement m2;
+        setup(&fake2, &bus2, &dev2);
+        uint8_t raw2[9] = {0x02,0xE2,0x00, 0x6F,0x61,0x00, 0x6E,0x00,0x00};
+        raw2[2]=SCD41_Crc8(&raw2[0],2U);
+        raw2[5]=SCD41_Crc8(&raw2[3],2U) ^ 0xFFU;            /* corrupt T CRC */
+        raw2[8]=SCD41_Crc8(&raw2[6],2U);
+        FakeI2cBus_SetScd41RawRead(&fake2, raw2);
+        check(SCD41_ReadMeasurement(&dev2, &m2) == DRIVER_STATUS_CRC_ERROR,
+              "temperature CRC corruption -> CRC_ERROR");
+        check(!m2.valid, "temperature CRC error: no partial sample");
+
+        /* RH CRC corruption. */
+        FakeI2cBus fake3; I2cBus bus3; Scd41 dev3; Scd41Measurement m3;
+        setup(&fake3, &bus3, &dev3);
+        uint8_t raw3[9] = {0x02,0xE2,0x00, 0x6F,0x61,0x00, 0x6E,0x00,0x00};
+        raw3[2]=SCD41_Crc8(&raw3[0],2U);
+        raw3[5]=SCD41_Crc8(&raw3[3],2U);
+        raw3[8]=SCD41_Crc8(&raw3[6],2U) ^ 0xFFU;            /* corrupt RH CRC */
+        FakeI2cBus_SetScd41RawRead(&fake3, raw3);
+        check(SCD41_ReadMeasurement(&dev3, &m3) == DRIVER_STATUS_CRC_ERROR,
+              "RH CRC corruption -> CRC_ERROR");
+        check(!m3.valid, "RH CRC error: no partial sample");
+    }
+
+    /* Command byte-order: each command byte transmitted MSB-first. */
+    {
+        FakeI2cBus fake; I2cBus bus; Scd41 dev;
+        setup(&fake, &bus, &dev);
+        SCD41_StartPeriodicMeasurement(&dev);   /* 21 B1 */
+        check(fake.last_write_data[0]==0x21U && fake.last_write_data[1]==0xB1U,
+              "start_periodic bytes = 21 B1");
+        SCD41_StopPeriodicMeasurement(&dev);    /* 3F 86 */
+        check(fake.last_write_data[0]==0x3FU && fake.last_write_data[1]==0x86U,
+              "stop_periodic bytes = 3F 86");
+        bool r; Scd41 dev2; SCD41_Init(&dev2, &bus);
+        SCD41_GetDataReady(&dev2, &r);          /* E4 B8 */
+        check(fake.last_write_data[0]==0xE4U && fake.last_write_data[1]==0xB8U,
+              "get_data_ready bytes = E4 B8");
+        SCD41_ReadMeasurement(&dev2, &(Scd41Measurement){0}); /* EC 05 */
+        check(fake.last_write_data[0]==0xECU && fake.last_write_data[1]==0x05U,
+              "read_measurement bytes = EC 05");
+    }
+
+    /* Address contract: 7-bit 0x62 -> HAL byte 0xC4; no 0x62 at HAL boundary. */
+    {
+        FakeI2cBus fake; I2cBus bus; Scd41 dev;
+        setup(&fake, &bus, &dev);
+        check(dev.address == 0xC4U, "SCD41_Init stores HAL byte address 0xC4");
+        check(dev.address != 0x62U, "SCD41 does not expose raw 7-bit 0x62 at bus boundary");
+        fake.probe_result = DRIVER_STATUS_OK;
+        SCD41_Probe(&bus);
+        check(fake.last_addr == 0xC4U, "SCD41_Probe uses HAL byte 0xC4");
+    }
+
     /* ===================== CRC cross-check ===================== */
     printf("\n=== CRC: driver vs fake agree ===\n");
     {
