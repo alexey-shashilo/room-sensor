@@ -2,7 +2,7 @@
 
 ## Schema
 
-- **Version:** 1 (`TELEMETRY_SCHEMA_VERSION`)
+- **Version:** 3 (`TELEMETRY_SCHEMA_VERSION`)
 - **Format:** JSON (UTF-8 without BOM)
 - **Maximum payload size:** 1024 bytes (`TELEMETRY_SERIALIZED_MAX_SIZE`)
 - **Transport:** independent — currently UART debug, future MQTT/Wi-Fi
@@ -25,6 +25,9 @@
 | Field | Type | Description |
 |-------|------|-------------|
 | `illuminance_lux` | `object` | Ambient light measurement |
+| `co2_ppm` | `object` | SCD41 CO2 concentration (ppm) |
+| `scd41_temperature_c` | `object` | SCD41 internal/local temperature (secondary source) |
+| `scd41_humidity_pct` | `object` | SCD41 internal/local RH (secondary source) |
 
 Each measurement object:
 
@@ -104,3 +107,13 @@ All timestamps are based on `Platform_GetTickMs()` — millisecond-resolution mo
 - Breaking semantic changes require incrementing `TELEMETRY_SCHEMA_VERSION`.
 - Servers must ignore unknown fields.
 - Fields must not be repurposed — a removed field must not be reused with different semantics.
+
+## Schema History
+
+- **v1 → v2:** storage/boot telemetry layering; no wire-visible change to the
+  room object's semantics (version bumped alongside the internal refactor).
+- **v2 → v3:** added SCD41 CO2, temperature and RH channels to the room object
+  with explicit `state: valid|invalid`. CO2 is serialized as an integer value
+  only when valid; `co2_ppm` never renders "not measured" as a numeric 0.
+  The wire payload gained fields, so the schema version was incremented and
+  `GET_CAPABILITIES` reports it automatically (`telemetry_schema`).

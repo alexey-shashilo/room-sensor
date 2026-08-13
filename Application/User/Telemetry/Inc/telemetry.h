@@ -8,7 +8,10 @@
 /* Telemetry depends only on lower-level portable types (RoomState,
    SystemHealthState from room_sensor_types.h). It MUST NOT include app.h. */
 
-#define TELEMETRY_SCHEMA_VERSION 2U
+/* Schema v3: added SCD41 CO2, temperature and RH channels (explicit validity)
+   to the room object. v2 -> v3 is a wire-format change (new fields), so the
+   version is incremented and GET_CAPABILITIES reports it automatically. */
+#define TELEMETRY_SCHEMA_VERSION 3U
 
 typedef struct
 {

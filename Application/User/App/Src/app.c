@@ -3,6 +3,8 @@
 #include "config.h"
 #include "veml7700.h"
 #include "display.h"
+#include "scd41.h"
+#include "scd41_runtime.h"
 #include "platform_time.h"
 #include "platform_watchdog.h"
 #include "storage.h"
@@ -21,11 +23,13 @@
 
 static VEML7700_HandleTypeDef s_veml;
 static Display_HandleTypeDef  s_display;
+static Scd41Runtime           s_scd41;
 
 static const I2cBus *s_i2c_bus = NULL;
 
 static DeviceRuntime s_light_rt = { .state = DEVICE_STATE_UNKNOWN };
 static DeviceRuntime s_disp_rt  = { .state = DEVICE_STATE_UNKNOWN };
+static DeviceRuntime s_co2_rt   = { .state = DEVICE_STATE_UNKNOWN };
 
 static uint8_t s_display_addr = 0U;
 static bool    s_display_addr_valid = false;
@@ -35,6 +39,7 @@ static uint32_t s_last_display_ms = 0;
 static uint32_t s_last_retry_ms = 0;
 static uint32_t s_last_diag_ms = 0;
 static uint32_t s_last_telemetry_ms = 0;
+static uint32_t s_last_scd41_ms = 0;
 static uint32_t s_start_ms = 0;
 
 static SystemHealthState s_health = SYSTEM_HEALTH_BOOTING;
@@ -154,6 +159,58 @@ static void App_DoReadLight(void)
         s_light_rt.state = DEVICE_STATE_ERROR;
 }
 
+/* Synchronize the portable SCD41 diagnostic snapshot (s_co2_rt) from the
+   SCD41 runtime so GET_STATUS / AppStatus expose live CO2 sensor state. */
+static void App_RefreshScd41Diagnostics(void)
+{
+    Scd41Runtime_GetDiagnostics(&s_scd41, &s_co2_rt);
+    /* Health semantics mirror the runtime's error/recovery flow. */
+}
+
+/* Start SCD41 periodic measurement (first boot or bounded recovery). */
+static bool App_DoStartScd41(void)
+{
+    DriverStatus s = Scd41Runtime_Start(&s_scd41);
+    if (s == DRIVER_STATUS_OK)
+        return true;
+    App_RefreshScd41Diagnostics();
+    return false;
+}
+
+/* Advance the SCD41 non-blocking state machine and reflect any accepted /
+   invalidated sample into RoomState. */
+static void App_DoPollScd41(void)
+{
+    bool had_valid = Scd41Runtime_HasValidSample(&s_scd41);
+    Scd41Runtime_Poll(&s_scd41);
+    App_RefreshScd41Diagnostics();
+
+    bool has_valid = Scd41Runtime_HasValidSample(&s_scd41);
+    if (has_valid)
+    {
+        /* Commit the fully-valid sample into RoomState. */
+        const Scd41Measurement *m = &s_scd41.last_sample;
+        RoomState_UpdateScd41(&s_room,
+                              (float)m->co2_ppm, true,
+                              m->temperature_c, true,
+                              m->relative_humidity_pct, true);
+    }
+    else if (had_valid)
+    {
+        /* A previously-valid value went stale or the sensor was lost.
+           Preserve numeric last-good values but clear validity. */
+        RoomState_InvalidateScd41(&s_room);
+    }
+
+    if (s_scd41.state == DEVICE_STATE_ERROR && had_valid)
+    {
+        /* Sensor disappeared after working: invalidate CO2 now (freshness
+           enforcement / explicit loss) — the runtime already invalidated via
+           stale, but ensure RoomState follows. */
+        RoomState_InvalidateScd41(&s_room);
+    }
+}
+
 static void App_DoProbeDisplay(void)
 {
     uint8_t addr;
@@ -201,24 +258,48 @@ static void App_DoUpdateDisplay(void)
     Display_Clear(&s_display);
     Display_DrawString(&s_display, 0, 0, "Room Sensor");
 
+    /* CO2 line. When invalid (startup / missing / stale) render "-- ppm", never
+       a numeric 0 — "not measured" must not look like 0 ppm. */
+    if (s_co2_rt.state == DEVICE_STATE_READY && room->co2_valid)
+    {
+        snprintf(buf, sizeof(buf), "CO2: %lu ppm", (unsigned long)room->co2_ppm);
+        Display_DrawString(&s_display, 0, 16, buf);
+    }
+    else
+    {
+        Display_DrawString(&s_display, 0, 16, "CO2: -- ppm");
+    }
+
+    /* SCD41 local T/RH (secondary/internal source, explicit naming). */
+    if (room->scd41_temperature_valid && room->scd41_humidity_valid)
+    {
+        snprintf(buf, sizeof(buf), "RH: %.0f%%  T: %.1f", (double)room->scd41_humidity_pct,
+                 (double)room->scd41_temperature_c);
+        Display_DrawString(&s_display, 0, 32, buf);
+    }
+    else
+    {
+        Display_DrawString(&s_display, 0, 32, "RH: --  T: --");
+    }
+
     if (s_light_rt.state == DEVICE_STATE_READY && room->illuminance_valid)
     {
         snprintf(buf, sizeof(buf), "Light: %.0f lx", (double)room->illuminance_lux);
-        Display_DrawString(&s_display, 0, 16, buf);
+        Display_DrawString(&s_display, 0, 48, buf);
     }
     else if (s_light_rt.state == DEVICE_STATE_READY)
     {
-        Display_DrawString(&s_display, 0, 16, "Light: ---");
+        Display_DrawString(&s_display, 0, 48, "Light: ---");
     }
     else if (s_light_rt.state == DEVICE_STATE_RECOVERING ||
              s_light_rt.state == DEVICE_STATE_INITIALIZING ||
              s_light_rt.state == DEVICE_STATE_PROBING)
     {
-        Display_DrawString(&s_display, 0, 16, "Light: ---");
+        Display_DrawString(&s_display, 0, 48, "Light: ---");
     }
     else
     {
-        Display_DrawString(&s_display, 0, 16, "Light: N/A");
+        Display_DrawString(&s_display, 0, 48, "Light: N/A");
     }
 
     DriverStatus status = Display_Update(&s_display);
@@ -285,6 +366,25 @@ void App_DoRetry(void)
 
     if (s_disp_rt.state == DEVICE_STATE_INITIALIZING)
         App_DoInitDisplay();
+
+    /* --- SCD41 periodic runtime (bounded recovery) --- */
+    switch (s_scd41.state)
+    {
+        case DEVICE_STATE_NOT_FOUND:
+        case DEVICE_STATE_RECOVERING:
+            /* Re-probe + restart periodic measurement. */
+            App_DoStartScd41();
+            break;
+
+        case DEVICE_STATE_ERROR:
+            Scd41Runtime_Recover(&s_scd41);
+            App_RefreshScd41Diagnostics();
+            RoomState_InvalidateScd41(&s_room);
+            break;
+
+        default:
+            break;
+    }
 }
 
 static const char *ResetCauseStr(ResetCause c)
@@ -345,14 +445,15 @@ static void App_PrintBootDiag(void)
 
     printf("BOOT Reset=%s\r\n", ResetCauseStr(s_reset_cause));
 
-    printf("SELFTEST Platform=%s I2C=%s Storage=%s Config=%s ID=%s VEML=%s Disp=%s\r\n",
+    printf("SELFTEST Platform=%s I2C=%s Storage=%s Config=%s ID=%s VEML=%s Disp=%s CO2=%s\r\n",
            SelfTestResultStr(s_self_test.platform),
            SelfTestResultStr(s_self_test.i2c),
            SelfTestResultStr(s_self_test.storage),
            SelfTestResultStr(s_self_test.config),
            SelfTestResultStr(s_self_test.identity),
            SelfTestResultStr(s_self_test.light_sensor),
-           SelfTestResultStr(s_self_test.display));
+           SelfTestResultStr(s_self_test.display),
+           SelfTestResultStr(s_self_test.co2_sensor));
 
     printf("CONFIG boot_source=%s cur=read=%s health=%s seq=%u calib=%.3f ID=%s\r\n",
            (s_config_boot_load_status == STORAGE_READ_OK) ? "persisted" : "defaults",
@@ -409,6 +510,14 @@ static void App_UpdateHealth(void)
     bool runtime_ok = veml_ready && disp_ready &&
                       s_storage_init_ok && Storage_IsInitialized();
 
+    /* SCD41 is an OPTIONAL secondary sensor. When it is merely warming up
+       (STARTING/WAITING/not-yet-ready) health stays OK — the task forbids
+       treating "no CO2 yet" as a failure. A REAL SCD41 failure (repeated I2C/
+       CRC errors -> ERROR/RECOVERING, including a sensor that disappeared after
+       previously working) degrades health WITHOUT stopping VEML/display/App. */
+    bool scd41_ok = (s_scd41.state != DEVICE_STATE_ERROR &&
+                     s_scd41.state != DEVICE_STATE_RECOVERING);
+
     /* Persistence redundancy: healthy only when every A/B mirror is HEALTHY.
        A degraded mirror degrades system health without stopping sensing. */
     bool config_healthy  = (Config_GetStorageHealth() == STORAGE_HEALTH_HEALTHY);
@@ -425,7 +534,7 @@ static void App_UpdateHealth(void)
 
     /* A non-OK/FAULT state here is DEGRADED: sensing continues (the scheduler is
        never gated on health) and only the reported health reflects the mirror. */
-    if (runtime_ok && persistence_redundant_ok)
+    if (runtime_ok && persistence_redundant_ok && scd41_ok)
         s_health = SYSTEM_HEALTH_OK;
     else
         s_health = SYSTEM_HEALTH_DEGRADED;
@@ -442,6 +551,8 @@ RoomSensor_Status App_Init(void)
 
     DeviceRuntime_Init(&s_light_rt, DEVICE_STATE_NOT_FOUND);
     DeviceRuntime_Init(&s_disp_rt, DEVICE_STATE_NOT_FOUND);
+    Scd41Runtime_Init(&s_scd41, s_i2c_bus);
+    App_RefreshScd41Diagnostics();   /* s_co2_rt mirrors runtime initial state */
 
     RoomState_Init(&s_room);
     SelfTest_Init(&s_self_test);
@@ -485,7 +596,7 @@ void App_Run(void)
 {
     uint32_t now = Platform_GetTickMs();
 
-    Command_UpdateRuntime(now - s_start_ms, s_watchdog_active, &s_light_rt, &s_disp_rt, s_reset_cause);
+    Command_UpdateRuntime(now - s_start_ms, s_watchdog_active, &s_light_rt, &s_disp_rt, &s_co2_rt, s_reset_cause);
 
     /* ================================================================
        Device Lifecycle State Machine
@@ -602,6 +713,20 @@ void App_Run(void)
             App_DoReadLight();
     }
 
+    /* SCD41 periodic runtime: advance the non-blocking state machine at its
+       poll interval whenever it is measuring (STARTING/WAITING/READY). Never
+       blocks; data-ready=false is simply a no-op poll. */
+    if ((now - s_last_scd41_ms) >= SCD41_RUNTIME_POLL_INTERVAL_MS)
+    {
+        s_last_scd41_ms = now;
+        if (s_scd41.state == DEVICE_STATE_STARTING ||
+            s_scd41.state == DEVICE_STATE_WAITING ||
+            s_scd41.state == DEVICE_STATE_READY)
+        {
+            App_DoPollScd41();
+        }
+    }
+
     if ((now - s_last_display_ms) >= cfg->storage.display_period_ms)
     {
         s_last_display_ms = now;
@@ -620,6 +745,7 @@ void App_Run(void)
         printf("APP uptime=%lu\r\n"
                "LIGHT state=%d room_lux=%.0f ops=%lu err=%lu consec=%lu rec=%lu\r\n"
                "DISPLAY state=%d ops=%lu err=%lu consec=%lu rec=%lu\r\n"
+               "CO2 state=%d ppm=%.0f valid=%d T=%.1f RH=%.1f ops=%lu err=%lu consec=%lu rec=%lu\r\n"
                "HEALTH=%d WDG=%d CFG read=%s health=%s "
                "IDENT read=%s health=%s COMM=%d sent=%lu failed=%lu\r\n",
                (unsigned long)(now - s_start_ms),
@@ -634,6 +760,15 @@ void App_Run(void)
                (unsigned long)s_disp_rt.operation_failures,
                (unsigned long)s_disp_rt.consecutive_errors,
                (unsigned long)s_disp_rt.recovery_count,
+               (int)s_co2_rt.state,
+               (double)s_room.co2_ppm,
+               (int)s_room.co2_valid,
+               (double)s_room.scd41_temperature_c,
+               (double)s_room.scd41_humidity_pct,
+               (unsigned long)s_co2_rt.operation_successes,
+               (unsigned long)s_co2_rt.operation_failures,
+               (unsigned long)s_co2_rt.consecutive_errors,
+               (unsigned long)s_co2_rt.recovery_count,
                (int)s_health, (int)s_watchdog_active,
                StorageReadStatus_Str(Config_GetStorageStatus()),
                StorageHealth_Str(Config_GetStorageHealth()),
@@ -679,6 +814,7 @@ void App_GetStatus(AppStatus *status)
        so GET_STATUS always reads current runtime health. */
     s_status.light_sensor = s_light_rt;
     s_status.display = s_disp_rt;
+    s_status.co2_sensor = s_co2_rt;
     s_status.health = s_health;
     s_status.reset_cause = s_reset_cause;
     s_status.watchdog_active = s_watchdog_active;

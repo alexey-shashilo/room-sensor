@@ -70,6 +70,16 @@ static DriverStatus host_read_mem(void *ctx, uint16_t addr, uint8_t reg, uint8_t
     return DRIVER_STATUS_OK;
 }
 
+static DriverStatus host_read(void *ctx, uint16_t addr, uint8_t *data, size_t size)
+{
+    (void)ctx; s_call_count++;
+    HostI2cDevice *dev = FindDevice(addr);
+    if (dev == NULL || data == NULL || size == 0) return DRIVER_STATUS_BUS_ERROR;
+    for (size_t i = 0; i < size; i++)
+        data[i] = dev->regs[i];
+    return DRIVER_STATUS_OK;
+}
+
 static DriverStatus host_probe(void *ctx, uint16_t addr)
 {
     (void)ctx; s_call_count++;
@@ -82,5 +92,6 @@ void HostPlatform_GetI2cBus(I2cBus *bus)
     bus->context = NULL;
     bus->write = host_write;
     bus->read_mem = host_read_mem;
+    bus->read = host_read;
     bus->probe = host_probe;
 }

@@ -26,6 +26,11 @@ typedef enum
     DEVICE_STATE_NOT_FOUND,
     DEVICE_STATE_PROBING,
     DEVICE_STATE_INITIALIZING,
+    /* SCD41 periodic runtime: periodic measurement issued and the first sample
+       is being produced; data-ready being polled. Not present/error states for
+       VEML/display, which use PROBING/INITIALIZING instead. */
+    DEVICE_STATE_STARTING,
+    DEVICE_STATE_WAITING,
     DEVICE_STATE_READY,
     DEVICE_STATE_ERROR,
     DEVICE_STATE_RECOVERING
@@ -39,7 +44,12 @@ typedef enum
     DRIVER_STATUS_TIMEOUT,
     DRIVER_STATUS_NOT_FOUND,
     DRIVER_STATUS_VERIFY_ERROR,
-    DRIVER_STATUS_NOT_READY
+    DRIVER_STATUS_NOT_READY,
+    /* A data word failed its CRC-8 validation (Sensirion protocol). No partial
+       measurement is committed on a CRC failure. */
+    DRIVER_STATUS_CRC_ERROR,
+    /* The requested operation is not available on this bus/context. */
+    DRIVER_STATUS_NOT_SUPPORTED
 } DriverStatus;
 
 #define CONSECUTIVE_ERROR_THRESHOLD 3U

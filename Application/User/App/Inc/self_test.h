@@ -23,6 +23,7 @@ typedef struct
     SelfTestResult identity;
     SelfTestResult light_sensor;
     SelfTestResult display;
+    SelfTestResult co2_sensor;
 } SelfTestReport;
 
 void SelfTest_Init(SelfTestReport *report);

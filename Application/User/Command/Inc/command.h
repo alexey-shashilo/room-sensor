@@ -118,6 +118,7 @@ typedef struct
     bool     watchdog_active;
     DeviceRuntime light_sensor;
     DeviceRuntime display;
+    DeviceRuntime co2_sensor;
     ResetCause reset_cause;
 
     /* Authoritative current runtime-status snapshot, filled by App (owning the
@@ -136,7 +137,7 @@ typedef struct
 } CommandInput;
 
 bool Command_Init(CommandServices *services);
-void Command_UpdateRuntime(uint32_t uptime, bool wdg, const DeviceRuntime *light, const DeviceRuntime *disp, ResetCause rc);
+void Command_UpdateRuntime(uint32_t uptime, bool wdg, const DeviceRuntime *light, const DeviceRuntime *disp, const DeviceRuntime *co2, ResetCause rc);
 void Command_Run(void);
 /* Legacy entry point retained for backward compatibility/tests. It enqueues a
    command as COMMAND_SOURCE_UNTRUSTED (fail closed). Prefer the message-scoped

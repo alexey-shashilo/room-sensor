@@ -27,12 +27,13 @@ bool Command_Init(CommandServices *services)
     return true;
 }
 
-void Command_UpdateRuntime(uint32_t uptime, bool wdg, const DeviceRuntime *light, const DeviceRuntime *disp, ResetCause rc)
+void Command_UpdateRuntime(uint32_t uptime, bool wdg, const DeviceRuntime *light, const DeviceRuntime *disp, const DeviceRuntime *co2, ResetCause rc)
 {
     s_services.uptime_ms = uptime;
     s_services.watchdog_active = wdg;
     if (light) s_services.light_sensor = *light;
     if (disp)  s_services.display = *disp;
+    if (co2)   s_services.co2_sensor = *co2;
     s_services.reset_cause = rc;
 }
 

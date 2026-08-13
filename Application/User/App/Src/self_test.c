@@ -1,6 +1,7 @@
 #include "self_test.h"
 #include "veml7700.h"
 #include "display.h"
+#include "scd41.h"
 #include "storage.h"
 #include "config.h"
 #include "device_identity.h"
@@ -71,12 +72,18 @@ void SelfTest_Run(SelfTestReport *report, const I2cBus *bus)
     {
         report->light_sensor = SELF_TEST_SKIPPED;
         report->display = SELF_TEST_SKIPPED;
+        report->co2_sensor = SELF_TEST_SKIPPED;
     }
     else
     {
         uint8_t addr;
         report->light_sensor = ProbeToResult(VEML7700_Probe(bus));
         report->display = ProbeToResult(Display_Probe(bus, &addr));
+        /* SCD41: an ACK/address probe is safe during active periodic
+           measurement (it does not change the sensor mode and does not disturb
+           the running measurement). We deliberately do NOT issue calibration /
+           mode-changing commands here. */
+        report->co2_sensor = ProbeToResult(SCD41_Probe(bus) == DRIVER_STATUS_OK);
     }
 
     /* Storage subsystem initialization is runtime state, not something a

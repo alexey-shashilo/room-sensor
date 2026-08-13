@@ -17,6 +17,7 @@ typedef struct
 {
     DeviceRuntime light_sensor;
     DeviceRuntime display;
+    DeviceRuntime co2_sensor;
 
     SystemHealthState health;
     ResetCause reset_cause;

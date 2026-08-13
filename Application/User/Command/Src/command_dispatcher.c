@@ -23,9 +23,18 @@ static void HandleGetStatus(const CommandRequest *req, CommandResponse *rsp, con
     CommandResponse_Append(rsp, "\"display\":{");
     CommandResponse_AppendJsonInt(rsp, "state", (uint32_t)svc->display.state);
     CommandResponse_Append(rsp, "},");
+    CommandResponse_Append(rsp, "\"co2_sensor\":{");
+    CommandResponse_AppendJsonInt(rsp, "state", (uint32_t)svc->co2_sensor.state);
+    CommandResponse_AppendJsonInt(rsp, "ops", svc->co2_sensor.operation_successes);
+    CommandResponse_AppendJsonInt(rsp, "err", svc->co2_sensor.operation_failures);
+    CommandResponse_AppendJsonInt(rsp, "consec", svc->co2_sensor.consecutive_errors);
+    CommandResponse_AppendJsonInt(rsp, "rec", svc->co2_sensor.recovery_count);
+    CommandResponse_Append(rsp, "},");
     CommandResponse_Append(rsp, "\"room\":{");
     CommandResponse_AppendJsonFloat(rsp, "illuminance_lux", svc->room->illuminance_lux, 1);
     CommandResponse_AppendJson(rsp, "illuminance", svc->room->illuminance_valid ? "valid" : "invalid");
+    CommandResponse_AppendJsonFloat(rsp, "co2_ppm", svc->room->co2_ppm, 0);
+    CommandResponse_AppendJson(rsp, "co2", svc->room->co2_valid ? "valid" : "invalid");
     CommandResponse_Append(rsp, "},");
     CommandResponse_AppendJsonBool(rsp, "watchdog", svc->watchdog_active);
 
@@ -173,6 +182,8 @@ static void HandleSelfTest(const CommandRequest *req, CommandResponse *rsp, cons
                                SelfTestResult_ToProtocolString(st->light_sensor));
     CommandResponse_AppendJson(rsp, "display",
                                SelfTestResult_ToProtocolString(st->display));
+    CommandResponse_AppendJson(rsp, "co2_sensor",
+                               SelfTestResult_ToProtocolString(st->co2_sensor));
     CommandResponse_Finalize(rsp);
 }
 
@@ -195,7 +206,7 @@ static void HandleGetCapabilities(const CommandRequest *req, CommandResponse *rs
     CommandResponse_AppendJsonBool(rsp, "temperature", false);
     CommandResponse_AppendJsonBool(rsp, "humidity", false);
     CommandResponse_AppendJsonBool(rsp, "pressure", false);
-    CommandResponse_AppendJsonBool(rsp, "co2", false);
+    CommandResponse_AppendJsonBool(rsp, "co2", true);
     CommandResponse_AppendJsonBool(rsp, "voc", false);
     CommandResponse_AppendJsonBool(rsp, "presence", false);
     CommandResponse_Finalize(rsp);

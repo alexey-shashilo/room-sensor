@@ -8,6 +8,8 @@ set(CORE_SRC
     ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/App/Src/device_identity.c
     ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/Drivers/veml7700/Src/veml7700.c
     ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/Drivers/display/Src/display.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/Drivers/scd41/Src/scd41.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/Drivers/scd41/Src/scd41_runtime.c
     ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/Storage/Src/storage.c
     ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/Telemetry/Src/telemetry.c
     ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/Telemetry/Src/telemetry_serializer.c
@@ -30,6 +32,7 @@ set(CORE_INC
     ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/App/Inc
     ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/Drivers/veml7700/Inc
     ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/Drivers/display/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/Drivers/scd41/Inc
     ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/Platform/Inc
     ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/Storage/Inc
     ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/Telemetry/Inc

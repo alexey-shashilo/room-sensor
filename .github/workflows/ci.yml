@@ -36,6 +36,7 @@ jobs:
           -I Application/User/App/Inc
           -I Application/User/Drivers/veml7700/Inc
           -I Application/User/Drivers/display/Inc
+          -I Application/User/Drivers/scd41/Inc
           -I Application/User/Platform/Inc
           -I Application/User/Storage/Inc
           -I Application/User/Telemetry/Inc

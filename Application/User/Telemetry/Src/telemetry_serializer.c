@@ -70,6 +70,58 @@ static SerializeStatus AppendMeasurement(char *buf, size_t cap, size_t *pos,
             "      }", name);
 }
 
+/* SCD41 min/max CO2 range for plausibility (SCD4x datasheet: 0..40000 ppm
+   nominal covered; values outside indicate protocol/sanity issues). */
+#define SCD41_CO2_MAX_PPM 40000U
+
+/* Serialize the SCD41 channels within the room object with explicit validity
+   semantics. CO2 is rendered as an integer ppm when valid; when invalid, no
+   numeric value is emitted (never "0 ppm"). SCD41 T/RH are source-explicit
+   (local internal sensor values, NOT canonical room T/RH) and omitted when
+   invalid. */
+static SerializeStatus AppendScd41Block(char *buf, size_t cap, size_t *pos,
+                                        const RoomState *room)
+{
+    if (room == NULL)
+        return SERIALIZE_INVALID_ARG;
+
+    SerializeStatus s;
+
+    if (room->co2_valid && room->co2_ppm >= 0.0f &&
+        (uint32_t)room->co2_ppm <= SCD41_CO2_MAX_PPM)
+    {
+        s = AppendFormat(buf, cap, pos,
+            ",\n    \"co2_ppm\": {\n"
+            "      \"value\": %lu,\n"
+            "      \"state\": \"valid\"\n"
+            "    }",
+            (unsigned long)room->co2_ppm);
+    }
+    else
+    {
+        s = AppendFormat(buf, cap, pos,
+            ",\n    \"co2_ppm\": {\n"
+            "      \"state\": \"invalid\"\n"
+            "    }");
+    }
+    if (s != SERIALIZE_OK) return s;
+
+    /* SCD41 local/internal T and RH (secondary source; validity explicit). */
+    s = AppendMeasurement(buf, cap, pos,
+        "scd41_temperature_c",
+        room->scd41_temperature_c,
+        room->scd41_temperature_valid);
+    if (s != SERIALIZE_OK) return s;
+
+    s = AppendMeasurement(buf, cap, pos,
+        "scd41_humidity_pct",
+        room->scd41_humidity_pct,
+        room->scd41_humidity_valid);
+    if (s != SERIALIZE_OK) return s;
+
+    return SERIALIZE_OK;
+}
+
 SerializeStatus Telemetry_Serialize(
     const TelemetrySnapshot *snapshot,
     uint8_t *buffer,
@@ -123,6 +175,13 @@ SerializeStatus Telemetry_Serialize(
         "illuminance_lux",
         snapshot->room.illuminance_lux,
         snapshot->room.illuminance_valid);
+    if (s != SERIALIZE_OK) return s;
+
+    /* SCD41-backed channels. CO2 uses integer ppm; the shared float measurement
+       serializer formats 1 decimal which for integral ppm prints e.g. "742.0".
+       Serialize CO2 with its own formatter so valid -> integer, invalid -> no
+       numeric value (never renders invalid CO2 as 0). */
+    s = AppendScd41Block(buf, cap, &pos, &snapshot->room);
     if (s != SERIALIZE_OK) return s;
 
     s = AppendFormat(buf, cap, &pos, "\n  }\n");

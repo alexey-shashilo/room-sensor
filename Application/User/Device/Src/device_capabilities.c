@@ -9,7 +9,7 @@ void DeviceCapabilities_Get(DeviceCapabilities *caps)
     caps->temperature = false;
     caps->relative_humidity = false;
     caps->pressure = false;
-    caps->co2 = false;
+    caps->co2 = true;      /* SCD41 CO2 concentration (ppm) */
     caps->voc = false;
     caps->nox = false;
     caps->presence = false;
