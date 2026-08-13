@@ -54,10 +54,28 @@ static SerializeStatus AppendId(char *buf, size_t cap, size_t *pos, const uint8_
         (unsigned)id[13], (unsigned)id[14], (unsigned)id[15]);
 }
 
-static SerializeStatus AppendMeasurement(char *buf, size_t cap, size_t *pos,
-                                          const char *name, float value, bool valid)
+/* Write exactly one field separator (",") before a field when prepend is
+   true, and none otherwise. Keeps JSON structurally valid: exactly one comma
+   between fields and no trailing comma. */
+static SerializeStatus AppendFieldSeparator(char *buf, size_t cap, size_t *pos,
+                                             bool prepend)
 {
-    if (valid && IsFinite(value))
+    if (!prepend)
+        return SERIALIZE_OK;
+    return AppendFormat(buf, cap, pos, ",");
+}
+
+static SerializeStatus AppendMeasurement(char *buf, size_t cap, size_t *pos,
+                                          const char *name, float value, bool valid,
+                                          bool prepend)
+{
+    /* A measurement is only valid when the caller-validity flag is set AND the
+       value is finite. NaN/Inf are never serialized numerically. */
+    bool emit_valid = valid && IsFinite(value);
+    SerializeStatus s = AppendFieldSeparator(buf, cap, pos, prepend);
+    if (s != SERIALIZE_OK) return s;
+
+    if (emit_valid)
         return AppendFormat(buf, cap, pos,
             "      \"%s\": {\n"
             "        \"value\": %.1f,\n"
@@ -74,49 +92,64 @@ static SerializeStatus AppendMeasurement(char *buf, size_t cap, size_t *pos,
    nominal covered; values outside indicate protocol/sanity issues). */
 #define SCD41_CO2_MAX_PPM 40000U
 
-/* Serialize the SCD41 channels within the room object with explicit validity
-   semantics. CO2 is rendered as an integer ppm when valid; when invalid, no
-   numeric value is emitted (never "0 ppm"). SCD41 T/RH are source-explicit
-   (local internal sensor values, NOT canonical room T/RH) and omitted when
-   invalid. */
+/* Serialize the SCD41 CO2 channel as an integer ppm with a defensive finite and
+ * range gate. Ordering requirements (task §5):
+ *   valid->finite->>=0-><= max -> then float->integer conversion.
+ * NaN/Inf/negative/>max are serialized as invalid (never "0 ppm"). */
+static SerializeStatus AppendCo2(char *buf, size_t cap, size_t *pos,
+                                  const RoomState *room, bool prepend)
+{
+    if (room == NULL)
+        return SERIALIZE_INVALID_ARG;
+
+    SerializeStatus s = AppendFieldSeparator(buf, cap, pos, prepend);
+    if (s != SERIALIZE_OK) return s;
+
+    float c = room->co2_ppm;
+    bool ok = room->co2_valid && IsFinite(c) &&
+              (c >= 0.0f) && (c <= (float)SCD41_CO2_MAX_PPM);
+
+    if (ok)
+        return AppendFormat(buf, cap, pos,
+            "    \"co2_ppm\": {\n"
+            "      \"value\": %lu,\n"
+            "      \"state\": \"valid\"\n"
+            "    }",
+            (unsigned long)c);   /* safe integer conversion after finite+range gate */
+    else
+        return AppendFormat(buf, cap, pos,
+            "    \"co2_ppm\": {\n"
+            "      \"state\": \"invalid\"\n"
+            "    }");
+}
+
+/* Serialize the SCD41 channels within the room block with explicit validity
+ * semantics. CO2 is rendered as an integer ppm when valid; when invalid, no
+ * numeric value is emitted (never "0 ppm"). SCD41 T/RH are source-explicit
+ * (local internal sensor values, NOT canonical room T/RH) and omitted when
+ * invalid. */
 static SerializeStatus AppendScd41Block(char *buf, size_t cap, size_t *pos,
                                         const RoomState *room)
 {
     if (room == NULL)
         return SERIALIZE_INVALID_ARG;
 
-    SerializeStatus s;
-
-    if (room->co2_valid && room->co2_ppm >= 0.0f &&
-        (uint32_t)room->co2_ppm <= SCD41_CO2_MAX_PPM)
-    {
-        s = AppendFormat(buf, cap, pos,
-            ",\n    \"co2_ppm\": {\n"
-            "      \"value\": %lu,\n"
-            "      \"state\": \"valid\"\n"
-            "    }",
-            (unsigned long)room->co2_ppm);
-    }
-    else
-    {
-        s = AppendFormat(buf, cap, pos,
-            ",\n    \"co2_ppm\": {\n"
-            "      \"state\": \"invalid\"\n"
-            "    }");
-    }
+    SerializeStatus s = AppendCo2(buf, cap, pos, room, true);
     if (s != SERIALIZE_OK) return s;
 
     /* SCD41 local/internal T and RH (secondary source; validity explicit). */
     s = AppendMeasurement(buf, cap, pos,
         "scd41_temperature_c",
         room->scd41_temperature_c,
-        room->scd41_temperature_valid);
+        room->scd41_temperature_valid,
+        true);
     if (s != SERIALIZE_OK) return s;
 
     s = AppendMeasurement(buf, cap, pos,
         "scd41_humidity_pct",
         room->scd41_humidity_pct,
-        room->scd41_humidity_valid);
+        room->scd41_humidity_valid,
+        true);
     if (s != SERIALIZE_OK) return s;
 
     return SERIALIZE_OK;
@@ -174,13 +207,12 @@ SerializeStatus Telemetry_Serialize(
     s = AppendMeasurement(buf, cap, &pos,
         "illuminance_lux",
         snapshot->room.illuminance_lux,
-        snapshot->room.illuminance_valid);
+        snapshot->room.illuminance_valid,
+        false);   /* first field in the room object: no leading comma */
     if (s != SERIALIZE_OK) return s;
 
-    /* SCD41-backed channels. CO2 uses integer ppm; the shared float measurement
-       serializer formats 1 decimal which for integral ppm prints e.g. "742.0".
-       Serialize CO2 with its own formatter so valid -> integer, invalid -> no
-       numeric value (never renders invalid CO2 as 0). */
+    /* SCD41-backed channels. CO2 uses integer ppm; invalid -> no numeric value
+       (never renders invalid CO2 as 0). */
     s = AppendScd41Block(buf, cap, &pos, &snapshot->room);
     if (s != SERIALIZE_OK) return s;
 

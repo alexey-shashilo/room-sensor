@@ -30,6 +30,11 @@ typedef struct
     int read_call_count;
     int probe_call_count;
 
+    /* Monotonic tick at which the most recent plain read (I2cBus_Read) was
+       performed. Used by timing regressions to prove a two-phase response is
+       NOT read before its deadline (the fake stamps Platform_GetTickMs()). */
+    uint32_t last_read_tick_ms;
+
     /* Last 8-bit (left-shifted) device address used across all transactions.
        Lets tests assert a driver addresses the correct on-wire byte (e.g. the
        SCD41 must probe/write/read at the left-shifted 0xC4, not 7-bit 0x62). */

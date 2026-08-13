@@ -58,4 +58,10 @@ void               App_GetStatus(AppStatus *status);
 void               App_SetI2C(const I2cBus *bus);
 void               App_DoRetry(void);
 
+/* SCD41 SystemHealth contribution predicate: true only when the SCD41 runtime
+   is STARTING/WAITING/READY. NOT_FOUND/ERROR/RECOVERING -> false (degrades
+   SystemHealth to DEGRADED, never FAULT). Exported for direct unit testing of
+   the health mapping. */
+bool App_Scd41HealthOk(DeviceState state);
+
 #endif

@@ -43,6 +43,27 @@ static void Scd41Runtime_EscalateError(Scd41Runtime *rt)
     rt->state = DEVICE_STATE_ERROR;
 }
 
+/* Wrap-safe deadline check using subtraction: true when `now` is at/after
+   `deadline`, including across the 32-bit tick wrap. */
+static bool Scd41Runtime_DeadlinePassed(uint32_t now, uint32_t deadline)
+{
+    return (uint32_t)(now - deadline) < 0x80000000U;
+}
+
+/* Record a real communication/CRC/protocol failure and escalate to ERROR
+   immediately when the consecutive-error threshold is reached (rather than
+   waiting for a later poll). A failed optional sensor never stops the device,
+   but a durable failure degrades health via the ERROR state. */
+static void Scd41Runtime_RecordFailureEscalate(Scd41Runtime *rt)
+{
+    Scd41Runtime_RecordFailure(rt);
+    if (rt->consecutive_errors >= SCD41_RUNTIME_ERROR_THRESHOLD)
+    {
+        rt->phase = SCD41_PHASE_IDLE;
+        Scd41Runtime_EscalateError(rt);
+    }
+}
+
 void Scd41Runtime_Init(Scd41Runtime *rt, const I2cBus *bus)
 {
     if (rt == NULL) return;
@@ -106,6 +127,7 @@ DriverStatus Scd41Runtime_Start(Scd41Runtime *rt)
 
     rt->started_at_ms = Platform_GetTickMs();
     rt->state = DEVICE_STATE_STARTING;
+    rt->phase = SCD41_PHASE_IDLE;
     Scd41Runtime_RecordSuccess(rt);
     return DRIVER_STATUS_OK;
 }
@@ -122,7 +144,10 @@ void Scd41Runtime_Poll(Scd41Runtime *rt)
         /* Wait the periodic interval before the first data-ready check: the
            SCD4x produces its first sample ~5 s after start_periodic. */
         if ((now - rt->started_at_ms) >= SCD41_PERIODIC_INTERVAL_MS)
+        {
             rt->state = DEVICE_STATE_WAITING;
+            rt->phase = SCD41_PHASE_IDLE;
+        }
         return;
     }
 
@@ -135,37 +160,86 @@ void Scd41Runtime_Poll(Scd41Runtime *rt)
 
     Scd41Runtime_EnforceFreshness(rt, now);
 
-    bool new_data = false;
-    DriverStatus qs = SCD41_GetDataReady(&rt->dev, &new_data);
-    if (qs != DRIVER_STATUS_OK)
+    /* State machine error escalation shared by both two-phase paths. */
+    if (rt->consecutive_errors >= SCD41_RUNTIME_ERROR_THRESHOLD)
     {
-        Scd41Runtime_RecordFailure(rt);
-        if (rt->consecutive_errors >= SCD41_RUNTIME_ERROR_THRESHOLD)
-            Scd41Runtime_EscalateError(rt);
+        rt->phase = SCD41_PHASE_IDLE;
+        Scd41Runtime_EscalateError(rt);
         return;
     }
 
-    if (!new_data)
-        return;   /* not an error — keep operational */
-
-    Scd41Measurement meas;
-    DriverStatus rs = SCD41_ReadMeasurement(&rt->dev, &meas);
-    if (rs != DRIVER_STATUS_OK)
+    /* Two-phase SCD4x transaction. Each finish() is gated on now >= deadline
+       (the ~1 ms command-execution time). No transaction is read before its
+       deadline. */
+    if (rt->phase == SCD41_PHASE_IDLE)
     {
-        /* CRC failure included: no partial sample is committed. Escalate via the
-           same bounded consecutive-error threshold. */
-        Scd41Runtime_RecordFailure(rt);
-        if (rt->consecutive_errors >= SCD41_RUNTIME_ERROR_THRESHOLD)
-            Scd41Runtime_EscalateError(rt);
+        /* Begin: send GET_DATA_READY, record the response deadline. */
+        DriverStatus bs = SCD41_BeginGetDataReady(&rt->dev);
+        if (bs != DRIVER_STATUS_OK)
+        {
+            Scd41Runtime_RecordFailureEscalate(rt);
+            return;
+        }
+        rt->deadline_ms = now + SCD41_COMMAND_RESPONSE_DELAY_MS;
+        rt->phase = SCD41_PHASE_WAIT_DATA_READY_RESPONSE;
+        return;   /* return to scheduler; read happens on a later tick */
+    }
+
+    if (rt->phase == SCD41_PHASE_WAIT_DATA_READY_RESPONSE)
+    {
+        if (Scd41Runtime_DeadlinePassed(now, rt->deadline_ms) == false)
+            return;   /* not yet elapsed: do not read before 1 ms */
+
+        bool new_data = false;
+        DriverStatus fs = SCD41_FinishGetDataReady(&rt->dev, &new_data);
+        if (fs != DRIVER_STATUS_OK)
+        {
+            rt->phase = SCD41_PHASE_IDLE;
+            Scd41Runtime_RecordFailureEscalate(rt);
+            return;
+        }
+        if (!new_data)
+        {
+            rt->phase = SCD41_PHASE_IDLE;
+            return;   /* data-ready=false is not an error; stay operational */
+        }
+
+        /* Data ready: begin the measurement read transaction. */
+        DriverStatus mbs = SCD41_BeginReadMeasurement(&rt->dev);
+        if (mbs != DRIVER_STATUS_OK)
+        {
+            rt->phase = SCD41_PHASE_IDLE;
+            Scd41Runtime_RecordFailureEscalate(rt);
+            return;
+        }
+        rt->deadline_ms = now + SCD41_COMMAND_RESPONSE_DELAY_MS;
+        rt->phase = SCD41_PHASE_WAIT_MEASUREMENT_RESPONSE;
         return;
     }
 
-    if (meas.valid)
+    if (rt->phase == SCD41_PHASE_WAIT_MEASUREMENT_RESPONSE)
     {
-        rt->last_sample = meas;
-        rt->last_valid_measurement_ms = now;
-        rt->state = DEVICE_STATE_READY;
-        Scd41Runtime_RecordSuccess(rt);
+        if (Scd41Runtime_DeadlinePassed(now, rt->deadline_ms) == false)
+            return;   /* not yet elapsed: no read */
+
+        Scd41Measurement meas;
+        DriverStatus rs = SCD41_FinishReadMeasurement(&rt->dev, &meas);
+        rt->phase = SCD41_PHASE_IDLE;
+        if (rs != DRIVER_STATUS_OK)
+        {
+            /* CRC failure included: no partial sample is committed. Escalate via
+               the same bounded consecutive-error threshold. */
+            Scd41Runtime_RecordFailureEscalate(rt);
+            return;
+        }
+
+        if (meas.valid)
+        {
+            rt->last_sample = meas;
+            rt->last_valid_measurement_ms = now;
+            rt->state = DEVICE_STATE_READY;
+            Scd41Runtime_RecordSuccess(rt);
+        }
     }
 }
 

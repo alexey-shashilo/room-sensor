@@ -223,6 +223,29 @@ int main(void)
               "AppStatus identity persistence == OK (current)");
     }
 
+    printf("\n=== SCD41 SystemHealth mapping ===\n");
+    {
+        /* §15 required mapping via App_Scd41HealthOk. */
+        check(App_Scd41HealthOk(DEVICE_STATE_STARTING) == true,
+              "STARTING -> acceptable (not degraded)");
+        check(App_Scd41HealthOk(DEVICE_STATE_WAITING) == true,
+              "WAITING -> acceptable (not degraded)");
+        check(App_Scd41HealthOk(DEVICE_STATE_READY) == true,
+              "READY -> acceptable");
+        check(App_Scd41HealthOk(DEVICE_STATE_NOT_FOUND) == false,
+              "NOT_FOUND -> degrades health");
+        check(App_Scd41HealthOk(DEVICE_STATE_ERROR) == false,
+              "ERROR -> degrades health");
+        check(App_Scd41HealthOk(DEVICE_STATE_RECOVERING) == false,
+              "RECOVERING -> degrades health");
+
+        /* §16 invariant: a missing SCD41 (SelfTest co2_sensor would be FAIL,
+           runtime state NOT_FOUND) must NEVER report health OK. */
+        check(App_Scd41HealthOk(DEVICE_STATE_NOT_FOUND) == false &&
+              !App_Scd41HealthOk(DEVICE_STATE_ERROR),
+              "missing/errored SCD41 never yields SYSTEM_HEALTH_OK");
+    }
+
     printf("\n=== Summary ===\n");
     printf("  Cases: %d\n", s_case);
     printf("  Passed: %d\n", s_pass);

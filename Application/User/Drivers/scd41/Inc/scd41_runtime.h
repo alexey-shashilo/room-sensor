@@ -29,10 +29,27 @@
    increment error counters, and does NOT overwrite RoomState. Only real
    communication/CRC/protocol failures are counted as errors. */
 
+/* Internal protocol phase (kept separate from the externally-visible
+   DeviceState). Tracks which two-phase SCD4x transaction is in flight so the
+   runtime can enforce the ~1 ms command-execution deadline cooperatively. */
+typedef enum
+{
+    SCD41_PHASE_IDLE = 0,
+    SCD41_PHASE_WAIT_DATA_READY_RESPONSE,
+    SCD41_PHASE_WAIT_MEASUREMENT_RESPONSE
+} Scd41RuntimePhase;
+
 typedef struct
 {
     /* Runtime-oriented state (DeviceState). */
     DeviceState state;
+
+    /* Internal response-phase for the in-flight two-phase transaction. */
+    Scd41RuntimePhase phase;
+
+    /* Absolute tick deadline by which the two-phase response may be read. A read
+       is only allowed when now >= deadline. */
+    uint32_t deadline_ms;
 
     /* Driver handle + last accepted sample. */
     Scd41              dev;

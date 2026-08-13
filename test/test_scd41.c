@@ -54,6 +54,42 @@ static void tick(Scd41Runtime *rt, uint32_t delta)
     Scd41Runtime_Poll(rt);
 }
 
+/* Advance the clock and poll, then keep stepping 1 ms + polling until any
+   in-flight two-phase SCD4x transaction completes (phase returns to IDLE).
+   Models the cooperative scheduler crossing the ~1 ms command-execution
+   deadline before reading the response. */
+static void tick_cycle(Scd41Runtime *rt, uint32_t delta)
+{
+    FakePlatform_AdvanceTick(delta);
+    Scd41Runtime_Poll(rt);
+    int guard = 0;
+    while (rt->phase != SCD41_PHASE_IDLE && guard < 32)
+    {
+        FakePlatform_AdvanceTick(1);
+        Scd41Runtime_Poll(rt);
+        guard++;
+    }
+}
+
+/* Driver-level full two-phase helpers: Begin + advance past the official
+   1 ms response deadline + Finish. Used by driver unit tests that want a
+   completed transaction; dedicated timing tests exercise the raw phases. */
+static DriverStatus data_ready_full(Scd41 *dev, bool *ready)
+{
+    DriverStatus s = SCD41_BeginGetDataReady(dev);
+    if (s != DRIVER_STATUS_OK) return s;
+    FakePlatform_AdvanceTick(SCD41_COMMAND_RESPONSE_DELAY_MS);
+    return SCD41_FinishGetDataReady(dev, ready);
+}
+
+static DriverStatus read_measurement_full(Scd41 *dev, Scd41Measurement *m)
+{
+    DriverStatus s = SCD41_BeginReadMeasurement(dev);
+    if (s != DRIVER_STATUS_OK) return s;
+    FakePlatform_AdvanceTick(SCD41_COMMAND_RESPONSE_DELAY_MS);
+    return SCD41_FinishReadMeasurement(dev, m);
+}
+
 /* ---------------------------------------------------------------------- */
 int main(void)
 {
@@ -107,13 +143,13 @@ int main(void)
         fake.data_ready_scripted = 1;
         fake.data_ready_word = 0x0000;
         FakeI2cBus_SetScd41DataReady(&fake, false);
-        check(SCD41_GetDataReady(&dev, &ready) == DRIVER_STATUS_OK, "4 data-ready query ok");
+        check(data_ready_full(&dev, &ready) == DRIVER_STATUS_OK, "4 data-ready query ok");
         check(!ready, "4 data-ready false (not an error)");
 
         /* Data ready: word with bit set. */
         FakeI2cBus_SetScd41DataReady(&fake, true);
         ready = false;
-        check(SCD41_GetDataReady(&dev, &ready) == DRIVER_STATUS_OK, "5 data-ready query ok");
+        check(data_ready_full(&dev, &ready) == DRIVER_STATUS_OK, "5 data-ready query ok");
         check(ready, "5 data-ready true");
     }
 
@@ -126,7 +162,7 @@ int main(void)
         uint16_t rh = FakeI2cBus_RhRaw(42.0f);
         FakeI2cBus_SetScd41Measurement(&fake, 1200, t, rh, false, false, false);
 
-        check(SCD41_ReadMeasurement(&dev, &m) == DRIVER_STATUS_OK, "6 valid read ok");
+        check(read_measurement_full(&dev, &m) == DRIVER_STATUS_OK, "6 valid read ok");
         check(m.valid, "6 valid=true");
         check(m.co2_ppm == 1200, "6 co2=1200 ppm");
         check(fabsf(m.temperature_c - 23.0f) < 0.2f, "6 temperature ~23C");
@@ -142,7 +178,7 @@ int main(void)
             uint16_t t = FakeI2cBus_TempRaw(23.0f);
             uint16_t rh = FakeI2cBus_RhRaw(42.0f);
             FakeI2cBus_SetScd41Measurement(&fake, 1200, t, rh, true, false, false);
-            DriverStatus s = SCD41_ReadMeasurement(&dev, &m);
+            DriverStatus s = read_measurement_full(&dev, &m);
             check(s == DRIVER_STATUS_CRC_ERROR, "7 CO2 CRC -> CRC_ERROR");
             check(!m.valid, "7 no partial sample committed");
         }
@@ -153,7 +189,7 @@ int main(void)
             uint16_t t = FakeI2cBus_TempRaw(23.0f);
             uint16_t rh = FakeI2cBus_RhRaw(42.0f);
             FakeI2cBus_SetScd41Measurement(&fake, 1200, t, rh, false, true, false);
-            check(SCD41_ReadMeasurement(&dev, &m) == DRIVER_STATUS_CRC_ERROR,
+            check(read_measurement_full(&dev, &m) == DRIVER_STATUS_CRC_ERROR,
                   "8 temperature CRC -> CRC_ERROR");
             check(!m.valid, "8 no partial sample committed");
         }
@@ -164,7 +200,7 @@ int main(void)
             uint16_t t = FakeI2cBus_TempRaw(23.0f);
             uint16_t rh = FakeI2cBus_RhRaw(42.0f);
             FakeI2cBus_SetScd41Measurement(&fake, 1200, t, rh, false, false, true);
-            check(SCD41_ReadMeasurement(&dev, &m) == DRIVER_STATUS_CRC_ERROR,
+            check(read_measurement_full(&dev, &m) == DRIVER_STATUS_CRC_ERROR,
                   "9 RH CRC -> CRC_ERROR");
             check(!m.valid, "9 no partial sample committed");
         }
@@ -188,7 +224,7 @@ int main(void)
             uint16_t rh = FakeI2cBus_RhRaw(42.0f);
             FakeI2cBus_SetScd41Measurement(&fake, 1200, t, rh, false, false, false);
             fake.read_result = DRIVER_STATUS_TIMEOUT;
-            check(SCD41_ReadMeasurement(&dev, &m) == DRIVER_STATUS_TIMEOUT,
+            check(read_measurement_full(&dev, &m) == DRIVER_STATUS_TIMEOUT,
                   "11 measurement RX fail -> TIMEOUT");
             check(!m.valid, "11 no partial sample committed");
         }
@@ -198,7 +234,7 @@ int main(void)
             setup(&fake, &bus, &dev);
             FakeI2cBus_SetScd41DataReady(&fake, true);
             fake.read_result = DRIVER_STATUS_BUS_ERROR;
-            check(SCD41_GetDataReady(&dev, &ready) == DRIVER_STATUS_BUS_ERROR,
+            check(data_ready_full(&dev, &ready) == DRIVER_STATUS_BUS_ERROR,
                   "12 data-ready RX fail -> BUS_ERROR");
         }
     }
@@ -248,7 +284,7 @@ int main(void)
         FakeI2cBus_SetScd41DataReady(&fake, true);
         FakeI2cBus_SetScd41Measurement(&fake, 900, t, rh, false, false, false);
 
-        tick(&rt, SCD41_RUNTIME_POLL_INTERVAL_MS);
+        tick_cycle(&rt, SCD41_RUNTIME_POLL_INTERVAL_MS);
         check(rt.state == DEVICE_STATE_READY, "14 valid sample -> READY");
         check(Scd41Runtime_HasValidSample(&rt), "14 has valid sample");
         check(rt.last_sample.co2_ppm == 900, "14 co2=900");
@@ -292,14 +328,14 @@ int main(void)
         /* One transient read failure. */
         fake.read_result = DRIVER_STATUS_TIMEOUT;
         FakeI2cBus_SetScd41DataReady(&fake, true);
-        tick(&rt, SCD41_RUNTIME_POLL_INTERVAL_MS);
+        tick_cycle(&rt, SCD41_RUNTIME_POLL_INTERVAL_MS);
         check(rt.consecutive_errors == 1, "16 one transient error counted");
         check(rt.state != DEVICE_STATE_ERROR, "16 not escalated to ERROR (below threshold)");
 
         /* Next poll succeeds -> back to normal, errors reset. */
         fake.read_result = DRIVER_STATUS_OK;
         FakeI2cBus_SetScd41Measurement(&fake, 800, t, rh, false, false, false);
-        tick(&rt, SCD41_RUNTIME_POLL_INTERVAL_MS);
+        tick_cycle(&rt, SCD41_RUNTIME_POLL_INTERVAL_MS);
         check(rt.state == DEVICE_STATE_READY, "17 recovery after single error");
         check(rt.consecutive_errors == 0, "17 consecutive errors reset on success");
     }
@@ -321,7 +357,7 @@ int main(void)
         fake.read_result = DRIVER_STATUS_BUS_ERROR;
         FakeI2cBus_SetScd41DataReady(&fake, true);
         for (int i = 0; i < 3; i++)
-            tick(&rt, SCD41_RUNTIME_POLL_INTERVAL_MS);
+            tick_cycle(&rt, SCD41_RUNTIME_POLL_INTERVAL_MS);
         check(rt.state == DEVICE_STATE_ERROR, "18 threshold reached -> ERROR");
 
         /* Recovery via Start + probe success. */
@@ -336,7 +372,7 @@ int main(void)
         FakeI2cBus_SetScd41DataReady(&fake, true);
         FakeI2cBus_SetScd41Measurement(&fake, 700, t, rh, false, false, false);
         tick(&rt, SCD41_PERIODIC_INTERVAL_MS);                    /* STARTING -> WAITING */
-        tick(&rt, SCD41_RUNTIME_POLL_INTERVAL_MS);                /* read -> READY */
+        tick_cycle(&rt, SCD41_RUNTIME_POLL_INTERVAL_MS);          /* two-phase -> READY */
         check(rt.state == DEVICE_STATE_READY, "19 recovery reaches READY");
     }
 
@@ -356,14 +392,14 @@ int main(void)
         tick(&rt, SCD41_PERIODIC_INTERVAL_MS);
         FakeI2cBus_SetScd41DataReady(&fake, true);
         FakeI2cBus_SetScd41Measurement(&fake, 950, t, rh, false, false, false);
-        tick(&rt, SCD41_RUNTIME_POLL_INTERVAL_MS);
+        tick_cycle(&rt, SCD41_RUNTIME_POLL_INTERVAL_MS);
         check(rt.state == DEVICE_STATE_READY, "has valid sample before loss");
 
         /* Sensor disappears: repeated read/probe failures -> ERROR invalidates. */
         fake.read_result = DRIVER_STATUS_TIMEOUT;
         FakeI2cBus_SetScd41DataReady(&fake, true);
         for (int i = 0; i < 3; i++)
-            tick(&rt, SCD41_RUNTIME_POLL_INTERVAL_MS);
+            tick_cycle(&rt, SCD41_RUNTIME_POLL_INTERVAL_MS);
         check(!Scd41Runtime_HasValidSample(&rt),
               "19 loss after threshold -> sample invalid");
         check(!rt.last_sample.valid, "20 value invalidated");
@@ -376,7 +412,7 @@ int main(void)
         FakeI2cBus_SetScd41DataReady(&fake, true);
         FakeI2cBus_SetScd41Measurement(&fake, 1000, t, rh, false, false, false);
         tick(&rt, SCD41_PERIODIC_INTERVAL_MS);                    /* STARTING->WAITING */
-        tick(&rt, SCD41_RUNTIME_POLL_INTERVAL_MS);                /* read -> READY */
+        tick_cycle(&rt, SCD41_RUNTIME_POLL_INTERVAL_MS);          /* two-phase -> READY */
         check(Scd41Runtime_HasValidSample(&rt), "20 recovery restores valid sample");
     }
 
@@ -396,7 +432,7 @@ int main(void)
         tick(&rt, SCD41_PERIODIC_INTERVAL_MS);
         FakeI2cBus_SetScd41DataReady(&fake, true);
         FakeI2cBus_SetScd41Measurement(&fake, 820, t, rh, false, false, false);
-        tick(&rt, SCD41_RUNTIME_POLL_INTERVAL_MS);
+        tick_cycle(&rt, SCD41_RUNTIME_POLL_INTERVAL_MS);
         check(rt.state == DEVICE_STATE_READY, "valid before stale");
 
 /* Stop producing data; wait past the stale timeout (data-ready false,
@@ -651,7 +687,7 @@ int main(void)
         raw[5]=SCD41_Crc8(&raw[3],2U);
         raw[8]=SCD41_Crc8(&raw[6],2U);
         FakeI2cBus_SetScd41RawRead(&fake, raw);
-        check(SCD41_ReadMeasurement(&dev, &m) == DRIVER_STATUS_OK,
+        check(read_measurement_full(&dev, &m) == DRIVER_STATUS_OK,
               "wire 12 34 decodes as 0x1234 (MSB-first)");
         check(m.co2_ppm == 0x1234U,
               "CO2 word 0x1234 decoded to 0x1234");
@@ -680,13 +716,13 @@ int main(void)
         setup(&fake, &bus, &dev);
         /* not ready: wire 00 00 + CRC(00 00)=0x81. */
         FakeI2cBus_SetScd41RawDataReady(&fake, 0x00, 0x00);
-        check(SCD41_GetDataReady(&dev, &ready) == DRIVER_STATUS_OK,
+        check(data_ready_full(&dev, &ready) == DRIVER_STATUS_OK,
               "data-ready query ok (not ready)");
         check(!ready, "data-ready word 0x0000 -> ready=false");
         /* ready: wire 00 08 + CRC(00 08)=0x38. */
         FakeI2cBus_SetScd41RawDataReady(&fake, 0x00, 0x08);
         ready = false;
-        check(SCD41_GetDataReady(&dev, &ready) == DRIVER_STATUS_OK,
+        check(data_ready_full(&dev, &ready) == DRIVER_STATUS_OK,
               "data-ready query ok (ready)");
         check(ready, "data-ready word 0x0008 -> ready=true");
     }
@@ -703,7 +739,7 @@ int main(void)
         raw[3]=0x6F; raw[4]=0x61; raw[5]=SCD41_Crc8(&raw[3],2U);
         raw[6]=0x6E; raw[7]=0x00; raw[8]=SCD41_Crc8(&raw[6],2U);
         FakeI2cBus_SetScd41RawRead(&fake, raw);
-        check(SCD41_ReadMeasurement(&dev, &m) == DRIVER_STATUS_OK,
+        check(read_measurement_full(&dev, &m) == DRIVER_STATUS_OK,
               "realistic CO2 raw vector decodes");
         check(m.co2_ppm == 0x02E2U, "CO2 raw 0x02E2 -> 738 ppm");
         check(m.co2_ppm != 0xE202U, "CO2 not byte-swapped to 0xE202 (57858)");
@@ -727,7 +763,7 @@ int main(void)
         raw[5]=SCD41_Crc8(&raw[3],2U);
         raw[8]=SCD41_Crc8(&raw[6],2U);
         FakeI2cBus_SetScd41RawRead(&fake, raw);
-        check(SCD41_ReadMeasurement(&dev, &m) == DRIVER_STATUS_CRC_ERROR,
+        check(read_measurement_full(&dev, &m) == DRIVER_STATUS_CRC_ERROR,
               "CO2 CRC corruption -> CRC_ERROR");
         check(!m.valid, "CO2 CRC error: no partial sample (valid=false)");
 
@@ -739,7 +775,7 @@ int main(void)
         raw2[5]=SCD41_Crc8(&raw2[3],2U) ^ 0xFFU;            /* corrupt T CRC */
         raw2[8]=SCD41_Crc8(&raw2[6],2U);
         FakeI2cBus_SetScd41RawRead(&fake2, raw2);
-        check(SCD41_ReadMeasurement(&dev2, &m2) == DRIVER_STATUS_CRC_ERROR,
+        check(read_measurement_full(&dev2, &m2) == DRIVER_STATUS_CRC_ERROR,
               "temperature CRC corruption -> CRC_ERROR");
         check(!m2.valid, "temperature CRC error: no partial sample");
 
@@ -751,7 +787,7 @@ int main(void)
         raw3[5]=SCD41_Crc8(&raw3[3],2U);
         raw3[8]=SCD41_Crc8(&raw3[6],2U) ^ 0xFFU;            /* corrupt RH CRC */
         FakeI2cBus_SetScd41RawRead(&fake3, raw3);
-        check(SCD41_ReadMeasurement(&dev3, &m3) == DRIVER_STATUS_CRC_ERROR,
+        check(read_measurement_full(&dev3, &m3) == DRIVER_STATUS_CRC_ERROR,
               "RH CRC corruption -> CRC_ERROR");
         check(!m3.valid, "RH CRC error: no partial sample");
     }
@@ -766,11 +802,11 @@ int main(void)
         SCD41_StopPeriodicMeasurement(&dev);    /* 3F 86 */
         check(fake.last_write_data[0]==0x3FU && fake.last_write_data[1]==0x86U,
               "stop_periodic bytes = 3F 86");
-        bool r; Scd41 dev2; SCD41_Init(&dev2, &bus);
-        SCD41_GetDataReady(&dev2, &r);          /* E4 B8 */
+        Scd41 dev2; SCD41_Init(&dev2, &bus);
+        SCD41_BeginGetDataReady(&dev2);         /* E4 B8 */
         check(fake.last_write_data[0]==0xE4U && fake.last_write_data[1]==0xB8U,
               "get_data_ready bytes = E4 B8");
-        SCD41_ReadMeasurement(&dev2, &(Scd41Measurement){0}); /* EC 05 */
+        SCD41_BeginReadMeasurement(&dev2);       /* EC 05 */
         check(fake.last_write_data[0]==0xECU && fake.last_write_data[1]==0x05U,
               "read_measurement bytes = EC 05");
     }
@@ -784,6 +820,61 @@ int main(void)
         fake.probe_result = DRIVER_STATUS_OK;
         SCD41_Probe(&bus);
         check(fake.last_addr == 0xC4U, "SCD41_Probe uses HAL byte 0xC4");
+    }
+
+    /* ===================== Timing: two-phase 1 ms deadline =============== */
+    printf("\n=== Timing: SCD4x response not read before 1 ms ===\n");
+    {
+        FakeI2cBus fake; I2cBus bus;
+        FakeI2cBus_Init(&fake);
+        FakeI2cBus_GetBus(&bus, &fake);
+        fake.probe_result = DRIVER_STATUS_OK;
+        fake.write_result = DRIVER_STATUS_OK;
+
+        Scd41Runtime rt;
+        Scd41Runtime_Init(&rt, &bus);
+        FakePlatform_SetTick(0);
+        Scd41Runtime_Start(&rt);
+        tick(&rt, SCD41_PERIODIC_INTERVAL_MS);   /* STARTING -> WAITING */
+
+        uint16_t t = FakeI2cBus_TempRaw(23.0f);
+        uint16_t rh = FakeI2cBus_RhRaw(42.0f);
+        FakeI2cBus_SetScd41DataReady(&fake, true);
+        FakeI2cBus_SetScd41Measurement(&fake, 900, t, rh, false, false, false);
+        int reads0 = fake.read_call_count;
+
+        /* First poll: Begin GET_DATA_READY (a write). No response read yet. */
+        Scd41Runtime_Poll(&rt);
+        check(fake.read_call_count == reads0,
+              "GET_DATA_READY command sent, no response read yet");
+        check(rt.phase == SCD41_PHASE_WAIT_DATA_READY_RESPONSE,
+              "phase = WAIT_DATA_READY_RESPONSE");
+
+        /* t < 1 ms: deadline not passed -> still no read. */
+        FakePlatform_AdvanceTick(SCD41_COMMAND_RESPONSE_DELAY_MS - 1);
+        Scd41Runtime_Poll(&rt);
+        check(fake.read_call_count == reads0, "t < 1 ms: no data-ready response read");
+
+        /* t >= 1 ms: data-ready response read allowed; kicks off measurement. */
+        FakePlatform_AdvanceTick(1);
+        Scd41Runtime_Poll(&rt);
+        check(fake.read_call_count == reads0 + 1, "t >= 1 ms: data-ready response read");
+        check(rt.phase == SCD41_PHASE_WAIT_MEASUREMENT_RESPONSE,
+              "phase = WAIT_MEASUREMENT_RESPONSE");
+
+        /* measurement response not read before its deadline. */
+        FakePlatform_AdvanceTick(SCD41_COMMAND_RESPONSE_DELAY_MS - 1);
+        Scd41Runtime_Poll(&rt);
+        check(fake.read_call_count == reads0 + 1,
+              "measurement: no response read before deadline");
+
+        /* After deadline the measurement response is read; runtime reaches READY. */
+        FakePlatform_AdvanceTick(1);
+        Scd41Runtime_Poll(&rt);
+        check(fake.read_call_count == reads0 + 2,
+              "measurement: response read after deadline");
+        check(rt.state == DEVICE_STATE_READY, "runtime reaches READY after two-phase");
+        check(rt.last_sample.co2_ppm == 900, "two-phase decoded co2=900");
     }
 
     /* ===================== CRC cross-check ===================== */

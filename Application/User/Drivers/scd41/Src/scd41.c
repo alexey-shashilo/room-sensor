@@ -76,20 +76,24 @@ DriverStatus SCD41_StopPeriodicMeasurement(Scd41 *dev)
     return SendCommand(dev, SCD41_CMD_STOP_PERIODIC);
 }
 
-DriverStatus SCD41_GetDataReady(Scd41 *dev, bool *ready)
+DriverStatus SCD41_BeginGetDataReady(Scd41 *dev)
+{
+    if (dev == NULL)
+        return DRIVER_STATUS_INVALID_ARG;
+    if (dev->initialized == 0U)
+        return DRIVER_STATUS_NOT_READY;
+    return SendCommand(dev, SCD41_CMD_GET_DATA_READY);
+}
+
+DriverStatus SCD41_FinishGetDataReady(Scd41 *dev, bool *ready)
 {
     if (dev == NULL || ready == NULL)
         return DRIVER_STATUS_INVALID_ARG;
     if (dev->initialized == 0U)
         return DRIVER_STATUS_NOT_READY;
 
-    DriverStatus s;
-    s = SendCommand(dev, SCD41_CMD_GET_DATA_READY);
-    if (s != DRIVER_STATUS_OK)
-        return s;
-
     uint8_t raw[3];
-    s = I2cBus_Read(dev->bus, dev->address, raw, sizeof(raw));
+    DriverStatus s = I2cBus_Read(dev->bus, dev->address, raw, sizeof(raw));
     if (s != DRIVER_STATUS_OK)
         return s;
 
@@ -102,7 +106,16 @@ DriverStatus SCD41_GetDataReady(Scd41 *dev, bool *ready)
     return DRIVER_STATUS_OK;
 }
 
-DriverStatus SCD41_ReadMeasurement(Scd41 *dev, Scd41Measurement *measurement)
+DriverStatus SCD41_BeginReadMeasurement(Scd41 *dev)
+{
+    if (dev == NULL)
+        return DRIVER_STATUS_INVALID_ARG;
+    if (dev->initialized == 0U)
+        return DRIVER_STATUS_NOT_READY;
+    return SendCommand(dev, SCD41_CMD_READ_MEASUREMENT);
+}
+
+DriverStatus SCD41_FinishReadMeasurement(Scd41 *dev, Scd41Measurement *measurement)
 {
     if (dev == NULL || measurement == NULL)
         return DRIVER_STATUS_INVALID_ARG;
@@ -112,13 +125,8 @@ DriverStatus SCD41_ReadMeasurement(Scd41 *dev, Scd41Measurement *measurement)
     /* The measurement buffer is only committed when ALL words pass CRC. */
     measurement->valid = false;
 
-    DriverStatus s;
-    s = SendCommand(dev, SCD41_CMD_READ_MEASUREMENT);
-    if (s != DRIVER_STATUS_OK)
-        return s;
-
     uint8_t raw[9];
-    s = I2cBus_Read(dev->bus, dev->address, raw, sizeof(raw));
+    DriverStatus s = I2cBus_Read(dev->bus, dev->address, raw, sizeof(raw));
     if (s != DRIVER_STATUS_OK)
         return s;
 

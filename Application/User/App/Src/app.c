@@ -494,6 +494,20 @@ static void App_BootEnsureRedundancy(void)
     DeviceIdentity_EnsureRedundancy();
 }
 
+/* SCD41 is a real Room Sensor v1 capability. Its contribution to SystemHealth:
+     STARTING/WAITING/READY -> acceptable (present and warming up, or measuring).
+     NOT_FOUND/ERROR/RECOVERING -> NOT OK (degrades health).
+   Merely not having the first 5 s sample yet (STARTING/WAITING) must NOT degrade
+   health; a genuinely missing/errored/recovering SCD41 MUST degrade health (but
+   never a FAULT, and never stops VEML/display/App). Exported so the mapping is
+   directly regression-testable. */
+bool App_Scd41HealthOk(DeviceState state)
+{
+    return (state == DEVICE_STATE_STARTING ||
+            state == DEVICE_STATE_WAITING ||
+            state == DEVICE_STATE_READY);
+}
+
 static void App_UpdateHealth(void)
 {
     if (s_i2c_bus == NULL)
@@ -510,13 +524,8 @@ static void App_UpdateHealth(void)
     bool runtime_ok = veml_ready && disp_ready &&
                       s_storage_init_ok && Storage_IsInitialized();
 
-    /* SCD41 is an OPTIONAL secondary sensor. When it is merely warming up
-       (STARTING/WAITING/not-yet-ready) health stays OK — the task forbids
-       treating "no CO2 yet" as a failure. A REAL SCD41 failure (repeated I2C/
-       CRC errors -> ERROR/RECOVERING, including a sensor that disappeared after
-       previously working) degrades health WITHOUT stopping VEML/display/App. */
-    bool scd41_ok = (s_scd41.state != DEVICE_STATE_ERROR &&
-                     s_scd41.state != DEVICE_STATE_RECOVERING);
+    /* SCD41 SystemHealth contribution (see App_Scd41HealthOk). */
+    bool scd41_ok = App_Scd41HealthOk(s_scd41.state);
 
     /* Persistence redundancy: healthy only when every A/B mirror is HEALTHY.
        A degraded mirror degrades system health without stopping sensing. */

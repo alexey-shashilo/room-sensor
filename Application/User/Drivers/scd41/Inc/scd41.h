@@ -41,21 +41,21 @@
    set (SCD4x datasheet). */
 #define SCD41_DATA_READY_MASK     0x07FFU
 
-/* Official SCD4x command finish times (Sensirion SCD4x datasheet / reference
-   driver "embedded-scd4x"):
-     start_periodic_measurement : no read-back, no mandated delay.
-     stop_periodic_measurement  : first new data ~1 s; command completes in
-                                  500 ms (reference driver sleeps 500 ms).
-     get_data_ready_status      : reference driver waits 1 ms before reading.
-     read_measurement           : reference driver waits 1 ms before reading.
-   The runtime keeps these non-blocking: it does NOT inject a blocking
-   platform delay() into this portable driver (see task timing audit
-   §9/§10/§17). The App scheduler's poll cadence
-   (SCD41_RUNTIME_POLL_INTERVAL_MS) spaced far above 1 ms covers the 1 ms
-   command-to-read window; stop_periodic is not in the periodic data path.
-   No calibration/factory-reset/FRC/ASC/altitude or pressure commands are
-   issued here, and SelfTest only performs an ACK probe — none disturb an
-   active periodic measurement. */
+/* Official SCD4x command execution times (Sensirion SCD4x datasheet / reference
+   driver "embedded-scd4x"). The response to a command may only be read after
+   the specified command execution time has elapsed:
+     start_periodic_measurement : no read-back, no mandated response delay.
+     stop_periodic_measurement  : first new data ~1 s; the command completes in
+                                  500 ms before the sensor is idle-safe.
+     get_data_ready_status      : ~1 ms command execution time before the 2-byte
+                                  response may be read.
+     read_measurement           : ~1 ms command execution time before the 9-byte
+                                  response may be read.
+   Timing is enforced by the runtime (cooperative, non-blocking) using a
+   deadline captured after the Begin_* command write; the Finish_* read is
+   performed on a later scheduler tick once the deadline has elapsed. The
+   portable driver never blocks: there is no HAL/polling delay inside it. */
+#define SCD41_COMMAND_RESPONSE_DELAY_MS 1U
 
 typedef struct
 {
@@ -81,17 +81,32 @@ DriverStatus SCD41_Init(Scd41 *dev, const I2cBus *bus);
 DriverStatus SCD41_Probe(const I2cBus *bus);
 
 DriverStatus SCD41_StartPeriodicMeasurement(Scd41 *dev);
+
+/* stop_periodic_measurement: issues the command. NOTE: the official protocol
+   requires ~500 ms of command execution time before the sensor is safe for
+   commands that need idle mode. This function only transmits the command — it
+   does NOT block and does NOT imply the sensor is immediately idle. */
 DriverStatus SCD41_StopPeriodicMeasurement(Scd41 *dev);
 
-/* Query data-ready. `ready=false` is a VALID result (the SCD41 cadence has not
-   elapsed) — it is NOT an error and must not be counted as one. */
-DriverStatus SCD41_GetDataReady(Scd41 *dev, bool *ready);
+/* Two-phase SCD4x response model. The SCD4x requires ~1 ms command execution
+   time between sending a command and reading its response. Each Begin_* sends
+   the command and returns immediately; the caller must wait
+   SCD41_COMMAND_RESPONSE_DELAY_MS (enforced cooperatively by the runtime
+   deadline) before calling the matching Finish_* to read the response. No call
+   here blocks, and there is no duplicate protocol logic between phases. */
 
-/* Read a full measurement (CO2, T, RH). Every 16-bit word is CRC-8 validated;
-   if ANY word's CRC fails the ENTIRE sample is rejected (no partial
-   measurement is committed and *measurement->valid stays false). The caller
-   must gate this on GetDataReady first. */
-DriverStatus SCD41_ReadMeasurement(Scd41 *dev, Scd41Measurement *measurement);
+/* GET_DATA_READY (0xE4B8). Begin: send command. Finish: read 3 bytes (word +
+   CRC), validate CRC, output ready flag. `ready=false` (no new data) is a VALID
+   result, NOT an error. */
+DriverStatus SCD41_BeginGetDataReady(Scd41 *dev);
+DriverStatus SCD41_FinishGetDataReady(Scd41 *dev, bool *ready);
+
+/* READ_MEASUREMENT (0xEC05). Begin: send command. Finish: read 9 bytes (3
+   words + CRCs), CRC-validate EVERY word; if any CRC fails the WHOLE sample is
+   rejected (no partial commit) and measurement->valid stays false. Callers must
+   gate this on data-ready first. */
+DriverStatus SCD41_BeginReadMeasurement(Scd41 *dev);
+DriverStatus SCD41_FinishReadMeasurement(Scd41 *dev, Scd41Measurement *measurement);
 
 /* Sensirion SCD4x CRC-8 (polynomial 0x31, init 0xFF). */
 uint8_t SCD41_Crc8(const uint8_t *data, size_t count);

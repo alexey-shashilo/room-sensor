@@ -1,4 +1,5 @@
 #include "fake_i2c_bus.h"
+#include "platform_time.h"
 #include <string.h>
 
 /* SCD4x command IDs (independent copies so the fake has no driver dependency;
@@ -53,6 +54,7 @@ static DriverStatus fake_read(void *ctx, uint16_t addr, uint8_t *data, size_t si
     FakeI2cBus *f = (FakeI2cBus *)ctx;
     f->last_addr = addr;
     f->read_call_count++;
+    f->last_read_tick_ms = Platform_GetTickMs();
 
     /* After GET_DATA_READY (0xE4B8), a 3-byte read returns the data-ready word
        followed by its CRC. The 16-bit word is transmitted MSB-first (the
