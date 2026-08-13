@@ -47,7 +47,9 @@ DriverStatus SCD41_Init(Scd41 *dev, const I2cBus *bus)
 
     memset(dev, 0, sizeof(*dev));
     dev->bus = bus;
-    dev->address = SCD41_I2C_ADDR;
+    /* Left-shift the official 7-bit address into the bus's 8-bit byte-address
+       convention (matching VEML7700/Display and the STM32 HAL). */
+    dev->address = (uint16_t)(SCD41_I2C_ADDR << 1U);
     dev->initialized = 1U;
     return DRIVER_STATUS_OK;
 }
@@ -56,7 +58,7 @@ DriverStatus SCD41_Probe(const I2cBus *bus)
 {
     if (bus == NULL)
         return DRIVER_STATUS_INVALID_ARG;
-    return I2cBus_Probe(bus, SCD41_I2C_ADDR);
+    return I2cBus_Probe(bus, (uint16_t)(SCD41_I2C_ADDR << 1U));
 }
 
 DriverStatus SCD41_StartPeriodicMeasurement(Scd41 *dev)

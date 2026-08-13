@@ -68,6 +68,12 @@ int main(void)
 
         fake.probe_result = DRIVER_STATUS_OK;
         check(SCD41_Probe(&bus) == DRIVER_STATUS_OK, "1 probe success");
+        /* Wire address: left-shifted 8-bit byte (0xC4), matching the I2cBus /
+           STM32 HAL convention used by VEML7700/Display. A raw 7-bit 0x62 on
+           the bus is a real address bug that hardware catches (probe targets
+           0x31 instead of the sensor). */
+        check(fake.last_addr == (SCD41_I2C_ADDR << 1U),
+              "1 probe uses left-shifted wire address 0xC4");
         fake.probe_result = DRIVER_STATUS_BUS_ERROR;
         check(SCD41_Probe(&bus) == DRIVER_STATUS_BUS_ERROR, "2 probe fail");
     }
@@ -83,6 +89,8 @@ int main(void)
         check(fake.last_write_size == 2U, "3 start periodic 2-byte command");
         check(fake.last_write_data[0] == 0x21U, "3 start periodic MSB 0x21");
         check(fake.last_write_data[1] == 0xB1U, "3 start periodic LSB 0xB1");
+        check(fake.last_addr == (SCD41_I2C_ADDR << 1U),
+              "3 start periodic addresses left-shifted 0xC4");
 
         check(SCD41_StopPeriodicMeasurement(&dev) == DRIVER_STATUS_OK,
               "3 stop periodic ok");

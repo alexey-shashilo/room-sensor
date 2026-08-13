@@ -10,6 +10,7 @@ static DriverStatus fake_write(void *ctx, uint16_t addr, const uint8_t *data, si
 {
     (void)addr;
     FakeI2cBus *f = (FakeI2cBus *)ctx;
+    f->last_addr = addr;
     f->write_call_count++;
     if (size >= 1)
     {
@@ -50,6 +51,7 @@ static DriverStatus fake_read(void *ctx, uint16_t addr, uint8_t *data, size_t si
 {
     (void)addr;
     FakeI2cBus *f = (FakeI2cBus *)ctx;
+    f->last_addr = addr;
     f->read_call_count++;
 
     /* After GET_DATA_READY (0xE4B8), a 3-byte read returns the data-ready word
@@ -78,6 +80,7 @@ static DriverStatus fake_probe(void *ctx, uint16_t addr)
 {
     (void)addr;
     FakeI2cBus *f = (FakeI2cBus *)ctx;
+    f->last_addr = addr;
     f->probe_call_count++;
     return f->probe_result;
 }

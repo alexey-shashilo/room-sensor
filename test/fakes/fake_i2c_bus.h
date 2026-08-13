@@ -30,6 +30,11 @@ typedef struct
     int read_call_count;
     int probe_call_count;
 
+    /* Last 8-bit (left-shifted) device address used across all transactions.
+       Lets tests assert a driver addresses the correct on-wire byte (e.g. the
+       SCD41 must probe/write/read at the left-shifted 0xC4, not 7-bit 0x62). */
+    uint16_t last_addr;
+
     /* Register-mapped memory (VEML/legacy). */
     uint8_t  regs[256];
     uint16_t last_write_reg;

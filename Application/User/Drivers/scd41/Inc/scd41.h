@@ -17,7 +17,13 @@
    the Sensirion SCD4x I2C driver (embedded-scd4x). The I2C address is a named
    constant inside the driver; App never sees the raw address. */
 
-#define SCD41_I2C_ADDR          (0x62U)          /* SCD4x 7-bit address */
+/* SCD4x 7-bit I2C address (official Sensirion datasheet). The I2cBus
+   abstraction and its STM32 HAL implementation expect the address already
+   left-shifted into 8-bit form (bit0 = R/W), same as VEML7700/Display
+   (e.g. 0x10<<1). The driver left-shifts at Init so the named constant stays
+   the official datasheet value while matching the bus's byte-address
+   convention on the wire. */
+#define SCD41_I2C_ADDR          (0x62U)
 #define SCD41_SERIAL_NUM_WORDS  (3U)
 
 /* Command identifiers (SCD4x I2C, big-endian incl. CRC when payload present).
