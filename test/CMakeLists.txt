@@ -61,6 +61,15 @@ target_include_directories(test_hex64 PRIVATE
 )
 add_test(NAME test_hex64 COMMAND test_hex64)
 
+add_executable(test_i2c_bus
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_i2c_bus.c
+)
+target_include_directories(test_i2c_bus PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Platform/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Common/Inc
+)
+add_test(NAME test_i2c_bus COMMAND test_i2c_bus)
+
 add_executable(test_storage
     ${CMAKE_CURRENT_SOURCE_DIR}/test_storage.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/App/Src/config.c

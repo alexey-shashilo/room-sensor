@@ -9,6 +9,7 @@ STM32CubeIDE/*.defs
 STM32CubeIDE/*.init
 EWARM/
 *.o
+*.obj
 *.d
 *.su
 *.elf
@@ -16,6 +17,11 @@ EWARM/
 *.bin
 *.map
 *.list
+*.exe
+*.a
+*.lib
+*.dll
+*.so
 *.ioc_bkp
 .mxproject
 .project
