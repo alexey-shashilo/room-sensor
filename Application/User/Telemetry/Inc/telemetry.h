@@ -8,14 +8,15 @@
 /* Telemetry depends only on lower-level portable types (RoomState,
    SystemHealthState from room_sensor_types.h). It MUST NOT include app.h. */
 
-/* Schema v4: added SHT45 temperature and RH channels (explicit validity) to the
-   room object. v3 -> v4 is a wire-format change (new fields), so the version is
-   incremented and GET_CAPABILITIES reports it automatically.
+/* Schema v5: added BMP390 barometric pressure and its internal temperature to
+   the room object. v4 -> v5 is a wire-format change (new fields), so the version
+   is incremented and GET_CAPABILITIES reports it automatically.
    History:
      v2: baseline room metrics (illuminance).
      v3: added SCD41 CO2, temperature and RH channels (explicit validity).
-     v4: added SHT45 temperature and RH channels (dedicated environmental T/RH). */
-#define TELEMETRY_SCHEMA_VERSION 4U
+     v4: added SHT45 temperature and RH channels (dedicated environmental T/RH).
+     v5: added BMP390 barometric pressure (Pa) and sensor-internal temperature. */
+#define TELEMETRY_SCHEMA_VERSION 5U
 
 typedef struct
 {

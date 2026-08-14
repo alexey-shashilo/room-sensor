@@ -78,7 +78,7 @@ def main():
     # Case 1: golden, all valid
     d = parse_case(1)
     if d is not None:
-        check(d.get("schema") == 4, "case1 schema==4")
+        check(d.get("schema") == 5, "case1 schema==5")
         bid = d.get("boot_id")
         check(isinstance(bid, str) and len(bid) == 16, "case1 boot_id length==16")
         check(isinstance(bid, str) and all(c in "0123456789abcdef" for c in bid),
@@ -148,6 +148,53 @@ def main():
         check(isinstance(bid, str) and len(bid) == 16, "case10 boot_id length==16")
         check(bid == "ffffffffffffffff", "case10 boot_id == ffffffffffffffff")
         check(all(c in "0123456789abcdef" for c in bid), "case10 boot_id chars in [0-9a-f]")
+
+    # Case 11: BMP390 pressure+temp valid (schema v5)
+    d = parse_case(11)
+    if d is not None:
+        room = d.get("room", {})
+        check(abs(room.get("bmp390_pressure_pa", {}).get("value") - 101324.98) < 0.1,
+              "case11 bmp390_pressure==101324.98")
+        check(room.get("bmp390_pressure_pa", {}).get("state") == "valid", "case11 pressure valid")
+        check(abs(room.get("bmp390_temperature_c", {}).get("value") - 24.5) < 0.1,
+              "case11 bmp390_temp==24.5")
+        check(room.get("bmp390_temperature_c", {}).get("state") == "valid", "case11 temp valid")
+
+    # Case 12: BMP390 invalid -> state invalid, NO fake numeric zero
+    d = parse_case(12)
+    if d is not None:
+        room = d.get("room", {})
+        check(room.get("bmp390_pressure_pa", {}).get("state") == "invalid", "case12 pressure invalid")
+        check("value" not in room.get("bmp390_pressure_pa", {}), "case12 pressure NO value (never fake 0)")
+        check(room.get("bmp390_temperature_c", {}).get("state") == "invalid", "case12 temp invalid")
+        check("value" not in room.get("bmp390_temperature_c", {}), "case12 temp NO value")
+
+    # Case 13: mixed validity — pressure valid, temperature invalid
+    d = parse_case(13)
+    if d is not None:
+        room = d.get("room", {})
+        check(room.get("bmp390_pressure_pa", {}).get("state") == "valid", "case13 pressure valid")
+        check(abs(room.get("bmp390_pressure_pa", {}).get("value") - 96500.0) < 0.1,
+              "case13 pressure==96500")
+        check(room.get("bmp390_temperature_c", {}).get("state") == "invalid", "case13 temp invalid")
+
+    # Case 14: BMP390 pressure upper boundary
+    d = parse_case(14)
+    if d is not None:
+        room = d.get("room", {})
+        check(room.get("bmp390_pressure_pa", {}).get("state") == "valid", "case14 pressure boundary valid")
+        check(abs(room.get("bmp390_pressure_pa", {}).get("value") - 125000.0) < 0.1,
+              "case14 pressure==125000")
+
+    # Case 15: worst-case all-valid must still parse as valid JSON
+    d = parse_case(15)
+    if d is not None:
+        check(d.get("schema") == 5, "case15 schema==5")
+        room = d.get("room", {})
+        check(room.get("bmp390_pressure_pa", {}).get("state") == "valid", "case15 bmp390 valid")
+        check(room.get("co2_ppm", {}).get("state") == "valid", "case15 co2 valid")
+        check(room.get("sht45_temperature_c", {}).get("state") == "valid", "case15 sht45 valid")
+        check(room.get("illuminance_lux", {}).get("state") == "valid", "case15 light valid")
 
     # Golden parsed assertions
     if parse_case(1) is not None:

@@ -161,5 +161,124 @@ int main(void)
         flush_case(10, &snap);
     }
 
+    /* 11: BMP390 pressure + temp both valid (schema v5). */
+    {
+        TelemetrySnapshot snap;
+        memset(&snap, 0, sizeof(snap));
+        snap.sequence = 52;
+        snap.health = SYSTEM_HEALTH_OK;
+        snap.room.bmp390_pressure_pa = 101324.9846f;
+        snap.room.bmp390_pressure_valid = true;
+        snap.room.bmp390_temperature_c = 24.500007f;
+        snap.room.bmp390_temperature_valid = true;
+        flush_case(11, &snap);
+    }
+
+    /* 12: BMP390 invalid -> state invalid, NO fake numeric zero. */
+    {
+        TelemetrySnapshot snap;
+        memset(&snap, 0, sizeof(snap));
+        snap.sequence = 53;
+        snap.health = SYSTEM_HEALTH_DEGRADED;
+        snap.room.bmp390_pressure_pa = 0.0f;   /* numeric preserved but invalid */
+        snap.room.bmp390_pressure_valid = false;
+        snap.room.bmp390_temperature_c = 0.0f;
+        snap.room.bmp390_temperature_valid = false;
+        flush_case(12, &snap);
+    }
+
+    /* 13: mixed validity — pressure valid, temperature invalid. */
+    {
+        TelemetrySnapshot snap;
+        memset(&snap, 0, sizeof(snap));
+        snap.sequence = 54;
+        snap.health = SYSTEM_HEALTH_OK;
+        snap.room.bmp390_pressure_pa = 96500.0f;
+        snap.room.bmp390_pressure_valid = true;
+        snap.room.bmp390_temperature_valid = false;
+        flush_case(13, &snap);
+    }
+
+    /* 14: BMP390 pressure boundary (125000 valid). */
+    {
+        TelemetrySnapshot snap;
+        memset(&snap, 0, sizeof(snap));
+        snap.sequence = 55;
+        snap.health = SYSTEM_HEALTH_OK;
+        snap.room.bmp390_pressure_pa = 125000.0f;
+        snap.room.bmp390_pressure_valid = true;
+        snap.room.bmp390_temperature_c = 27.5f;
+        snap.room.bmp390_temperature_valid = true;
+        flush_case(14, &snap);
+    }
+
+    /* Capacity check: worst-case serialized length must fit the buffer with
+       headroom. Printed BEFORE the case-15 CASE marker so it is not absorbed into
+       case 15's JSON blob by the python CASE-splitter. */
+    {
+        TelemetrySnapshot snap;
+        memset(&snap, 0, sizeof(snap));
+        snap.sequence = 0xFFFFFFFFUL;
+        snap.uptime_ms = 0xFFFFFFFFUL;
+        snap.captured_at_ms = 0xFFFFFFFFUL;
+        snap.health = SYSTEM_HEALTH_OK;
+        snap.boot_id = 0xFFFFFFFFFFFFFFFFULL;
+        memcpy(snap.device_id, "\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff", 16);
+        snap.room.illuminance_lux = 999999.9f;
+        snap.room.illuminance_valid = true;
+        snap.room.co2_ppm = 40000.0f;
+        snap.room.co2_valid = true;
+        snap.room.scd41_temperature_c = 85.0f;
+        snap.room.scd41_temperature_valid = true;
+        snap.room.scd41_humidity_pct = 100.0f;
+        snap.room.scd41_humidity_valid = true;
+        snap.room.sht45_temperature_c = 85.0f;
+        snap.room.sht45_temperature_valid = true;
+        snap.room.sht45_humidity_pct = 100.0f;
+        snap.room.sht45_humidity_valid = true;
+        snap.room.bmp390_pressure_pa = 125000.0f;
+        snap.room.bmp390_pressure_valid = true;
+        snap.room.bmp390_temperature_c = 85.0f;
+        snap.room.bmp390_temperature_valid = true;
+        uint8_t buf[TELEMETRY_SERIALIZED_MAX_SIZE];
+        size_t written = 0;
+        SerializeStatus s = Telemetry_Serialize(&snap, buf, sizeof(buf), &written);
+        fprintf(stderr, "CAPACITY size=%u max=%u headroom=%u status=%d\n",
+               (unsigned)written, (unsigned)sizeof(buf),
+               (unsigned)(sizeof(buf) - written), (int)s);
+        if (s != SERIALIZE_OK || written >= sizeof(buf))
+            return 2;   /* capacity regression: current limit too small */
+    }
+
+    /* 15: worst-case capacity — ALL channels valid (light+SCD41+SHT45+BMP390)
+       with long identifiers and large numeric values. */
+    {
+        TelemetrySnapshot snap;
+        memset(&snap, 0, sizeof(snap));
+        snap.sequence = 0xFFFFFFFFUL;
+        snap.uptime_ms = 0xFFFFFFFFUL;
+        snap.captured_at_ms = 0xFFFFFFFFUL;
+        snap.health = SYSTEM_HEALTH_OK;
+        snap.boot_id = 0xFFFFFFFFFFFFFFFFULL;
+        memcpy(snap.device_id, "\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff", 16);
+        snap.room.illuminance_lux = 999999.9f;
+        snap.room.illuminance_valid = true;
+        snap.room.co2_ppm = 40000.0f;
+        snap.room.co2_valid = true;
+        snap.room.scd41_temperature_c = 85.0f;
+        snap.room.scd41_temperature_valid = true;
+        snap.room.scd41_humidity_pct = 100.0f;
+        snap.room.scd41_humidity_valid = true;
+        snap.room.sht45_temperature_c = 85.0f;
+        snap.room.sht45_temperature_valid = true;
+        snap.room.sht45_humidity_pct = 100.0f;
+        snap.room.sht45_humidity_valid = true;
+        snap.room.bmp390_pressure_pa = 125000.0f;
+        snap.room.bmp390_pressure_valid = true;
+        snap.room.bmp390_temperature_c = 85.0f;
+        snap.room.bmp390_temperature_valid = true;
+        flush_case(15, &snap);
+    }
+
     return 0;
 }

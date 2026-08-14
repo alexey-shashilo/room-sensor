@@ -3,6 +3,7 @@
 #include "display.h"
 #include "scd41.h"
 #include "sht45.h"
+#include "bmp390.h"
 #include "storage.h"
 #include "config.h"
 #include "device_identity.h"
@@ -75,6 +76,7 @@ void SelfTest_Run(SelfTestReport *report, const I2cBus *bus)
         report->display = SELF_TEST_SKIPPED;
         report->co2_sensor = SELF_TEST_SKIPPED;
         report->temp_humidity_sensor = SELF_TEST_SKIPPED;
+        report->pressure_sensor = SELF_TEST_SKIPPED;
     }
     else
     {
@@ -90,6 +92,16 @@ void SelfTest_Run(SelfTestReport *report, const I2cBus *bus)
            mode (the runtime uses high-precision measure; a probe is a plain I2C
            address ACK check). */
         report->temp_humidity_sensor = ProbeToResult(SHT45_Probe(bus) == DRIVER_STATUS_OK);
+        /* BMP390: strong identity check (I2C comm + CHIP_ID == 0x60). No
+           destructive config/reset, no measurement — strictly observational. */
+        {
+            Bmp390 bmp;
+            int ok = 0;
+            if (BMP390_Init(&bmp, bus) == DRIVER_STATUS_OK &&
+                BMP390_Detect(&bmp) == DRIVER_STATUS_OK)
+                ok = 1;
+            report->pressure_sensor = ProbeToResult(ok != 0);
+        }
     }
 
     /* Storage subsystem initialization is runtime state, not something a

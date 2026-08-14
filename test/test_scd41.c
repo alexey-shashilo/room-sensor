@@ -705,7 +705,7 @@ int main(void)
         check(strstr((char *)buf, "742") != NULL, "29 valid co2=742 serialized");
         check(strstr((char *)buf, "scd41_temperature_c") != NULL, "31 scd41 temp present");
         check(strstr((char *)buf, "scd41_humidity_pct") != NULL, "31 scd41 rh present");
-        check(strstr((char *)buf, "\"schema\": 4") != NULL, "32 telemetry schema = 4");
+        check(strstr((char *)buf, "\"schema\": 5") != NULL, "32 telemetry schema = 5");
 
         /* Invalid CO2 must not serialize as 0. */
         TelemetrySnapshot inv;
@@ -726,7 +726,7 @@ int main(void)
        capability constant; here assert the constant is reflected. */
     printf("\n=== Telemetry: schema constant ===\n");
     {
-        check(TELEMETRY_SCHEMA_VERSION == 4U, "33 TELEMETRY_SCHEMA_VERSION=4");
+        check(TELEMETRY_SCHEMA_VERSION == 5U, "33 TELEMETRY_SCHEMA_VERSION=5");
     }
 
     /* ===================== Display (bounded formatting) ===================== */
@@ -844,8 +844,8 @@ int main(void)
               "41 GET_CAPABILITIES temperature=true (SHT45)");
         check(strstr((char *)rsp.payload, "\"humidity\":true") != NULL,
               "41 GET_CAPABILITIES humidity=true (SHT45)");
-        check(strstr((char *)rsp.payload, "\"telemetry_schema\":4") != NULL,
-              "41 GET_CAPABILITIES telemetry_schema=4");
+        check(strstr((char *)rsp.payload, "\"telemetry_schema\":5") != NULL,
+              "41 GET_CAPABILITIES telemetry_schema=5");
     }
 
     /* ============ Fixed raw wire vectors (independent of encode helpers) === */

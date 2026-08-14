@@ -44,6 +44,16 @@ typedef struct
     float  sht45_humidity_pct;
     bool   sht45_humidity_valid;
 
+    /* BMP390 barometric pressure (Pa) + its internal temperature (degC). The
+       pressure is the primary measured value; BMP390 temperature exists mainly
+       for pressure compensation and is NOT treated as the canonical room T/RH
+       source (display/ROOM T/RH remain SHT45 primary, SCD41 fallback). */
+    float  bmp390_pressure_pa;
+    bool   bmp390_pressure_valid;
+
+    float  bmp390_temperature_c;
+    bool   bmp390_temperature_valid;
+
     /* Monotonic tick when the last measurement was committed. */
     uint32_t timestamp_ms;
 } RoomState;
@@ -59,6 +69,10 @@ void         RoomState_UpdateSht45(RoomState *state,
                                    float temperature_c, bool temperature_valid,
                                    float humidity_pct, bool humidity_valid);
 void         RoomState_InvalidateSht45(RoomState *state);
+void         RoomState_UpdateBmp390(RoomState *state,
+                                    float pressure_pa, bool pressure_valid,
+                                    float temperature_c, bool temperature_valid);
+void         RoomState_InvalidateBmp390(RoomState *state);
 const RoomState *RoomState_Get(const RoomState *state);
 
 #endif

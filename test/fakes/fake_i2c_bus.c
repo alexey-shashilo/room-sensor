@@ -90,6 +90,27 @@ static DriverStatus fake_read_mem(void *ctx, uint16_t addr, uint8_t reg, uint8_t
     (void)addr;
     FakeI2cBus *f = (FakeI2cBus *)ctx;
     f->read_mem_call_count++;
+
+    /* BMP390 relay: the shared flat regs[] map is used by VEML at reg 0x00
+       (ALS_CONF), which collides with the BMP390 CHIP_ID at the same register.
+       When a BMP390 wire address is configured, serve CHIP_ID (0x00) and
+       CALIB_DATA (0x31) from dedicated fields so BMP390 app-level tests can run
+       without corrupting VEML/display. */
+    if (f->bmp390_wire_addr != 0 && addr == f->bmp390_wire_addr)
+    {
+        if (reg == 0x00U && size >= 1U && f->bmp390_chip_id != 0)
+        {
+            data[0] = f->bmp390_chip_id;
+            return f->read_mem_result;
+        }
+        if (reg == 0x31U && f->bmp390_chip_id != 0)
+        {
+            size_t n = (size < 21U) ? size : 21U;
+            memcpy(data, f->bmp390_calib, n);
+            return f->read_mem_result;
+        }
+    }
+
     if (size > 256) size = 256;
     memcpy(data, &f->regs[reg], size);
     return f->read_mem_result;
@@ -253,4 +274,27 @@ void FakeI2cBus_SetSht45Response(FakeI2cBus *fake, const uint8_t raw6[6], bool r
     if (fake == NULL || raw6 == NULL) return;
     memcpy(fake->sht45_read_response, raw6, 6);
     fake->sht45_respond = respond;
+}
+
+/* Present a BMP390 at `wire_addr` (left-shifted 0xEC or 0xEE) with the given
+   chip id and 21-byte calibration block. wa=bmp390_wire_addr; the shared probe
+   reports present, and read_mem relays CHIP_ID/CALIB_DATA from the dedicated
+   fields (isolated from VEML's reg-0 usage). */
+void FakeI2cBus_SetBmp390Present(FakeI2cBus *fake, uint16_t wire_addr,
+                                 uint8_t chip_id, const uint8_t calib[21])
+{
+    if (fake == NULL) return;
+    fake->bmp390_wire_addr = wire_addr;
+    fake->bmp390_chip_id = chip_id;
+    if (calib != NULL)
+        memcpy(fake->bmp390_calib, calib, 21);
+    else
+        memset(fake->bmp390_calib, 0, 21);
+}
+
+void FakeI2cBus_SetBmp390Absent(FakeI2cBus *fake)
+{
+    if (fake == NULL) return;
+    fake->bmp390_wire_addr = 0;
+    fake->bmp390_chip_id = 0;
 }

@@ -7,6 +7,8 @@
 #include "scd41_runtime.h"
 #include "sht45.h"
 #include "sht45_runtime.h"
+#include "bmp390.h"
+#include "bmp390_runtime.h"
 #include "platform_time.h"
 #include "platform_watchdog.h"
 #include "storage.h"
@@ -27,6 +29,7 @@ static VEML7700_HandleTypeDef s_veml;
 static Display_HandleTypeDef  s_display;
 static Scd41Runtime           s_scd41;
 static Sht45Runtime           s_sht45;
+static Bmp390Runtime          s_bmp390;
 
 static const I2cBus *s_i2c_bus = NULL;
 
@@ -34,6 +37,7 @@ static DeviceRuntime s_light_rt = { .state = DEVICE_STATE_UNKNOWN };
 static DeviceRuntime s_disp_rt  = { .state = DEVICE_STATE_UNKNOWN };
 static DeviceRuntime s_co2_rt   = { .state = DEVICE_STATE_UNKNOWN };
 static DeviceRuntime s_temp_rt  = { .state = DEVICE_STATE_UNKNOWN };   /* SHT45 */
+static DeviceRuntime s_pres_rt  = { .state = DEVICE_STATE_UNKNOWN };   /* BMP390 */
 
 static uint8_t s_display_addr = 0U;
 static bool    s_display_addr_valid = false;
@@ -45,7 +49,10 @@ static uint32_t s_last_diag_ms = 0;
 static uint32_t s_last_telemetry_ms = 0;
 static uint32_t s_last_scd41_ms = 0;
 static uint32_t s_last_sht45_ms = 0;
+static uint32_t s_last_bmp390_ms = 0;
 static uint32_t s_start_ms = 0;
+/* Commit tracker for BMP390 (see s_sht45_room_commit_ms). */
+static uint32_t s_bmp390_room_commit_ms = 0xFFFFFFFFu;
 /* Tick timestamp of the last SHT45 sample actually committed into RoomState, so
    App commits a NEW sample only when the runtime accepted one (avoiding both
    validity flicker and needless RoomState timestamp churn on every poll).
@@ -276,6 +283,52 @@ static void App_DoPollSht45(void)
         RoomState_InvalidateSht45(&s_room);
 }
 
+/* Sync the portable BMP390 diagnostic snapshot from the runtime. */
+static void App_RefreshBmp390Diagnostics(void)
+{
+    Bmp390Runtime_GetDiagnostics(&s_bmp390, &s_pres_rt);
+}
+
+/* Start BMP390 (identity detect + configure + first forced measurement). */
+static bool App_DoStartBmp390(void)
+{
+    DriverStatus s = Bmp390Runtime_Start(&s_bmp390);
+    if (s == DRIVER_STATUS_OK)
+        return true;
+    App_RefreshBmp390Diagnostics();
+    return false;
+}
+
+/* Advance the BMP390 non-blocking state machine and reflect accepted /
+   invalidated pressure into RoomState. */
+static void App_DoPollBmp390(void)
+{
+    bool had_valid = Bmp390Runtime_HasValidSample(&s_bmp390);
+    Bmp390Runtime_Poll(&s_bmp390);
+    App_RefreshBmp390Diagnostics();
+
+    bool has_valid = Bmp390Runtime_HasValidSample(&s_bmp390);
+
+    if (has_valid)
+    {
+        if (s_bmp390.last_valid_measurement_ms != s_bmp390_room_commit_ms)
+        {
+            const Bmp390Sample *m = &s_bmp390.last_sample;
+            RoomState_UpdateBmp390(&s_room,
+                                   m->pressure_pa, true,
+                                   m->temperature_c, true);
+            s_bmp390_room_commit_ms = s_bmp390.last_valid_measurement_ms;
+        }
+    }
+    else if (had_valid)
+    {
+        RoomState_InvalidateBmp390(&s_room);
+    }
+
+    if (s_bmp390.state == DEVICE_STATE_ERROR && had_valid)
+        RoomState_InvalidateBmp390(&s_room);
+}
+
 static void App_DoProbeDisplay(void)
 {
     uint8_t addr;
@@ -489,6 +542,25 @@ void App_DoRetry(void)
         default:
             break;
     }
+
+    /* --- BMP390 forced-mode runtime (bounded recovery) --- */
+    switch (s_bmp390.state)
+    {
+        case DEVICE_STATE_NOT_FOUND:
+        case DEVICE_STATE_RECOVERING:
+            App_DoStartBmp390();
+            break;
+
+        case DEVICE_STATE_ERROR:
+            App_RefreshBmp390Diagnostics();
+            RoomState_InvalidateBmp390(&s_room);
+            Bmp390Runtime_Recover(&s_bmp390);
+            App_RefreshBmp390Diagnostics();
+            break;
+
+        default:
+            break;
+    }
 }
 
 static const char *ResetCauseStr(ResetCause c)
@@ -622,6 +694,15 @@ bool App_Sht45HealthOk(DeviceState state)
             state == DEVICE_STATE_READY);
 }
 
+/* BMP390 SystemHealth contribution: STARTING/WAITING/READY -> acceptable;
+   NOT_FOUND/ERROR/RECOVERING -> NOT OK (degrades health, never FAULT). */
+bool App_Bmp390HealthOk(DeviceState state)
+{
+    return (state == DEVICE_STATE_STARTING ||
+            state == DEVICE_STATE_WAITING ||
+            state == DEVICE_STATE_READY);
+}
+
 static void App_UpdateHealth(void)
 {
     if (s_i2c_bus == NULL)
@@ -645,6 +726,9 @@ static void App_UpdateHealth(void)
        errored SHT45 degrades health but never faults the device. */
     bool sht45_ok = App_Sht45HealthOk(s_sht45.state);
 
+    /* BMP390 SystemHealth contribution (see App_Bmp390HealthOk). */
+    bool bmp390_ok = App_Bmp390HealthOk(s_bmp390.state);
+
     /* Persistence redundancy: healthy only when every A/B mirror is HEALTHY.
        A degraded mirror degrades system health without stopping sensing. */
     bool config_healthy  = (Config_GetStorageHealth() == STORAGE_HEALTH_HEALTHY);
@@ -661,7 +745,7 @@ static void App_UpdateHealth(void)
 
     /* A non-OK/FAULT state here is DEGRADED: sensing continues (the scheduler is
        never gated on health) and only the reported health reflects the mirror. */
-    if (runtime_ok && persistence_redundant_ok && scd41_ok && sht45_ok)
+    if (runtime_ok && persistence_redundant_ok && scd41_ok && sht45_ok && bmp390_ok)
         s_health = SYSTEM_HEALTH_OK;
     else
         s_health = SYSTEM_HEALTH_DEGRADED;
@@ -682,6 +766,8 @@ RoomSensor_Status App_Init(void)
     App_RefreshScd41Diagnostics();   /* s_co2_rt mirrors runtime initial state */
     Sht45Runtime_Init(&s_sht45, s_i2c_bus);
     App_RefreshSht45Diagnostics();   /* s_temp_rt mirrors runtime initial state */
+    Bmp390Runtime_Init(&s_bmp390, s_i2c_bus);
+    App_RefreshBmp390Diagnostics();  /* s_pres_rt mirrors runtime initial state */
 
     RoomState_Init(&s_room);
     SelfTest_Init(&s_self_test);
@@ -868,6 +954,18 @@ void App_Run(void)
         }
     }
 
+    /* BMP390 runtime: advance the non-blocking forced-mode state machine. */
+    if ((now - s_last_bmp390_ms) >= BMP390_RUNTIME_POLL_INTERVAL_MS)
+    {
+        s_last_bmp390_ms = now;
+        if (s_bmp390.state == DEVICE_STATE_STARTING ||
+            s_bmp390.state == DEVICE_STATE_WAITING ||
+            s_bmp390.state == DEVICE_STATE_READY)
+        {
+            App_DoPollBmp390();
+        }
+    }
+
     if ((now - s_last_display_ms) >= cfg->storage.display_period_ms)
     {
         s_last_display_ms = now;
@@ -968,6 +1066,7 @@ void App_GetStatus(AppStatus *status)
     s_status.display = s_disp_rt;
     s_status.co2_sensor = s_co2_rt;
     s_status.temp_humidity_sensor = s_temp_rt;
+    s_status.pressure_sensor = s_pres_rt;
     s_status.health = s_health;
     s_status.reset_cause = s_reset_cause;
     s_status.watchdog_active = s_watchdog_active;

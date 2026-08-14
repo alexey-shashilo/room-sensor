@@ -39,6 +39,15 @@ static void SetupHealthyPeripherals(void)
 {
     FakeI2cBus_Init(&s_fake_i2c);
     s_fake_i2c.probe_result = DRIVER_STATUS_OK;   /* VEML + display both present */
+    /* BMP390 present at the primary address with the reference chip id, so the
+       BMP390 SystemHealth contribution is OK alongside the other sensors. The
+       fake relays CHIP_ID/CALIB_DATA from dedicated fields (isolated from VEML's
+       reg-0 usage in the flat register map). */
+    static const uint8_t bmp_calib[21] = {
+        0xAD,0xD8,0x26,0x6F,0xFE,0x12,0xC3,0xCF,0x48,0x28,0xBA,
+        0x12,0x7A,0xFC,0xFF,0x3C,0xE7,0x74,0x8B,0xC9,0xB0
+    };
+    FakeI2cBus_SetBmp390Present(&s_fake_i2c, (uint16_t)(0x76U << 1), 0x60U, bmp_calib);
     FakeI2cBus_GetBus(&s_bus, &s_fake_i2c);
 }
 

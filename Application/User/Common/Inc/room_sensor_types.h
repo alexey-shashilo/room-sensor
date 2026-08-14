@@ -49,7 +49,14 @@ typedef enum
        measurement is committed on a CRC failure. */
     DRIVER_STATUS_CRC_ERROR,
     /* The requested operation is not available on this bus/context. */
-    DRIVER_STATUS_NOT_SUPPORTED
+    DRIVER_STATUS_NOT_SUPPORTED,
+    /* A device-level fault was reported by the addressed sensor's own status/ERR
+       register (e.g. fatal / command / configuration error on the BMP390), NOT
+       an I2C transport failure (which is DRIVER_STATUS_BUS_ERROR). Contract:
+       the device communicated successfully but reported an internal fault. All
+       existing drivers test `== DRIVER_STATUS_OK`, so this value is never
+       treated as success; it is a recoverable device fault, not a bus error. */
+    DRIVER_STATUS_DEVICE_ERROR
 } DriverStatus;
 
 #define CONSECUTIVE_ERROR_THRESHOLD 3U

@@ -8,7 +8,7 @@ void DeviceCapabilities_Get(DeviceCapabilities *caps)
     caps->illuminance = true;
     caps->temperature = true;      /* SHT45 dedicated temperature sensor */
     caps->relative_humidity = true;/* SHT45 humidity channel */
-    caps->pressure = false;
+    caps->pressure = true;   /* BMP390 barometric pressure */
     caps->co2 = true;      /* SCD41 CO2 concentration (ppm) */
     caps->voc = false;
     caps->nox = false;

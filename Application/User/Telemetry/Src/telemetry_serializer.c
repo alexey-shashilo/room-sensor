@@ -182,6 +182,28 @@ static SerializeStatus AppendSht45Block(char *buf, size_t cap, size_t *pos,
     return SERIALIZE_OK;
 }
 
+/* Serialize the BMP390 channels. Pressure (Pa) is the primary value; BMP390
+   temperature is its internal compensation temperature (not the canonical room
+   T/RH). %.1f gives 0.1 Pa / 0.1 degC. Invalid -> no fake 0. */
+static SerializeStatus AppendBmp390Block(char *buf, size_t cap, size_t *pos,
+                                         const RoomState *room)
+{
+    if (room == NULL) return SERIALIZE_INVALID_ARG;
+    SerializeStatus s = AppendMeasurement(buf, cap, pos,
+        "bmp390_pressure_pa",
+        room->bmp390_pressure_pa,
+        room->bmp390_pressure_valid,
+        true);
+    if (s != SERIALIZE_OK) return s;
+    s = AppendMeasurement(buf, cap, pos,
+        "bmp390_temperature_c",
+        room->bmp390_temperature_c,
+        room->bmp390_temperature_valid,
+        true);
+    if (s != SERIALIZE_OK) return s;
+    return SERIALIZE_OK;
+}
+
 SerializeStatus Telemetry_Serialize(
     const TelemetrySnapshot *snapshot,
     uint8_t *buffer,
@@ -250,6 +272,10 @@ SerializeStatus Telemetry_Serialize(
 
     /* SHT45-backed dedicated T/RH channels (separate source from SCD41). */
     s = AppendSht45Block(buf, cap, &pos, &snapshot->room);
+    if (s != SERIALIZE_OK) return s;
+
+    /* BMP390-backed barometric pressure and its internal temperature. */
+    s = AppendBmp390Block(buf, cap, &pos, &snapshot->room);
     if (s != SERIALIZE_OK) return s;
 
     s = AppendFormat(buf, cap, &pos, "\n  }\n");

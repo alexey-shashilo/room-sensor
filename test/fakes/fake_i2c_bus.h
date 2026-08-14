@@ -99,6 +99,16 @@ typedef struct
     uint8_t  sht45_read_response[6];
     bool     sht45_respond;   /* when false, a 6-byte SHT45 read NACKs */
     int      sht45_measure_cmd_count;
+
+    /* BMP390: the flat register map cannot host both VEML's ALS_CONF at reg 0x00
+       AND the BMP390 CHIP_ID at reg 0x00. When a BMP390 wire address (0x76/0x77
+       left-shifted = 0xEC/0xEE) is read at CHIP_ID (reg 0x00) or CALIB_DATA
+       (reg 0x31), serve these dedicated fields instead of the shared regs[], so
+       app-level tests can present a BMP390 alongside VEML/display/SCD41/SHT45.
+       bmp390_chip_id == 0 means "no BMP390 present" (reads return regs[]). */
+    uint16_t bmp390_wire_addr;   /* left-shifted wire address to relay, 0 = disabled */
+    uint8_t  bmp390_chip_id;
+    uint8_t  bmp390_calib[21];
 } FakeI2cBus;
 
 void FakeI2cBus_Init(FakeI2cBus *fake);
@@ -155,6 +165,14 @@ uint16_t FakeI2cBus_RhRaw(float rh_pct);
    CRC, RH word MSB-first + CRC). `respond` controls whether the fake NACKs the
    6-byte read (sensor busy / conversion in progress). */
 void FakeI2cBus_SetSht45Response(FakeI2cBus *fake, const uint8_t raw6[6], bool respond);
+
+/* Present / remove a BMP390 at a given wire address (left-shifted 0xEC/0xEE).
+   Relays CHIP_ID (reg 0x00) and CALIB_DATA (reg 0x31) from dedicated fields so
+   app-level tests can host a BMP390 alongside VEML/display without the flat
+   register map colliding (VEML uses reg 0x00 for ALS_CONF). */
+void FakeI2cBus_SetBmp390Present(FakeI2cBus *fake, uint16_t wire_addr,
+                                 uint8_t chip_id, const uint8_t calib[21]);
+void FakeI2cBus_SetBmp390Absent(FakeI2cBus *fake);
 
 #ifdef __cplusplus
 }

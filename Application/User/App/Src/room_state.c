@@ -75,6 +75,26 @@ void RoomState_InvalidateSht45(RoomState *state)
     state->timestamp_ms = Platform_GetTickMs();
 }
 
+/* Commit a fully-valid BMP390 sample (pressure Pa + sensor-internal temp). */
+void RoomState_UpdateBmp390(RoomState *state, float pressure_pa, bool pressure_valid,
+                            float temperature_c, bool temperature_valid)
+{
+    if (state == NULL) return;
+    state->bmp390_pressure_pa = pressure_pa;
+    state->bmp390_pressure_valid = pressure_valid;
+    state->bmp390_temperature_c = temperature_c;
+    state->bmp390_temperature_valid = temperature_valid;
+    state->timestamp_ms = Platform_GetTickMs();
+}
+
+void RoomState_InvalidateBmp390(RoomState *state)
+{
+    if (state == NULL) return;
+    state->bmp390_pressure_valid = false;
+    state->bmp390_temperature_valid = false;
+    state->timestamp_ms = Platform_GetTickMs();
+}
+
 const RoomState *RoomState_Get(const RoomState *state)
 {
     return state;
