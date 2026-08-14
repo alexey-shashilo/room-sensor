@@ -86,8 +86,13 @@ DriverStatus SHT45_BeginMeasurement(Sht45 *dev);
    T = -45 + 175 * ST / 65535; RH = -6 + 125 * SRH / 65535 (clamped to 0..100). */
 DriverStatus SHT45_FinishMeasurement(Sht45 *dev, Sht45Measurement *measurement);
 
-/* Soft reset (0x94). Useful to recover an unresponsive sensor; no heater active.
-   The runtime waits SHT45_RESET_DURATION_MS before re-probing. */
+/* Soft reset (0x94), 1-byte command, no heater, not used by the v1 runtime.
+
+   NOTE (contract): this is a driver-level convenience only. The SHT45 runtime
+   does NOT call SHT45_SoftReset, so it does NOT autonomously wait
+   SHT45_RESET_DURATION_MS before re-probing. A caller that invokes this must
+   enforce the official ~1 ms soft-reset execution time (SHT45_RESET_DURATION_MS)
+   itself before issuing further commands. */
 DriverStatus SHT45_SoftReset(Sht45 *dev);
 
 #endif

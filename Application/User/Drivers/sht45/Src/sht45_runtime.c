@@ -67,7 +67,11 @@ void Sht45Runtime_Init(Sht45Runtime *rt, const I2cBus *bus)
 
 bool Sht45Runtime_HasValidSample(const Sht45Runtime *rt)
 {
-    return rt != NULL && rt->state == DEVICE_STATE_READY && rt->last_sample.valid;
+    /* Sample validity is decoupled from the STARTING/READY transaction state:
+       a last-good sample stays valid while the next conversion is in progress.
+       'last_sample.valid' is cleared only by stale timeout, durable ERROR,
+       confirmed-missing, or explicit invalidation. */
+    return rt != NULL && rt->last_sample.valid;
 }
 
 bool Sht45Runtime_IsMissing(const Sht45Runtime *rt)
@@ -75,17 +79,24 @@ bool Sht45Runtime_IsMissing(const Sht45Runtime *rt)
     return rt != NULL && rt->state == DEVICE_STATE_NOT_FOUND;
 }
 
+void Sht45Runtime_InvalidateSample(Sht45Runtime *rt)
+{
+    if (rt == NULL) return;
+    rt->last_sample.valid = false;
+}
+
 /* A previously-valid value becomes invalid once no fresh sample has been
-   accepted within the stale timeout. Numeric value preserved; validity cleared. */
+   accepted within the stale timeout. Numeric value preserved; validity cleared.
+   Based PURELY on last_valid_measurement_ms, independent of the transaction
+   state, so a sample can be invalidated even while a conversion/retry is in
+   progress. The in-flight measurement is NOT aborted: if it later produces a
+   fresh sample, validity is re-established from that sample. */
 static void Sht45Runtime_EnforceFreshness(Sht45Runtime *rt, uint32_t now)
 {
-    if (rt->state != DEVICE_STATE_READY)
+    if (rt->last_sample.valid == false)
         return;
     if ((now - rt->last_valid_measurement_ms) >= SHT45_RUNTIME_STALE_MS)
-    {
         rt->last_sample.valid = false;
-        rt->state = DEVICE_STATE_WAITING;
-    }
 }
 
 DriverStatus Sht45Runtime_Start(Sht45Runtime *rt)

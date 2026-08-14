@@ -46,6 +46,11 @@ static uint32_t s_last_telemetry_ms = 0;
 static uint32_t s_last_scd41_ms = 0;
 static uint32_t s_last_sht45_ms = 0;
 static uint32_t s_start_ms = 0;
+/* Tick timestamp of the last SHT45 sample actually committed into RoomState, so
+   App commits a NEW sample only when the runtime accepted one (avoiding both
+   validity flicker and needless RoomState timestamp churn on every poll).
+   Initialized to a sentinel so the first accepted sample always commits. */
+static uint32_t s_sht45_room_commit_ms = 0xFFFFFFFFu;
 
 static SystemHealthState s_health = SYSTEM_HEALTH_BOOTING;
 static ResetCause        s_reset_cause = RESET_CAUSE_UNKNOWN;
@@ -242,19 +247,31 @@ static void App_DoPollSht45(void)
     App_RefreshSht45Diagnostics();
 
     bool has_valid = Sht45Runtime_HasValidSample(&s_sht45);
+
     if (has_valid)
     {
-        const Sht45Measurement *m = &s_sht45.last_sample;
-        RoomState_UpdateSht45(&s_room,
-                              m->temperature_c, true,
-                              m->relative_humidity_pct, true);
+        /* Commit a genuinely NEW sample (last_valid_measurement_ms advanced past
+           the last RoomState commit). During a normal in-flight conversion the
+           last-good sample stays valid and is NOT re-rendered as invalid, so
+           RoomState retains the last-good value without a valid->invalid->valid
+           toggle. */
+        if (s_sht45.last_valid_measurement_ms != s_sht45_room_commit_ms)
+        {
+            const Sht45Measurement *m = &s_sht45.last_sample;
+            RoomState_UpdateSht45(&s_room,
+                                  m->temperature_c, true,
+                                  m->relative_humidity_pct, true);
+            s_sht45_room_commit_ms = s_sht45.last_valid_measurement_ms;
+        }
     }
     else if (had_valid)
     {
-        /* Previously-valid SHT45 sample went stale or sensor lost. */
+        /* The last-good sample went stale or was invalidated (durable error /
+           confirmed missing). Clear RoomState validity. */
         RoomState_InvalidateSht45(&s_room);
     }
 
+    /* Durable error: invalidate RoomState regardless of the had/has compare. */
     if (s_sht45.state == DEVICE_STATE_ERROR && had_valid)
         RoomState_InvalidateSht45(&s_room);
 }

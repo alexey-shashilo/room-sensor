@@ -72,6 +72,44 @@ static void tick(Sht45Runtime *rt, uint32_t delta)
     Sht45Runtime_Poll(rt);
 }
 
+/* =====================================================================
+   LITERAL raw wire vectors (immutable, hand-checked, independent of any
+   production encoder / fake helper / make_response()).
+
+   Each entry is the exact on-wire 6-byte response the sensor returns for a
+   single-shot measurement: T-word MSB, T-word LSB, T-CRC, RH-word MSB,
+   RH-word LSB, RH-CRC (datasheet §4.3). The expected decoded T/RH below are
+   hard-coded independently from the formula:
+      T[degC] = -45 + 175*ST/65535 ; RH[%] = clamp(-6 + 125*SRH/65535)
+   The CRC bytes were computed ONLY from the literal byte pairs (poly 0x31,
+   init 0xFF) and are fixed constants, so a change in polynomial/init/bit order
+   fails the test. */
+static const uint8_t LIT_V1[6] = { 0x79, 0xDD, 0x31, 0x51, 0xF0, 0x10 };
+static const uint8_t LIT_V2[6] = { 0x5C, 0x7A, 0xF1, 0x6B, 0x88, 0x0D };
+static const uint8_t LIT_V3[6] = { 0xA5, 0xA5, 0x00, 0x1E, 0x34, 0x83 };
+#define LIT_V1_T_DEGC   38.31f
+#define LIT_V1_RH_PCT   34.01f
+#define LIT_V2_T_DEGC   18.22f
+#define LIT_V2_RH_PCT   46.51f
+#define LIT_V3_T_DEGC   68.24f
+#define LIT_V3_RH_PCT   8.75f
+
+/* Byte-order-sensitive literal vector (T word 0x6B3A, RH word 0x4920).
+   MSB-first decodes T=28.30 C; an LSB-first decoder would read T word 0x3A6B
+   (~63.5 C), so this test fails if byte order regresses. */
+static const uint8_t LIT_BYTEORDER[6] = { 0x6B, 0x3A, 0xD0, 0x49, 0x20, 0x4D };
+#define LIT_BYTEORDER_T_DEGC 28.30f
+
+/* CRC known-answer tests: (input bytes) -> expected CRC-8 constant. */
+static const uint8_t KAT_BE_EF[2] = { 0xBE, 0xEF };
+static const uint8_t KAT_00_00[2] = { 0x00, 0x00 };
+static const uint8_t KAT_FF_FF[2] = { 0xFF, 0xFF };
+static const uint8_t KAT_3C_42[2] = { 0x3C, 0x42 }; 
+#define KAT_BE_EF_CRC 0x92U
+#define KAT_00_00_CRC 0x81U
+#define KAT_FF_FF_CRC 0xACU
+#define KAT_3C_42_CRC 0xD8U
+
 int main(void)
 {
     printf("SHT45 driver / runtime / integration host tests\n");
@@ -379,6 +417,179 @@ int main(void)
         check(caps.temperature == true, "23a: temperature capability enabled");
         check(caps.relative_humidity == true, "23b: RH capability enabled");
         check(caps.co2 == true, "23c: CO2 still enabled (SCD41)");
+    }
+
+    /* ============ Literal raw wire vectors ============ */
+    {
+        FakeI2cBus fake; I2cBus bus; Sht45 dev; Sht45Measurement m;
+        FakeI2cBus_Init(&fake);
+        FakeI2cBus_GetBus(&bus, &fake);
+        SHT45_Init(&dev, &bus);
+        FakeI2cBus_SetSht45Response(&fake, LIT_V1, true);
+        SHT45_BeginMeasurement(&dev);
+        check(SHT45_FinishMeasurement(&dev, &m) == DRIVER_STATUS_OK, "24: literal V1 decode ok");
+        check(m.valid, "24: literal V1 valid");
+        check(fabs(m.temperature_c - LIT_V1_T_DEGC) < 0.2f, "24: literal V1 temp ~38.3 (MSB-first)");
+        check(fabs(m.relative_humidity_pct - LIT_V1_RH_PCT) < 0.5f, "24: literal V1 RH ~34.0");
+
+        FakeI2cBus_Init(&fake);
+        FakeI2cBus_GetBus(&bus, &fake);
+        SHT45_Init(&dev, &bus);
+        FakeI2cBus_SetSht45Response(&fake, LIT_V2, true);
+        SHT45_BeginMeasurement(&dev);
+        check(SHT45_FinishMeasurement(&dev, &m) == DRIVER_STATUS_OK, "24: literal V2 decode ok");
+        check(m.valid, "24: literal V2 valid");
+        check(fabs(m.temperature_c - LIT_V2_T_DEGC) < 0.2f, "24: literal V2 temp ~18.2 (MSB-first)");
+        check(fabs(m.relative_humidity_pct - LIT_V2_RH_PCT) < 0.5f, "24: literal V2 RH ~46.5");
+
+        FakeI2cBus_Init(&fake);
+        FakeI2cBus_GetBus(&bus, &fake);
+        SHT45_Init(&dev, &bus);
+        FakeI2cBus_SetSht45Response(&fake, LIT_V3, true);
+        SHT45_BeginMeasurement(&dev);
+        check(SHT45_FinishMeasurement(&dev, &m) == DRIVER_STATUS_OK, "24: literal V3 decode ok");
+        check(m.valid, "24: literal V3 valid");
+        check(fabs(m.temperature_c - LIT_V3_T_DEGC) < 0.3f, "24: literal V3 temp ~68.2 (MSB-first)");
+        check(fabs(m.relative_humidity_pct - LIT_V3_RH_PCT) < 0.5f, "24: literal V3 RH ~8.8");
+    }
+
+    /* ============ CRC known-answer ============ */
+    {
+        check(SHT45_Crc8(KAT_BE_EF, 2) == KAT_BE_EF_CRC, "25: CRC KAT 0xBE 0xEF -> 0x92");
+        check(SHT45_Crc8(KAT_00_00, 2) == KAT_00_00_CRC, "25: CRC KAT 0x00 0x00 -> 0x81");
+        check(SHT45_Crc8(KAT_FF_FF, 2) == KAT_FF_FF_CRC, "25: CRC KAT 0xFF 0xFF -> 0xAC");
+        check(SHT45_Crc8(KAT_3C_42, 2) == KAT_3C_42_CRC, "25: CRC KAT 0x3C 0x42 -> 0xD8");
+        /* independent helper as secondary coverage */
+        check(SHT45_Crc8(KAT_BE_EF, 2) == crc_independent(KAT_BE_EF, 2), "25: CRC independent agrees");
+    }
+
+    /* ============ Byte-order regression (MSB-first required) ============ */
+    {
+        FakeI2cBus fake; I2cBus bus; Sht45 dev; Sht45Measurement m;
+        FakeI2cBus_Init(&fake);
+        FakeI2cBus_GetBus(&bus, &fake);
+        SHT45_Init(&dev, &bus);
+        FakeI2cBus_SetSht45Response(&fake, LIT_BYTEORDER, true);
+        SHT45_BeginMeasurement(&dev);
+        check(SHT45_FinishMeasurement(&dev, &m) == DRIVER_STATUS_OK, "26: byteorder decode ok");
+        /* MSB-first T word 0x6B3A -> 28.30 C. LSB-first would decode 0x3A6B
+           (~63.5 C), so a byte-order regression fails this hard-coded check. */
+        check(fabs(m.temperature_c - LIT_BYTEORDER_T_DEGC) < 0.2f,
+              "26: MSB-first temp ~28.3 (byte-swap would fail)");
+        check(m.temperature_c < 40.0f, "26: temp clearly MSB-first (<40, not ~63.5)");
+    }
+
+    /* ============ Continuous validity across normal conversion ============ */
+    {
+        FakeI2cBus fake; I2cBus bus; Sht45Runtime rt; RoomState rs;
+        FakeI2cBus_Init(&fake);
+        FakeI2cBus_GetBus(&bus, &fake);
+        FakePlatform_SetTick(0);
+        Sht45Runtime_Init(&rt, &bus);
+        RoomState_Init(&rs);
+
+        uint8_t resp[6];
+        make_response(25.0f, 45.0f, resp);
+        FakeI2cBus_SetSht45Response(&fake, resp, true);
+
+        /* first sample accepted */
+        Sht45Runtime_Start(&rt);
+        tick(&rt, 11);
+        check(rt.state == DEVICE_STATE_READY, "27a: first sample READY");
+        check(Sht45Runtime_HasValidSample(&rt), "27b: first sample valid");
+        RoomState_UpdateSht45(&rs, rt.last_sample.temperature_c, true,
+                              rt.last_sample.relative_humidity_pct, true);
+
+        /* advance past interval: runtime transitions READY -> STARTING (new
+           conversion begun); last-good sample MUST remain valid. */
+        FakePlatform_AdvanceTick(SHT45_RUNTIME_MEASUREMENT_INTERVAL_MS);
+        Sht45Runtime_Poll(&rt);
+        check(rt.state == DEVICE_STATE_STARTING, "27c: next conversion in STARTING");
+        check(rt.last_sample.valid, "27d: last-good sample STAYS valid during conversion");
+        check(Sht45Runtime_HasValidSample(&rt), "27e: HasValidSample true during conversion");
+        check(rs.sht45_temperature_valid && rs.sht45_humidity_valid,
+              "27f: RoomState STAYS valid during conversion");
+
+        /* before FinishMeasurement: still valid */
+        FakePlatform_AdvanceTick(5);
+        Sht45Runtime_Poll(&rt);   /* < 10ms, no read yet */
+        check(Sht45Runtime_HasValidSample(&rt), "27g: still valid before finish");
+
+        /* after successful FinishMeasurement: new sample atomically replaces old,
+           valid continuously. */
+        FakePlatform_AdvanceTick(6);
+        Sht45Runtime_Poll(&rt);
+        check(rt.state == DEVICE_STATE_READY, "27h: new sample READY");
+        check(rt.last_sample.valid && Sht45Runtime_HasValidSample(&rt),
+              "27i: valid remains true continuously (no flicker)");
+    }
+
+    /* ============ Stale-while-measuring (validity NOT immortal) ============ */
+    {
+        FakeI2cBus fake; I2cBus bus; Sht45Runtime rt; RoomState rs;
+        FakeI2cBus_Init(&fake);
+        FakeI2cBus_GetBus(&bus, &fake);
+        FakePlatform_SetTick(0);
+        Sht45Runtime_Init(&rt, &bus);
+        RoomState_Init(&rs);
+
+        uint8_t resp[6];
+        make_response(24.0f, 40.0f, resp);
+        FakeI2cBus_SetSht45Response(&fake, resp, true);
+        Sht45Runtime_Start(&rt);
+        tick(&rt, 11);
+        check(rt.state == DEVICE_STATE_READY && Sht45Runtime_HasValidSample(&rt),
+              "28a: valid sample established");
+        RoomState_UpdateSht45(&rs, rt.last_sample.temperature_c, true,
+                              rt.last_sample.relative_humidity_pct, true);
+
+        /* Sensor stops responding: a new conversion begins but never completes. */
+        fake.sht45_respond = false;
+        FakePlatform_AdvanceTick(SHT45_RUNTIME_MEASUREMENT_INTERVAL_MS);
+        Sht45Runtime_Poll(&rt);          /* READY -> STARTING (measure issued) */
+        FakePlatform_AdvanceTick(11);
+        Sht45Runtime_Poll(&rt);          /* read NACKs -> retry */
+        /* push far past the stale timeout while a transaction is in progress */
+        FakePlatform_AdvanceTick(SHT45_RUNTIME_STALE_MS + SHT45_RUNTIME_MEASUREMENT_INTERVAL_MS);
+        Sht45Runtime_Poll(&rt);
+        check(rt.last_sample.valid == false, "28b: stale invalidated even while measuring");
+        check(Sht45Runtime_HasValidSample(&rt) == false, "28c: HasValidSample false after stale");
+        RoomState_InvalidateSht45(&rs);
+        check(!rs.sht45_temperature_valid && !rs.sht45_humidity_valid,
+              "28d: RoomState invalidated after stale");
+    }
+
+    /* ============ Durable error invalidates previous sample ============ */
+    {
+        FakeI2cBus fake; I2cBus bus; Sht45Runtime rt;
+        FakeI2cBus_Init(&fake);
+        FakeI2cBus_GetBus(&bus, &fake);
+        FakePlatform_SetTick(0);
+        Sht45Runtime_Init(&rt, &bus);
+
+        uint8_t resp[6];
+        make_response(23.0f, 50.0f, resp);
+        FakeI2cBus_SetSht45Response(&fake, resp, true);
+        Sht45Runtime_Start(&rt);
+        tick(&rt, 11);
+        check(rt.state == DEVICE_STATE_READY && rt.last_sample.valid,
+              "29a: valid sample before error");
+
+        /* repeated transport failures -> ERROR invalidates the old sample */
+        fake.sht45_respond = false;
+        /* Trigger the next single-shot conversion (READY -> STARTING). */
+        FakePlatform_AdvanceTick(SHT45_RUNTIME_MEASUREMENT_INTERVAL_MS);
+        Sht45Runtime_Poll(&rt);          /* begin measure */
+        FakePlatform_AdvanceTick(11);
+        Sht45Runtime_Poll(&rt);          /* read NACKs -> counted failure/retry */
+        for (int i = 0; i < (int)SHT45_RUNTIME_ERROR_THRESHOLD; i++)
+        {
+            FakePlatform_AdvanceTick(SHT45_MEASUREMENT_DURATION_MS);
+            Sht45Runtime_Poll(&rt);      /* read NACKs again -> failure */
+        }
+        check(rt.state == DEVICE_STATE_ERROR, "29b: durable failure -> ERROR");
+        check(rt.last_sample.valid == false, "29c: old sample invalidated on ERROR");
+        check(Sht45Runtime_HasValidSample(&rt) == false, "29d: HasValidSample false after ERROR");
     }
 
     printf("\n=== Summary ===\n");
