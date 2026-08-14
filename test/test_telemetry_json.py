@@ -79,6 +79,11 @@ def main():
     d = parse_case(1)
     if d is not None:
         check(d.get("schema") == 3, "case1 schema==3")
+        bid = d.get("boot_id")
+        check(isinstance(bid, str) and len(bid) == 16, "case1 boot_id length==16")
+        check(isinstance(bid, str) and all(c in "0123456789abcdef" for c in bid),
+              "case1 boot_id chars in [0-9a-f]")
+        check(bid == "0123456789abcdef", "case1 boot_id == 0123456789abcdef")
         room = d.get("room", {})
         check(room.get("co2_ppm", {}).get("value") == 1006, "case1 co2.value==1006")
         check(room.get("co2_ppm", {}).get("state") == "valid", "case1 co2.state valid")
@@ -123,6 +128,14 @@ def main():
             cp = d.get("room", {}).get("co2_ppm", {})
             check(cp.get("state") == "invalid", "case%d %s -> invalid" % (n, nm))
             check("value" not in cp, "case%d %s -> no numeric value" % (n, nm))
+
+    # Case 10: full-mask boot_id
+    d = parse_case(10)
+    if d is not None:
+        bid = d.get("boot_id")
+        check(isinstance(bid, str) and len(bid) == 16, "case10 boot_id length==16")
+        check(bid == "ffffffffffffffff", "case10 boot_id == ffffffffffffffff")
+        check(all(c in "0123456789abcdef" for c in bid), "case10 boot_id chars in [0-9a-f]")
 
     # Golden parsed assertions
     if parse_case(1) is not None:

@@ -271,6 +271,7 @@ size_t exact = req;
         snap.uptime_ms = 10000;
         snap.captured_at_ms = 10000;
         snap.health = SYSTEM_HEALTH_OK;
+        snap.boot_id = 0x0123456789ABCDEFULL;
         snap.room.illuminance_lux = 72.4f;
         snap.room.illuminance_valid = true;
         memcpy(snap.device_id, "\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f\x10", 16);
@@ -286,7 +287,8 @@ size_t exact = req;
         test("lux 72.4", strstr((char *)buf, "72.4") != NULL);
         test("no session field", strstr((char *)buf, "\"session\"") == NULL);
         test("boot_id present", strstr((char *)buf, "\"boot_id\"") != NULL);
-        test("boot_id format hex", strstr((char *)buf, "\"0000000000000000\"") != NULL);
+        test("boot_id format hex lowercase", strstr((char *)buf, "\"0123456789abcdef\"") != NULL);
+        test("boot_id no stray lx", strstr((char *)buf, "lx") == NULL);
         test("no trailing comma before close", strstr((char *)buf, ",}") == NULL);
         test("valid JSON close", strstr((char *)buf, "}\n") != NULL);
     }

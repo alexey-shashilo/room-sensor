@@ -39,6 +39,7 @@ int main(void)
         snap.uptime_ms = 10000;
         snap.captured_at_ms = 10000;
         snap.health = SYSTEM_HEALTH_OK;
+        snap.boot_id = 0x0123456789ABCDEFULL;
         memcpy(snap.device_id,
                "\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f\x10", 16);
         snap.room.illuminance_lux = 72.4f;
@@ -144,6 +145,16 @@ int main(void)
         snap.room.co2_ppm = -INFINITY;
         snap.room.co2_valid = true;
         flush_case(9, &snap);
+    }
+
+    /* 10: full-mask boot_id -> "ffffffffffffffff" (fixed 16 lowercase hex). */
+    {
+        TelemetrySnapshot snap;
+        memset(&snap, 0, sizeof(snap));
+        snap.sequence = 51;
+        snap.health = SYSTEM_HEALTH_OK;
+        snap.boot_id = 0xFFFFFFFFFFFFFFFFULL;
+        flush_case(10, &snap);
     }
 
     return 0;

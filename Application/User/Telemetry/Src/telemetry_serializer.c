@@ -1,4 +1,5 @@
 #include "telemetry_serializer.h"
+#include "hex64.h"
 #include <stdio.h>
 #include <string.h>
 #include <stdarg.h>
@@ -186,9 +187,14 @@ SerializeStatus Telemetry_Serialize(
     s = AppendFormat(buf, cap, &pos, "\",\n");
     if (s != SERIALIZE_OK) return s;
 
-    s = AppendFormat(buf, cap, &pos, "  \"boot_id\": \"%016llx\",\n",
-        (unsigned long long)snapshot->boot_id);
-    if (s != SERIALIZE_OK) return s;
+    {
+        /* boot_id is serialized without any libc 64-bit printf ("%llx") because
+           newlib-nano lacks %ll support; see hex64.h. Always [0-9a-f]{16}. */
+        char bid[17];
+        Hex64_ToLower(bid, snapshot->boot_id);
+        s = AppendFormat(buf, cap, &pos, "  \"boot_id\": \"%s\",\n", bid);
+        if (s != SERIALIZE_OK) return s;
+    }
 
     s = AppendFormat(buf, cap, &pos,
         "  \"seq\": %lu,\n"

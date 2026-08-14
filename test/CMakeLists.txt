@@ -52,6 +52,15 @@ target_include_directories(test_arch PRIVATE
 )
 add_test(NAME test_arch COMMAND test_arch)
 
+add_executable(test_hex64
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_hex64.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Common/Src/hex64.c
+)
+target_include_directories(test_hex64 PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Common/Inc
+)
+add_test(NAME test_hex64 COMMAND test_hex64)
+
 add_executable(test_storage
     ${CMAKE_CURRENT_SOURCE_DIR}/test_storage.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/App/Src/config.c
@@ -163,6 +172,7 @@ add_executable(test_boot_health
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Communication/Src/communication_debug.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Telemetry/Src/telemetry.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Telemetry/Src/telemetry_serializer.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Common/Src/hex64.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Command/Src/command.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Command/Src/command_dispatcher.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Command/Src/command_parser.c
@@ -240,6 +250,7 @@ add_test(NAME test_parser COMMAND test_parser)
 
 add_executable(test_command
     ${CMAKE_CURRENT_SOURCE_DIR}/test_command.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Common/Src/hex64.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Command/Src/command.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Command/Src/command_parser.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Command/Src/command_response.c
@@ -287,6 +298,7 @@ add_test(NAME test_command COMMAND test_command)
 
 add_executable(test_telemetry
     ${CMAKE_CURRENT_SOURCE_DIR}/test_telemetry.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Common/Src/hex64.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/App/Src/room_state.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/App/Src/config.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/App/Src/device_identity.c
@@ -317,6 +329,7 @@ add_test(NAME test_telemetry COMMAND test_telemetry)
 # output).
 add_executable(test_telemetry_json
     ${CMAKE_CURRENT_SOURCE_DIR}/test_telemetry_json.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Common/Src/hex64.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/App/Src/room_state.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Telemetry/Src/telemetry.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Telemetry/Src/telemetry_serializer.c
@@ -338,6 +351,7 @@ endif()
 
 add_executable(test_longrun
     ${CMAKE_CURRENT_SOURCE_DIR}/test_longrun.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Common/Src/hex64.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/App/Src/room_state.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/App/Src/config.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/App/Src/device_identity.c
@@ -367,6 +381,7 @@ add_executable(test_scd41
     ${CMAKE_CURRENT_SOURCE_DIR}/test_scd41.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/scd41/Src/scd41.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/scd41/Src/scd41_runtime.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Common/Src/hex64.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/App/Src/room_state.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/App/Src/config.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/App/Src/device_identity.c

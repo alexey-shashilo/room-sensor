@@ -1,4 +1,5 @@
 #include "device_manifest_serializer.h"
+#include "hex64.h"
 #include "platform_hardware.h"
 #include <stdio.h>
 #include <string.h>
@@ -88,9 +89,10 @@ ManifestSerializeStatus DeviceManifest_Serialize(
     s = AppendFormat(buf, cap, &pos, "\",\n");
     if (s != MANIFEST_SERIALIZE_OK) return s;
 
-    /* boot_id */
-    s = AppendFormat(buf, cap, &pos, "  \"boot_id\": \"%016llx\",\n",
-        (unsigned long long)manifest->session.boot_id);
+    /* boot_id (serialized without libc %llx; always [0-9a-f]{16}) */
+    char bid[17];
+    Hex64_ToLower(bid, manifest->session.boot_id);
+    s = AppendFormat(buf, cap, &pos, "  \"boot_id\": \"%s\",\n", bid);
     if (s != MANIFEST_SERIALIZE_OK) return s;
 
     /* firmware */

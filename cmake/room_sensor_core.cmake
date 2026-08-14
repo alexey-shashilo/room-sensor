@@ -26,6 +26,7 @@ set(CORE_SRC
     ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/Device/Src/device_manifest_serializer.c
     ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/Device/Src/device_lifecycle.c
     ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/Provisioning/Src/provisioning.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/Common/Src/hex64.c
 )
 
 set(CORE_INC
