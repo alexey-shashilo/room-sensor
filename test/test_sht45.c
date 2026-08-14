@@ -592,6 +592,185 @@ int main(void)
         check(Sht45Runtime_HasValidSample(&rt) == false, "29d: HasValidSample false after ERROR");
     }
 
+    /* ============ Full lifecycle recovery: ERROR -> RECOVERING -> READY ============ */
+    {
+        FakeI2cBus fake; I2cBus bus; Sht45Runtime rt;
+        FakeI2cBus_Init(&fake);
+        FakeI2cBus_GetBus(&bus, &fake);
+        FakePlatform_SetTick(0);
+        Sht45Runtime_Init(&rt, &bus);
+
+        uint8_t resp[6];
+        make_response(22.0f, 40.0f, resp);
+        FakeI2cBus_SetSht45Response(&fake, resp, true);
+
+        /* initial start -> READY with a valid sample */
+        Sht45Runtime_Start(&rt);
+        tick(&rt, 11);
+        check(rt.state == DEVICE_STATE_READY && rt.last_sample.valid, "30a: initial READY valid");
+        uint32_t success_before = rt.operation_successes;
+
+        /* inject failures until the threshold -> ERROR; old sample invalid */
+        fake.sht45_respond = false;
+        FakePlatform_AdvanceTick(SHT45_RUNTIME_MEASUREMENT_INTERVAL_MS);
+        Sht45Runtime_Poll(&rt);            /* READY -> STARTING (measure issued) */
+        for (int i = 0; i < (int)SHT45_RUNTIME_ERROR_THRESHOLD; i++)
+        {
+            FakePlatform_AdvanceTick(SHT45_MEASUREMENT_DURATION_MS);
+            Sht45Runtime_Poll(&rt);        /* read NACKs -> failure */
+        }
+        check(rt.state == DEVICE_STATE_ERROR, "30b: failures -> ERROR");
+        check(rt.last_sample.valid == false, "30c: old sample invalidated on ERROR");
+
+        /* recovery API: ERROR -> RECOVERING, recovery_count++, budget reset */
+        Sht45Runtime_Recover(&rt);
+        check(rt.state == DEVICE_STATE_RECOVERING, "30d: Recover -> RECOVERING");
+        check(rt.recovery_count == 1, "30e: recovery_count == 1");
+        check(rt.consecutive_errors == 0, "30f: consecutive_errors reset (new epoch)");
+
+        /* sensor recovered; re-start -> STARTING */
+        fake.sht45_respond = true;
+        FakeI2cBus_SetSht45Response(&fake, resp, true);
+        check(Sht45Runtime_Start(&rt) == DRIVER_STATUS_OK, "30g: re-start ok");
+        check(rt.state == DEVICE_STATE_STARTING, "30h: re-start -> STARTING");
+
+        /* advance conversion deadline -> successful measurement -> READY */
+        FakePlatform_AdvanceTick(SHT45_MEASUREMENT_DURATION_MS + 1);
+        Sht45Runtime_Poll(&rt);
+        check(rt.state == DEVICE_STATE_READY, "30i: recovery reaches READY");
+        check(rt.last_sample.valid && Sht45Runtime_HasValidSample(&rt),
+              "30j: fresh sample valid after recovery");
+        check(rt.consecutive_errors == 0, "30k: consecutive_errors stays 0 after success");
+        check(rt.recovery_count == 1, "30l: recovery_count still 1");
+        check(rt.operation_successes == success_before + 1,
+              "30m: operation_successes increased");
+    }
+
+    /* ============ Second recovery cycle (no one-shot bug) ============ */
+    {
+        FakeI2cBus fake; I2cBus bus; Sht45Runtime rt;
+        FakeI2cBus_Init(&fake);
+        FakeI2cBus_GetBus(&bus, &fake);
+        FakePlatform_SetTick(0);
+        Sht45Runtime_Init(&rt, &bus);
+
+        uint8_t resp[6];
+        make_response(24.0f, 45.0f, resp);
+
+        /* cycle 1: READY -> ERROR -> Recover -> READY */
+        FakeI2cBus_SetSht45Response(&fake, resp, true);
+        Sht45Runtime_Start(&rt);
+        tick(&rt, 11);
+        check(rt.state == DEVICE_STATE_READY, "31a: cycle1 READY");
+
+        fake.sht45_respond = false;
+        FakePlatform_AdvanceTick(SHT45_RUNTIME_MEASUREMENT_INTERVAL_MS);
+        Sht45Runtime_Poll(&rt);
+        for (int i = 0; i < (int)SHT45_RUNTIME_ERROR_THRESHOLD; i++)
+        { FakePlatform_AdvanceTick(SHT45_MEASUREMENT_DURATION_MS); Sht45Runtime_Poll(&rt); }
+        check(rt.state == DEVICE_STATE_ERROR, "31b: cycle1 ERROR");
+        Sht45Runtime_Recover(&rt);
+        fake.sht45_respond = true;
+        Sht45Runtime_Start(&rt);
+        FakePlatform_AdvanceTick(SHT45_MEASUREMENT_DURATION_MS + 1);
+        Sht45Runtime_Poll(&rt);
+        check(rt.state == DEVICE_STATE_READY, "31c: cycle1 recovered to READY");
+
+        /* cycle 2: READY -> ERROR -> Recover -> READY */
+        fake.sht45_respond = false;
+        FakePlatform_AdvanceTick(SHT45_RUNTIME_MEASUREMENT_INTERVAL_MS);
+        Sht45Runtime_Poll(&rt);
+        for (int i = 0; i < (int)SHT45_RUNTIME_ERROR_THRESHOLD; i++)
+        { FakePlatform_AdvanceTick(SHT45_MEASUREMENT_DURATION_MS); Sht45Runtime_Poll(&rt); }
+        check(rt.state == DEVICE_STATE_ERROR, "31d: cycle2 ERROR");
+        Sht45Runtime_Recover(&rt);
+        fake.sht45_respond = true;
+        Sht45Runtime_Start(&rt);
+        FakePlatform_AdvanceTick(SHT45_MEASUREMENT_DURATION_MS + 1);
+        Sht45Runtime_Poll(&rt);
+        check(rt.state == DEVICE_STATE_READY, "31e: cycle2 recovered to READY");
+        check(rt.recovery_count == 2, "31f: recovery_count == 2 (multi-recovery)");
+    }
+
+    /* ============ Failed recovery: probe fails after Recover -> NOT_FOUND ============ */
+    {
+        FakeI2cBus fake; I2cBus bus; Sht45Runtime rt;
+        FakeI2cBus_Init(&fake);
+        FakeI2cBus_GetBus(&bus, &fake);
+        FakePlatform_SetTick(0);
+        Sht45Runtime_Init(&rt, &bus);
+
+        /* drive to ERROR */
+        uint8_t resp[6];
+        make_response(25.0f, 50.0f, resp);
+        FakeI2cBus_SetSht45Response(&fake, resp, true);
+        Sht45Runtime_Start(&rt);
+        tick(&rt, 11);
+        fake.sht45_respond = false;
+        FakePlatform_AdvanceTick(SHT45_RUNTIME_MEASUREMENT_INTERVAL_MS);
+        Sht45Runtime_Poll(&rt);
+        for (int i = 0; i < (int)SHT45_RUNTIME_ERROR_THRESHOLD; i++)
+        { FakePlatform_AdvanceTick(SHT45_MEASUREMENT_DURATION_MS); Sht45Runtime_Poll(&rt); }
+        check(rt.state == DEVICE_STATE_ERROR, "32a: prior ERROR");
+
+        /* recovery with the sensor still gone: probe fails -> NOT_FOUND (no loop) */
+        uint32_t fails_before = rt.operation_failures;
+        Sht45Runtime_Recover(&rt);
+        check(rt.state == DEVICE_STATE_RECOVERING, "32b: Recover -> RECOVERING");
+        fake.probe_result = DRIVER_STATUS_TIMEOUT;
+        DriverStatus start_r = Sht45Runtime_Start(&rt);
+        check(start_r != DRIVER_STATUS_OK, "32c: probe failure returned");
+        check(rt.state == DEVICE_STATE_NOT_FOUND, "32d: probe fail -> NOT_FOUND (not a tight loop)");
+        check(rt.recovery_count == 1, "32e: recovery counted once");
+        check(rt.operation_failures == fails_before, "32f: cumulative diagnostics preserved");
+    }
+
+    /* ============ RoomState through recovery ============ */
+    {
+        FakeI2cBus fake; I2cBus bus; Sht45Runtime rt; RoomState rs;
+        FakeI2cBus_Init(&fake);
+        FakeI2cBus_GetBus(&bus, &fake);
+        FakePlatform_SetTick(0);
+        Sht45Runtime_Init(&rt, &bus);
+        RoomState_Init(&rs);
+
+        uint8_t resp[6];
+        make_response(23.0f, 42.0f, resp);
+        FakeI2cBus_SetSht45Response(&fake, resp, true);
+        Sht45Runtime_Start(&rt);
+        tick(&rt, 11);
+        RoomState_UpdateSht45(&rs, rt.last_sample.temperature_c, true,
+                              rt.last_sample.relative_humidity_pct, true);
+        float t_before = rs.sht45_temperature_c;
+        check(rs.sht45_temperature_valid && rs.sht45_humidity_valid, "33a: RoomState valid before ERROR");
+
+        /* drive to ERROR -> RoomState invalid */
+        fake.sht45_respond = false;
+        FakePlatform_AdvanceTick(SHT45_RUNTIME_MEASUREMENT_INTERVAL_MS);
+        Sht45Runtime_Poll(&rt);
+        for (int i = 0; i < (int)SHT45_RUNTIME_ERROR_THRESHOLD; i++)
+        { FakePlatform_AdvanceTick(SHT45_MEASUREMENT_DURATION_MS); Sht45Runtime_Poll(&rt); }
+        check(rt.state == DEVICE_STATE_ERROR, "33b: ERROR");
+        RoomState_InvalidateSht45(&rs);
+        check(!rs.sht45_temperature_valid && !rs.sht45_humidity_valid, "33c: RoomState invalid on ERROR");
+
+        /* recovery -> fresh sample -> RoomState valid again with NEW values */
+        Sht45Runtime_Recover(&rt);
+        fake.probe_result = DRIVER_STATUS_OK;
+        fake.sht45_respond = true;
+        FakeI2cBus_SetSht45Response(&fake, resp, true);
+        Sht45Runtime_Start(&rt);
+        FakePlatform_AdvanceTick(SHT45_MEASUREMENT_DURATION_MS + 1);
+        Sht45Runtime_Poll(&rt);
+        check(rt.state == DEVICE_STATE_READY, "33d: recovered READY");
+        RoomState_UpdateSht45(&rs, rt.last_sample.temperature_c, true,
+                              rt.last_sample.relative_humidity_pct, true);
+        check(rs.sht45_temperature_valid && rs.sht45_humidity_valid,
+              "33e: RoomState valid again after recovery");
+        check(fabs(rs.sht45_temperature_c - t_before) < 0.01f,
+              "33f: new values committed (last-good, same vector)");
+    }
+
     printf("\n=== Summary ===\n");
     printf("  Cases: %d\n", s_case);
     printf("  Passed: %d\n", s_pass);

@@ -9,12 +9,17 @@
      STARTING --(measure issued; conversion deadline passes)--> READY(if valid) / retry
      READY --(measure interval passes)--> STARTING (next single-shot cycle)
      READY/STARTING --(>= error_threshold consecutive real failures)--> ERROR
-     ERROR --(App recovery)--> RECOVERING --(re-start)--> STARTING
+     ERROR --(Sht45Runtime_Recover: RECOVERING, recovery_count++,
+              consecutive_errors reset)--> RECOVERING --(re-probe/start)--> STARTING
+     RECOVERING --(probe ok)--> STARTING ; --(probe fail)--> NOT_FOUND
      READY --(>= stale timeout without a fresh sample)--> value invalidated
 
    Only real communication/CRC/protocol failures are counted as errors (bounded
-   via the consecutive-error threshold). A read that is refused because the
-   conversion is still in progress (NACK / NOT_READY) is NOT an error. */
+   via the consecutive-error threshold). The runtime PREVENTS reads before the
+   official conversion deadline, so normal timing does not depend on transport
+   NACK classification; an unexpected post-deadline transport NACK is reported
+   by the I2cBus abstraction as DRIVER_STATUS_BUS_ERROR and participates in the
+   bounded error handling (it is NOT silently treated as "not an error"). */
 
 static void Sht45Runtime_RecordSuccess(Sht45Runtime *rt)
 {
@@ -83,6 +88,19 @@ void Sht45Runtime_InvalidateSample(Sht45Runtime *rt)
 {
     if (rt == NULL) return;
     rt->last_sample.valid = false;
+}
+
+/* Begin a bounded recovery epoch. See sht45_runtime.h. The key fix: the
+   consecutive_error budget is RESET here (not in Start and not by App mutation)
+   so a fresh probe/start/read sequence can actually execute instead of Poll
+   immediately re-escalating a stale counter back to ERROR. */
+void Sht45Runtime_Recover(Sht45Runtime *rt)
+{
+    if (rt == NULL) return;
+    rt->recovery_count++;
+    rt->consecutive_errors = 0;
+    rt->phase = SHT45_PHASE_IDLE;
+    rt->state = DEVICE_STATE_RECOVERING;
 }
 
 /* A previously-valid value becomes invalid once no fresh sample has been

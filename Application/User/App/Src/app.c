@@ -478,9 +478,12 @@ void App_DoRetry(void)
         case DEVICE_STATE_ERROR:
             App_RefreshSht45Diagnostics();
             RoomState_InvalidateSht45(&s_room);
-            /* Reset consecutive errors so the retry path treats this as a fresh
-               start (the runtime already counted the failure). */
-            s_sht45.state = DEVICE_STATE_RECOVERING;
+            /* Begin a bounded recovery epoch via the runtime API (rather than
+               mutating s_sht45.state directly): increments recovery_count and
+               resets the consecutive-error budget so the next probe/start/read
+               sequence can actually run. */
+            Sht45Runtime_Recover(&s_sht45);
+            App_RefreshSht45Diagnostics();
             break;
 
         default:

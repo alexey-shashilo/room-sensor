@@ -108,8 +108,20 @@ bool Sht45Runtime_IsMissing(const Sht45Runtime *rt);
 
 /* Escalate a confirmed-missing / durable error by invalidating the sample and
    forcing the runtime into ERROR so App can drive bounded recovery. Exposed so
-   App/self-test can explicitly invalidate on sensor loss. */
+   App/self-test can explicitly invalidate on sensor loss. NOTE: this clears
+   sample validity only; it does NOT by itself transition the runtime DeviceState
+   (that is Sht45Runtime_Recover). */
 void Sht45Runtime_InvalidateSample(Sht45Runtime *rt);
+
+/* Begin a bounded recovery epoch. Callable from ERROR (or defensively from any
+   state). Transitions ERROR -> RECOVERING, increments recovery_count exactly
+   once per recovery attempt, and resets consecutive_errors to 0 so the next
+   probe/start/read sequence is a NEW recovery epoch that is actually allowed to
+   run (without this, Poll would immediately re-escalate a stale counter back to
+   ERROR). operation_failures and last_failure_ms remain cumulative history; the
+   last sample's numeric values are preserved for diagnostics (validity already
+   cleared on ERROR). Does NOT claim success before a fresh valid measurement. */
+void Sht45Runtime_Recover(Sht45Runtime *rt);
 
 /* Fill a portable DeviceRuntime diagnostic snapshot. */
 void Sht45Runtime_GetDiagnostics(const Sht45Runtime *rt, DeviceRuntime *out);
