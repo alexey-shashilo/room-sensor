@@ -115,20 +115,41 @@ DriverStatus Scd41Runtime_Start(Scd41Runtime *rt)
     if (rt->dev.initialized == 0U)
         SCD41_Init(&rt->dev, rt->dev.bus);
 
-    /* Issue start_periodic_measurement. Non-blocking (single I2C write). */
+    /* A normal START_PERIODIC is the cheap, expected path for a freshly-idle
+       sensor. Only if it is refused (NACK/AF — the sensor is already in
+       periodic measurement mode, e.g. it retained state across an STM32-only
+       reboot) do we enter the controlled STOP -> settle -> START recovery. */
     DriverStatus ss = SCD41_StartPeriodicMeasurement(&rt->dev);
-    if (ss != DRIVER_STATUS_OK)
+    if (ss == DRIVER_STATUS_OK)
     {
+        rt->started_at_ms = Platform_GetTickMs();
+        rt->state = DEVICE_STATE_STARTING;
+        rt->phase = SCD41_PHASE_IDLE;
+        Scd41Runtime_RecordSuccess(rt);
+        return DRIVER_STATUS_OK;
+    }
+
+    /* START was NACKed. This is consistent with the sensor already periodically
+       measuring. Issue STOP_PERIODIC (legal during measurement) and hold the
+       sensor in idle for the official 500 ms settle before a bounded single
+       restart. The App keeps polling the runtime in STARTING state, so this is
+       fully non-blocking and the old ERROR->RECOVER->START loop cannot recur. */
+
+    DriverStatus stops = SCD41_StopPeriodicMeasurement(&rt->dev);
+    if (stops != DRIVER_STATUS_OK)
+    {
+        /* Neither START nor STOP is accepted: a genuine communication failure,
+           not the retained-periodic case. Escalate via the bounded error path
+           (positive/negative threshold semantics unchanged). */
         Scd41Runtime_RecordFailure(rt);
         if (rt->consecutive_errors >= SCD41_RUNTIME_ERROR_THRESHOLD)
             rt->state = DEVICE_STATE_ERROR;
-        return ss;
+        return stops;
     }
 
-    rt->started_at_ms = Platform_GetTickMs();
+    rt->stop_settle_deadline_ms = Platform_GetTickMs() + SCD41_RUNTIME_STOP_SETTLE_MS;
     rt->state = DEVICE_STATE_STARTING;
-    rt->phase = SCD41_PHASE_IDLE;
-    Scd41Runtime_RecordSuccess(rt);
+    rt->phase = SCD41_PHASE_RECOVER_STOP_SETTLE;
     return DRIVER_STATUS_OK;
 }
 
@@ -141,8 +162,31 @@ void Scd41Runtime_Poll(Scd41Runtime *rt)
 
     if (rt->state == DEVICE_STATE_STARTING)
     {
-        /* Wait the periodic interval before the first data-ready check: the
-           SCD4x produces its first sample ~5 s after start_periodic. */
+        /* Retained-periodic recovery: STOP was accepted, wait the official
+           500 ms stop-settle, then issue ONE bounded START_PERIODIC. If the
+           restart is accepted we begin the fresh periodic wait; if it is
+           refused again we escalate via the bounded error path (no loop into
+           another STOP). */
+        if (rt->phase == SCD41_PHASE_RECOVER_STOP_SETTLE)
+        {
+            if (Scd41Runtime_DeadlinePassed(now, rt->stop_settle_deadline_ms) == false)
+                return;   /* still settling: do not START before 500 ms */
+
+            DriverStatus rs = SCD41_StartPeriodicMeasurement(&rt->dev);
+            rt->phase = SCD41_PHASE_IDLE;
+            if (rs != DRIVER_STATUS_OK)
+            {
+                Scd41Runtime_RecordFailureEscalate(rt);
+                return;
+            }
+            rt->started_at_ms = now;   /* restart accepted: begin periodic wait */
+            rt->state = DEVICE_STATE_STARTING;
+            Scd41Runtime_RecordSuccess(rt);
+            return;
+        }
+
+        /* Normal STARTING: wait the periodic interval before the first
+           data-ready check (SCD4x first sample ~5 s after start_periodic). */
         if ((now - rt->started_at_ms) >= SCD41_PERIODIC_INTERVAL_MS)
         {
             rt->state = DEVICE_STATE_WAITING;

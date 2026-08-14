@@ -12,13 +12,32 @@ extern "C" {
 /* Host fake I2C bus with scripted transaction support.
 
    Besides the register-mapped VEML/display behavior it ALSO models the
-   Sensirion SCD4x command/response style: a plain read (I2cBus_Read) returns
-   the current `read_response` buffer. Tests script probe success/failure,
-   command TX, data-ready/measurement responses, CRC corruption, I2C read/write
-   failure, sensor disappearance and recovery by manipulating the fields below
-   and the helper builders. */
+   Sensirion SCD4x command/response style. The SCD4x is a legal-stateful device,
+   not merely a status mailbox: it tracks whether it is in IDLE or PERIODIC
+   measurement mode and only accepts the commands the datasheet allows in that
+   mode. This prevents the class of "fake agrees with production bug" that
+   previously hid the retained-periodic-mode failure.
+
+   SCD4x mode legality (datasheet §3.6/Table 9):
+     IDLE:     start_periodic (0x21B1) allowed.
+     PERIODIC: start_periodic 0x21B1 -> NACK (BUS_ERROR);
+               stop_periodic   0x3F86 -> allowed (returns to IDLE after settle).
+   Tests script probe success/failure, measurement responses, CRC corruption,
+   I2C read/write failure, sensor disappearance and recovery by manipulating the
+   fields below and the helper builders. */
+typedef enum
+{
+    FAKE_SCD41_MODE_IDLE = 0,
+    FAKE_SCD41_MODE_PERIODIC
+} FakeScd41Mode;
+
 typedef struct
 {
+    /* Modeled SCD4x measurement mode (default IDLE). When PERIODIC, the fake
+       rejects start_periodic_measurement with an acknowledge-style failure and
+       accepts stop_periodic_measurement (legal during measurement). */
+    FakeScd41Mode scd41_mode;
+
     /* Per-operation results (DRIVER_STATUS_OK by default). */
     DriverStatus write_result;
     DriverStatus read_mem_result;
@@ -54,6 +73,12 @@ typedef struct
        READ_MEASUREMENT (0xEC05) returns read_response. */
     uint16_t last_scd41_cmd;
 
+    /* Ordered log of the last SCD41 2-byte write commands (START_PERIODIC /
+       STOP_PERIODIC / GET_DATA_READY / READ_MEASUREMENT), so tests can assert
+       the exact protocol sequence across a recovery (e.g. 21B1 3F86 ... 21B1). */
+    uint16_t scd41_cmd_log[16];
+    int scd41_cmd_log_count;
+
     /* Scripted data-ready (SCD41 get_data_ready_status returns one word).
        When `data_ready_scripted` is set, a plain read returns this word
        followed by its CRC. */
@@ -71,6 +96,9 @@ void FakeI2cBus_Init(FakeI2cBus *fake);
 void FakeI2cBus_GetBus(I2cBus *bus, FakeI2cBus *fake);
 
 void FakeI2cBus_SetAlsRead(FakeI2cBus *fake, uint16_t raw);
+
+/* SCD4x measurement-mode control (models retained periodic state). */
+void FakeI2cBus_SetScd41Mode(FakeI2cBus *fake, FakeScd41Mode mode);
 
 /* Sensirion SCD4x scripting helpers. */
 

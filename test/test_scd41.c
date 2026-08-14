@@ -365,12 +365,22 @@ int main(void)
         check(rt.state == DEVICE_STATE_RECOVERING, "8 recovery_count incremented");
         check(rt.recovery_count == 1, "18 recover -> RECOVERING, count=1");
         fake.read_result = DRIVER_STATUS_OK;
-        check(Scd41Runtime_Start(&rt) == DRIVER_STATUS_OK, "19 re-start succeeds");
-        check(rt.state == DEVICE_STATE_STARTING, "19 re-start -> STARTING");
+        /* Sensor was left PERIODIC by the earlier start, so the recovery start is
+           refused and the runtime performs a bounded STOP -> 500ms settle -> START. */
+        check(Scd41Runtime_Start(&rt) == DRIVER_STATUS_OK, "19 re-start recovery underway");
+        check(rt.phase == SCD41_PHASE_RECOVER_STOP_SETTLE, "19 recovery in STOP settle phase");
         uint16_t t = FakeI2cBus_TempRaw(23.0f);
         uint16_t rh = FakeI2cBus_RhRaw(42.0f);
         FakeI2cBus_SetScd41DataReady(&fake, true);
         FakeI2cBus_SetScd41Measurement(&fake, 700, t, rh, false, false, false);
+        /* <500ms: still settling, no restart yet. */
+        tick(&rt, SCD41_RUNTIME_STOP_SETTLE_MS - 1U);
+        check(rt.phase == SCD41_PHASE_RECOVER_STOP_SETTLE,
+              "19 no restart before 500ms settle");
+        check(rt.state == DEVICE_STATE_STARTING, "19 stays STARTING while settling");
+        /* >=500ms: restart START accepted; then the fresh periodic wait. */
+        tick(&rt, 1U);
+        check(rt.phase == SCD41_PHASE_IDLE, "19 restart accepted, phase -> IDLE");
         tick(&rt, SCD41_PERIODIC_INTERVAL_MS);                    /* STARTING -> WAITING */
         tick_cycle(&rt, SCD41_RUNTIME_POLL_INTERVAL_MS);          /* two-phase -> READY */
         check(rt.state == DEVICE_STATE_READY, "19 recovery reaches READY");
@@ -408,12 +418,176 @@ int main(void)
         fake.read_result = DRIVER_STATUS_OK;
         fake.probe_result = DRIVER_STATUS_OK;
         Scd41Runtime_Recover(&rt);
-        Scd41Runtime_Start(&rt);
+        Scd41Runtime_Start(&rt);   /* retained PERIODIC -> STOP/settle/START recovery */
         FakeI2cBus_SetScd41DataReady(&fake, true);
         FakeI2cBus_SetScd41Measurement(&fake, 1000, t, rh, false, false, false);
+        tick(&rt, SCD41_RUNTIME_STOP_SETTLE_MS);                  /* settle -> restart START */
+        check(rt.phase == SCD41_PHASE_IDLE, "20 restart accepted after settle");
         tick(&rt, SCD41_PERIODIC_INTERVAL_MS);                    /* STARTING->WAITING */
         tick_cycle(&rt, SCD41_RUNTIME_POLL_INTERVAL_MS);          /* two-phase -> READY */
         check(Scd41Runtime_HasValidSample(&rt), "20 recovery restores valid sample");
+    }
+
+    /* ===================== Retained-periodic recovery ===================== */
+    printf("\n=== Runtime A: fresh idle sensor, normal start (no STOP) ===\n");
+    {
+        FakeI2cBus fake; I2cBus bus;
+        FakeI2cBus_Init(&fake);
+        FakeI2cBus_GetBus(&bus, &fake);
+        fake.probe_result = DRIVER_STATUS_OK;
+        fake.scd41_mode = FAKE_SCD41_MODE_IDLE;
+
+        Scd41Runtime rt;
+        Scd41Runtime_Init(&rt, &bus);
+        FakePlatform_SetTick(0);
+
+        check(Scd41Runtime_Start(&rt) == DRIVER_STATUS_OK, "A1 fresh start ok");
+        check(rt.state == DEVICE_STATE_STARTING, "A1 fresh -> STARTING");
+        check(rt.phase == SCD41_PHASE_IDLE, "A1 fresh phase IDLE (no recovery)");
+        check(fake.scd41_mode == FAKE_SCD41_MODE_PERIODIC, "A1 fake sensor now PERIODIC");
+        /* No STOP must be issued on a normal fresh start. */
+        check(fake.scd41_cmd_log_count >= 1 &&
+              fake.scd41_cmd_log[0] == 0x21B1U,
+              "A1 first command is START_PERIODIC 0x21B1");
+        check(fake.scd41_cmd_log_count < 2 ,
+              "A1 no STOP sent on fresh start");
+    }
+
+    printf("\n=== Runtime B: retained PERIODIC sensor auto-recovery (sequence) ===\n");
+    {
+        FakeI2cBus fake; I2cBus bus;
+        FakeI2cBus_Init(&fake);
+        FakeI2cBus_GetBus(&bus, &fake);
+        fake.probe_result = DRIVER_STATUS_OK;
+        fake.scd41_mode = FAKE_SCD41_MODE_PERIODIC;   /* retained across MCU reboot */
+
+        Scd41Runtime rt;
+        Scd41Runtime_Init(&rt, &bus);
+        FakePlatform_SetTick(0);
+
+        check(Scd41Runtime_Start(&rt) == DRIVER_STATUS_OK, "B1 Start enters recovery (OK)");
+        check(rt.phase == SCD41_PHASE_RECOVER_STOP_SETTLE, "B1 recovery phase = STOP settle");
+        check(rt.state == DEVICE_STATE_STARTING, "B1 stays STARTING during recovery");
+        /* START failed (PERIODIC), then STOP issued and accepted -> IDLE. */
+        check(fake.scd41_cmd_log_count >= 2 &&
+              fake.scd41_cmd_log[0] == 0x21B1U &&
+              fake.scd41_cmd_log[1] == 0x3F86U,
+              "B3 exact sequence: 21B1 then 3F86");
+        check(fake.scd41_mode == FAKE_SCD41_MODE_IDLE, "B2 STOP returned sensor to IDLE");
+
+        /* STILL settling (<500ms): no restart issued. */
+        tick(&rt, SCD41_RUNTIME_STOP_SETTLE_MS - 1U);
+        check(rt.phase == SCD41_PHASE_RECOVER_STOP_SETTLE, "B4 no restart before 500ms");
+        int log_before = fake.scd41_cmd_log_count;
+        check(fake.scd41_cmd_log_count == log_before, "B4 no START before settle");
+
+        /* >=500ms: single bounded restart -> IDLE phase, then normal WAITING/READY. */
+        uint16_t t = FakeI2cBus_TempRaw(23.0f);
+        uint16_t rh = FakeI2cBus_RhRaw(42.0f);
+        FakeI2cBus_SetScd41DataReady(&fake, true);
+        FakeI2cBus_SetScd41Measurement(&fake, 660, t, rh, false, false, false);
+        tick(&rt, 1U);
+        check(rt.phase == SCD41_PHASE_IDLE, "B5 restart accepted, phase -> IDLE");
+        check(fake.scd41_cmd_log_count >= 3 &&
+              fake.scd41_cmd_log[2] == 0x21B1U,
+              "B6 third command is START_PERIODIC 0x21B1 (restart)");
+        check(fake.scd41_mode == FAKE_SCD41_MODE_PERIODIC, "B6 sensor back to PERIODIC");
+
+        tick(&rt, SCD41_PERIODIC_INTERVAL_MS);                    /* STARTING -> WAITING */
+        tick_cycle(&rt, SCD41_RUNTIME_POLL_INTERVAL_MS);          /* two-phase -> READY */
+        check(rt.state == DEVICE_STATE_READY, "B7 recovery reaches READY");
+        check(rt.last_sample.co2_ppm == 660, "B7 valid co2=660 after auto-recovery");
+        check(rt.consecutive_errors == 0, "B7 consecutive errors reset on success");
+    }
+
+    printf("\n=== Runtime C: STOP failure -> bounded error (no storm) ===\n");
+    {
+        FakeI2cBus fake; I2cBus bus;
+        FakeI2cBus_Init(&fake);
+        FakeI2cBus_GetBus(&bus, &fake);
+        fake.probe_result = DRIVER_STATUS_OK;
+        fake.scd41_mode = FAKE_SCD41_MODE_PERIODIC;
+
+        Scd41Runtime rt;
+        Scd41Runtime_Init(&rt, &bus);
+        FakePlatform_SetTick(0);
+
+        /* Force STOP to fail (START already refused by PERIODIC mode). */
+        fake.write_result = DRIVER_STATUS_BUS_ERROR;
+        check(Scd41Runtime_Start(&rt) == DRIVER_STATUS_BUS_ERROR,
+              "C1 START+STOP both fail -> Start returns error");
+        check(rt.operation_failures == 1, "C1 one START failure accounted (not a storm)");
+        check(fake.scd41_cmd_log_count <= 2, "C2 no command storm (<= start+stop tries)");
+        /* No recovery phase entered because STOP failed. */
+        check(rt.phase != SCD41_PHASE_RECOVER_STOP_SETTLE,
+              "C2 no STOP-settle recovery when STOP itself failed");
+    }
+
+    printf("\n=== Runtime D: restart failure -> bounded escalation (no STOP loop) ===\n");
+    {
+        FakeI2cBus fake; I2cBus bus;
+        FakeI2cBus_Init(&fake);
+        FakeI2cBus_GetBus(&bus, &fake);
+        fake.probe_result = DRIVER_STATUS_OK;
+        fake.scd41_mode = FAKE_SCD41_MODE_PERIODIC;
+
+        Scd41Runtime rt;
+        Scd41Runtime_Init(&rt, &bus);
+        FakePlatform_SetTick(0);
+
+        /* START refused (PERIODIC) -> STOP accepted -> enter recovery. */
+        Scd41Runtime_Start(&rt);
+        check(rt.phase == SCD41_PHASE_RECOVER_STOP_SETTLE, "D3 entered recovery");
+
+        /* After settle, the restart START is ALSO refused: the sensor remains
+           PERIODIC (as if it re-entered measurement between STOP and START).
+           Escalate via the existing bounded threshold; do NOT re-STOP. */
+        fake.scd41_cmd_log_count = 0;
+        fake.scd41_mode = FAKE_SCD41_MODE_PERIODIC;   /* restart will be refused */
+        tick(&rt, SCD41_RUNTIME_STOP_SETTLE_MS + 1U);
+        check(rt.operation_failures >= 1, "D1 restart failure accounted");
+        check(rt.consecutive_errors >= 1, "D1 consecutive errors incremented");
+        /* After the failed restart we must NOT have re-issued STOP (no STOP loop). */
+        bool saw_stop_after_settle = false;
+        for (int i = 0; i < fake.scd41_cmd_log_count; i++)
+            if (fake.scd41_cmd_log[i] == 0x3F86U) saw_stop_after_settle = true;
+        check(!saw_stop_after_settle, "D2 no STOP re-issued after failed restart");
+    }
+
+    printf("\n=== Runtime E: MCU-reset model (session 1 -> reset -> session 2) ===\n");
+    {
+        FakeI2cBus fake; I2cBus bus;
+        FakeI2cBus_Init(&fake);
+        FakeI2cBus_GetBus(&bus, &fake);
+        fake.probe_result = DRIVER_STATUS_OK;
+        uint16_t t = FakeI2cBus_TempRaw(23.0f);
+        uint16_t rh = FakeI2cBus_RhRaw(42.0f);
+
+        /* Session 1: fresh idle sensor starts periodic successfully. */
+        Scd41Runtime rt1;
+        Scd41Runtime_Init(&rt1, &bus);
+        FakePlatform_SetTick(0);
+        Scd41Runtime_Start(&rt1);
+        check(fake.scd41_mode == FAKE_SCD41_MODE_PERIODIC, "E1 sensor left PERIODIC in session 1");
+
+        /* MCU reset: runtime object is gone, but fake sensor RETAINS PERIODIC mode
+           (the STM32 reset did not power-cycle the SCD41). */
+        Scd41Runtime rt2;
+        Scd41Runtime_Init(&rt2, &bus);
+        FakePlatform_SetTick(1000);
+        check(fake.scd41_mode == FAKE_SCD41_MODE_PERIODIC, "E2 retained PERIODIC across reset");
+
+        /* Session 2 must auto-recover via STOP -> settle -> START, no power cycle. */
+        check(Scd41Runtime_Start(&rt2) == DRIVER_STATUS_OK, "E3 session 2 recovers (OK)");
+        check(rt2.phase == SCD41_PHASE_RECOVER_STOP_SETTLE, "E3 recovery phase entered");
+        FakeI2cBus_SetScd41DataReady(&fake, true);
+        FakeI2cBus_SetScd41Measurement(&fake, 800, t, rh, false, false, false);
+        tick(&rt2, SCD41_RUNTIME_STOP_SETTLE_MS);
+        check(rt2.phase == SCD41_PHASE_IDLE, "E4 restart accepted after settle");
+        tick(&rt2, SCD41_PERIODIC_INTERVAL_MS);                    /* STARTING -> WAITING */
+        tick_cycle(&rt2, SCD41_RUNTIME_POLL_INTERVAL_MS);          /* two-phase -> READY */
+        check(Scd41Runtime_HasValidSample(&rt2), "E5 session 2 READY without power cycle");
+        check(rt2.last_sample.co2_ppm == 800, "E5 valid sample restored");
     }
 
     printf("\n=== Runtime: stale timeout invalidates ===\n");

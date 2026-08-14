@@ -36,7 +36,12 @@ typedef enum
 {
     SCD41_PHASE_IDLE = 0,
     SCD41_PHASE_WAIT_DATA_READY_RESPONSE,
-    SCD41_PHASE_WAIT_MEASUREMENT_RESPONSE
+    SCD41_PHASE_WAIT_MEASUREMENT_RESPONSE,
+    /* Retained-periodic-mode recovery: STOP_PERIODIC was accepted because the
+       initial START_PERIODIC was NACKed (the sensor was already periodically
+       measuring across an STM32-only reboot). Wait the official 500 ms
+       stop-settle time non-blockingly, then issue a single START_PERIODIC. */
+    SCD41_PHASE_RECOVER_STOP_SETTLE
 } Scd41RuntimePhase;
 
 typedef struct
@@ -70,6 +75,9 @@ typedef struct
     uint32_t started_at_ms;   /* when periodic measurement was (re)started */
     uint32_t last_tick_ms;
     bool     start_pending;   /* start command accepted, not yet WAITING */
+    /* Deadline for the retained-periodic recovery: after STOP_PERIODIC, hold the
+       sensor in idle for the official 500 ms settle before re-issuing START. */
+    uint32_t stop_settle_deadline_ms;
 } Scd41Runtime;
 
 /* Default timing tunables. Kept OUT of persistent Config (task §20): they are
@@ -79,6 +87,10 @@ typedef struct
 #define SCD41_RUNTIME_POLL_INTERVAL_MS     500U
 #define SCD41_RUNTIME_STALE_MS             (3U * SCD41_PERIODIC_INTERVAL_MS)
 #define SCD41_RUNTIME_ERROR_THRESHOLD      3U
+/* Official SCD4x stop_periodic_measurement execution time: the sensor only
+   responds to other commands (including start_periodic) after this many ms
+   (SCD4x datasheet §3.6.3). */
+#define SCD41_RUNTIME_STOP_SETTLE_MS       500U
 
 void Scd41Runtime_Init(Scd41Runtime *rt, const I2cBus *bus);
 

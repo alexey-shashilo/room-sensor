@@ -6,10 +6,13 @@
    test_scd41 cross-checks the two CRCs agree). */
 #define SCD41_FAKE_CMD_GET_DATA_READY  0xE4B8U
 #define SCD41_FAKE_CMD_READ_MEASUREMENT 0xEC05U
+#define SCD41_FAKE_CMD_START_PERIODIC  0x21B1U
+#define SCD41_FAKE_CMD_STOP_PERIODIC   0x3F86U
+
+#define SCD41_FAKE_WIRE_ADDR   (0xC4U)   /* SCD41 7-bit 0x62 left-shifted */
 
 static DriverStatus fake_write(void *ctx, uint16_t addr, const uint8_t *data, size_t size)
 {
-    (void)addr;
     FakeI2cBus *f = (FakeI2cBus *)ctx;
     f->last_addr = addr;
     f->write_call_count++;
@@ -35,7 +38,42 @@ static DriverStatus fake_write(void *ctx, uint16_t addr, const uint8_t *data, si
     if (f->last_write_size == 2U)
         f->last_scd41_cmd = (uint16_t)(((uint16_t)f->last_write_data[0] << 8U) |
                                        (uint16_t)f->last_write_data[1]);
-    return f->write_result;
+
+    /* Append to the SCD41 command log (SCD41 wire address only). */
+    if (addr == SCD41_FAKE_WIRE_ADDR && f->last_scd41_cmd != 0U)
+    {
+        if (f->scd41_cmd_log_count < (int)(sizeof(f->scd41_cmd_log) / sizeof(f->scd41_cmd_log[0])))
+            f->scd41_cmd_log[f->scd41_cmd_log_count] = f->last_scd41_cmd;
+        f->scd41_cmd_log_count++;
+    }
+
+    /* Model SCD4x mode legality on the 2-byte command write. This reproduces the
+       real retained-periodic behavior: a NACK-style failure is returned for
+       start_periodic while the sensor is already PERIODIC. Only applies to the
+       SCD41 wire address so display/VEML 2-byte writes are unaffected. The
+       write_result override (when non-NONE) takes precedence so tests can still
+       inject arbitrary transport failures. */
+    if (f->last_scd41_cmd != 0U && addr == SCD41_FAKE_WIRE_ADDR)
+    {
+        switch (f->last_scd41_cmd)
+        {
+            case SCD41_FAKE_CMD_START_PERIODIC:
+                if (f->scd41_mode == FAKE_SCD41_MODE_PERIODIC)
+                    return DRIVER_STATUS_BUS_ERROR;   /* datasheet: refused while measuring */
+                f->scd41_mode = FAKE_SCD41_MODE_PERIODIC;
+                break;
+            case SCD41_FAKE_CMD_STOP_PERIODIC:
+                if (f->scd41_mode == FAKE_SCD41_MODE_PERIODIC)
+                    f->scd41_mode = FAKE_SCD41_MODE_IDLE;
+                break;
+            default:
+                break;
+        }
+    }
+
+    if (f->write_result != DRIVER_STATUS_OK)
+        return f->write_result;
+    return DRIVER_STATUS_OK;
 }
 
 static DriverStatus fake_read_mem(void *ctx, uint16_t addr, uint8_t reg, uint8_t *data, size_t size)
@@ -110,6 +148,11 @@ void FakeI2cBus_SetAlsRead(FakeI2cBus *fake, uint16_t raw)
 {
     fake->regs[0x04] = (uint8_t)(raw & 0xFFU);
     fake->regs[0x05] = (uint8_t)(raw >> 8U);
+}
+
+void FakeI2cBus_SetScd41Mode(FakeI2cBus *fake, FakeScd41Mode mode)
+{
+    fake->scd41_mode = mode;
 }
 
 void FakeI2cBus_SetScd41DataReady(FakeI2cBus *fake, bool ready)
