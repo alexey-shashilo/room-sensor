@@ -47,7 +47,15 @@ jobs:
           Application/User/
 
   firmware-build:
+    # Verifies BOTH Debug and Release firmware configurations. The original Debug
+    # job is retained as matrix leg 0 (unchanged behavior); Release is the second
+    # leg. Each configuration configures+builds+reports size and runs the
+    # fail-closed stack-usage gate. Build dir is per-configuration to avoid
+    # collision between the two matrix legs.
     runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        build_type: [Debug, Release]
     defaults:
       run:
         shell: bash
@@ -66,29 +74,29 @@ jobs:
         # HAL/CMSIS/CubeMX code (separate stm32cubemx/STM32_Drivers targets) is
         # never promoted by project warning policy.
         run: >
-          cmake -S . -B build-fw
-          -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }}
+          cmake -S . -B build-fw-${{ matrix.build_type }}
+          -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
           -DCMAKE_TOOLCHAIN_FILE=cmake/gcc-arm-none-eabi.cmake
 
       - name: Build firmware
-        run: cmake --build build-fw --target room_sensor --parallel $(nproc) 2>&1
+        run: cmake --build build-fw-${{ matrix.build_type }} --target room_sensor --parallel $(nproc) 2>&1
 
       - name: Firmware size
-        run: arm-none-eabi-size build-fw/room_sensor.elf
+        run: arm-none-eabi-size build-fw-${{ matrix.build_type }}/room_sensor.elf
 
       - name: Generate artifacts
         run: |
-          arm-none-eabi-objcopy -O binary build-fw/room_sensor.elf build-fw/room_sensor.bin
-          arm-none-eabi-objcopy -O ihex build-fw/room_sensor.elf build-fw/room_sensor.hex
+          arm-none-eabi-objcopy -O binary build-fw-${{ matrix.build_type }}/room_sensor.elf build-fw-${{ matrix.build_type }}/room_sensor.bin
+          arm-none-eabi-objcopy -O ihex build-fw-${{ matrix.build_type }}/room_sensor.elf build-fw-${{ matrix.build_type }}/room_sensor.hex
 
       - name: Upload firmware artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: room-sensor-firmware
+          name: room-sensor-firmware-${{ matrix.build_type }}
           path: |
-            build-fw/room_sensor.elf
-            build-fw/room_sensor.bin
-            build-fw/room_sensor.hex
+            build-fw-${{ matrix.build_type }}/room_sensor.elf
+            build-fw-${{ matrix.build_type }}/room_sensor.bin
+            build-fw-${{ matrix.build_type }}/room_sensor.hex
           if-no-files-found: error
 
       # P2: stack-usage gate. The firmware is built with -fstack-usage, producing one
@@ -97,9 +105,10 @@ jobs:
 # if no project-owned .su frames can be measured, CI fails (a missing
 # measurement means the quality gate is unavailable). Note the documented
 # limitation: per-function static usage is NOT the call-chain total stack.
+# Run on BOTH configurations when their compiler emits .su files.
       - name: Report and gate stack usage (fail-closed)
         run: |
-          su_files=$(find build-fw -name '*.su' 2>/dev/null || true)
+          su_files=$(find build-fw-${{ matrix.build_type }} -name '*.su' 2>/dev/null || true)
           if [ -z "$su_files" ]; then
             echo "FAIL-CLOSED: no *.su files produced; stack-usage gate unavailable"
             exit 1
