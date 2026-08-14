@@ -90,6 +90,15 @@ typedef struct
        injection) so tests can pre-select valid or corrupted bytes. */
     uint8_t  read_response[16];
     size_t   read_response_size;
+
+    /* SHT45 (0x88 wire addr) single-byte command + scripted 6-byte response.
+       SHT45 is a single-shot sensor: a 1-byte command write (measure 0xFD etc.),
+       then a 6-byte read (T-word+CRC, RH-word+CRC). Independent of the SCD41
+       state machine so tests exercise the two sensors independently. */
+    uint8_t  sht45_last_cmd;
+    uint8_t  sht45_read_response[6];
+    bool     sht45_respond;   /* when false, a 6-byte SHT45 read NACKs */
+    int      sht45_measure_cmd_count;
 } FakeI2cBus;
 
 void FakeI2cBus_Init(FakeI2cBus *fake);
@@ -141,6 +150,11 @@ uint8_t FakeI2cBus_Scd41Crc(uint8_t *data, size_t count);
      rh_raw   = RH_pct       * 65535 / 100 */
 uint16_t FakeI2cBus_TempRaw(float temp_c);
 uint16_t FakeI2cBus_RhRaw(float rh_pct);
+
+/* SHT45 scripting. `raw6` is the exact on-wire response (T word MSB-first +
+   CRC, RH word MSB-first + CRC). `respond` controls whether the fake NACKs the
+   6-byte read (sensor busy / conversion in progress). */
+void FakeI2cBus_SetSht45Response(FakeI2cBus *fake, const uint8_t raw6[6], bool respond);
 
 #ifdef __cplusplus
 }

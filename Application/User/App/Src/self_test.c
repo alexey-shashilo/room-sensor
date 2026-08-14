@@ -2,6 +2,7 @@
 #include "veml7700.h"
 #include "display.h"
 #include "scd41.h"
+#include "sht45.h"
 #include "storage.h"
 #include "config.h"
 #include "device_identity.h"
@@ -73,6 +74,7 @@ void SelfTest_Run(SelfTestReport *report, const I2cBus *bus)
         report->light_sensor = SELF_TEST_SKIPPED;
         report->display = SELF_TEST_SKIPPED;
         report->co2_sensor = SELF_TEST_SKIPPED;
+        report->temp_humidity_sensor = SELF_TEST_SKIPPED;
     }
     else
     {
@@ -84,6 +86,10 @@ void SelfTest_Run(SelfTestReport *report, const I2cBus *bus)
            the running measurement). We deliberately do NOT issue calibration /
            mode-changing commands here. */
         report->co2_sensor = ProbeToResult(SCD41_Probe(bus) == DRIVER_STATUS_OK);
+        /* SHT45: observational address probe only. No heater, no destructive
+           mode (the runtime uses high-precision measure; a probe is a plain I2C
+           address ACK check). */
+        report->temp_humidity_sensor = ProbeToResult(SHT45_Probe(bus) == DRIVER_STATUS_OK);
     }
 
     /* Storage subsystem initialization is runtime state, not something a

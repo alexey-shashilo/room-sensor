@@ -239,6 +239,15 @@ int main(void)
         check(App_Scd41HealthOk(DEVICE_STATE_RECOVERING) == false,
               "RECOVERING -> degrades health");
 
+        /* SHT45 SystemHealth mapping (added with the SHT45 slice). A missing or
+           errored SHT45 degrades health but never causes a FAULT. */
+        check(App_Sht45HealthOk(DEVICE_STATE_STARTING) == true, "SHT45 STARTING acceptable");
+        check(App_Sht45HealthOk(DEVICE_STATE_WAITING) == true, "SHT45 WAITING acceptable");
+        check(App_Sht45HealthOk(DEVICE_STATE_READY) == true, "SHT45 READY acceptable");
+        check(App_Sht45HealthOk(DEVICE_STATE_NOT_FOUND) == false, "SHT45 NOT_FOUND degrades");
+        check(App_Sht45HealthOk(DEVICE_STATE_ERROR) == false, "SHT45 ERROR degrades");
+        check(App_Sht45HealthOk(DEVICE_STATE_RECOVERING) == false, "SHT45 RECOVERING degrades");
+
         /* §16 invariant: a missing SCD41 (SelfTest co2_sensor would be FAIL,
            runtime state NOT_FOUND) must NEVER report health OK. */
         check(App_Scd41HealthOk(DEVICE_STATE_NOT_FOUND) == false &&

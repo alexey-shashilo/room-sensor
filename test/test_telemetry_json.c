@@ -50,6 +50,10 @@ int main(void)
         snap.room.scd41_temperature_valid = true;
         snap.room.scd41_humidity_pct = 49.0f;
         snap.room.scd41_humidity_valid = true;
+        snap.room.sht45_temperature_c = 23.42f;
+        snap.room.sht45_temperature_valid = true;
+        snap.room.sht45_humidity_pct = 44.1f;
+        snap.room.sht45_humidity_valid = true;
         flush_case(1, &snap);
     }
 

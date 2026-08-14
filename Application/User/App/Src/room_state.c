@@ -50,6 +50,31 @@ void RoomState_InvalidateScd41(RoomState *state)
     state->timestamp_ms = Platform_GetTickMs();
 }
 
+/* Commit a fully-valid SHT45 sample into the room state. Explicit per-channel
+   validity; no partial commitment (the runtime only passes fully CRC-valid
+   data). Invalid/not-ready is handled via RoomState_InvalidateSht45. */
+void RoomState_UpdateSht45(RoomState *state,
+                           float temperature_c, bool temperature_valid,
+                           float humidity_pct, bool humidity_valid)
+{
+    if (state == NULL) return;
+    state->sht45_temperature_c = temperature_c;
+    state->sht45_temperature_valid = temperature_valid;
+    state->sht45_humidity_pct = humidity_pct;
+    state->sht45_humidity_valid = humidity_valid;
+    state->timestamp_ms = Platform_GetTickMs();
+}
+
+/* Invalidate both SHT45 channels (sensor missing / stale / startup). Numeric
+   last values retained for diagnostics; validity cleared. */
+void RoomState_InvalidateSht45(RoomState *state)
+{
+    if (state == NULL) return;
+    state->sht45_temperature_valid = false;
+    state->sht45_humidity_valid = false;
+    state->timestamp_ms = Platform_GetTickMs();
+}
+
 const RoomState *RoomState_Get(const RoomState *state)
 {
     return state;

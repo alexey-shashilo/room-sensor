@@ -98,7 +98,7 @@ test("seq increments", s2.sequence == s1.sequence + 1);
 
         test("serialize OK", s == SERIALIZE_OK);
         test("written > 0", written > 0);
-        test("contains schema", strstr((char *)buf, "\"schema\": 3") != NULL);
+        test("contains schema", strstr((char *)buf, "\"schema\": 4") != NULL);
         test("contains seq 42", strstr((char *)buf, "\"seq\": 42") != NULL);
         test("contains health ok", strstr((char *)buf, "\"health\": \"ok\"") != NULL);
         test("contains value 72.4", strstr((char *)buf, "72.4") != NULL);
@@ -281,7 +281,7 @@ size_t exact = req;
         Telemetry_Serialize(&snap, buf, sizeof(buf), &written);
 
         test("device_id uuid format", strstr((char *)buf, "01020304-0506-0708-090a-0b0c0d0e0f10") != NULL);
-        test("schema 3", strstr((char *)buf, "\"schema\": 3") != NULL);
+        test("schema 3", strstr((char *)buf, "\"schema\": 4") != NULL);
         test("seq 42", strstr((char *)buf, "\"seq\": 42") != NULL);
         test("uptime 10000", strstr((char *)buf, "\"uptime_ms\": 10000") != NULL);
         test("lux 72.4", strstr((char *)buf, "72.4") != NULL);

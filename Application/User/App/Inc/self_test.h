@@ -24,6 +24,7 @@ typedef struct
     SelfTestResult light_sensor;
     SelfTestResult display;
     SelfTestResult co2_sensor;
+    SelfTestResult temp_humidity_sensor;   /* SHT45 */
 } SelfTestReport;
 
 void SelfTest_Init(SelfTestReport *report);

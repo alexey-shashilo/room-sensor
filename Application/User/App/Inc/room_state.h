@@ -35,6 +35,15 @@ typedef struct
     float  scd41_humidity_pct;
     bool   scd41_humidity_valid;
 
+    /* SHT45-backed environmental T/RH (explicitly separate sensor source). The
+       future canonical room temperature/humidity source may be SHT45 primary with
+       SCD41 secondary/diagnostic; both remain separately observable until then. */
+    float  sht45_temperature_c;
+    bool   sht45_temperature_valid;
+
+    float  sht45_humidity_pct;
+    bool   sht45_humidity_valid;
+
     /* Monotonic tick when the last measurement was committed. */
     uint32_t timestamp_ms;
 } RoomState;
@@ -46,6 +55,10 @@ void         RoomState_UpdateScd41(RoomState *state,
                                    float temperature_c, bool temperature_valid,
                                    float humidity_pct, bool humidity_valid);
 void         RoomState_InvalidateScd41(RoomState *state);
+void         RoomState_UpdateSht45(RoomState *state,
+                                   float temperature_c, bool temperature_valid,
+                                   float humidity_pct, bool humidity_valid);
+void         RoomState_InvalidateSht45(RoomState *state);
 const RoomState *RoomState_Get(const RoomState *state);
 
 #endif

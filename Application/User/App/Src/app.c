@@ -5,6 +5,8 @@
 #include "display.h"
 #include "scd41.h"
 #include "scd41_runtime.h"
+#include "sht45.h"
+#include "sht45_runtime.h"
 #include "platform_time.h"
 #include "platform_watchdog.h"
 #include "storage.h"
@@ -24,12 +26,14 @@
 static VEML7700_HandleTypeDef s_veml;
 static Display_HandleTypeDef  s_display;
 static Scd41Runtime           s_scd41;
+static Sht45Runtime           s_sht45;
 
 static const I2cBus *s_i2c_bus = NULL;
 
 static DeviceRuntime s_light_rt = { .state = DEVICE_STATE_UNKNOWN };
 static DeviceRuntime s_disp_rt  = { .state = DEVICE_STATE_UNKNOWN };
 static DeviceRuntime s_co2_rt   = { .state = DEVICE_STATE_UNKNOWN };
+static DeviceRuntime s_temp_rt  = { .state = DEVICE_STATE_UNKNOWN };   /* SHT45 */
 
 static uint8_t s_display_addr = 0U;
 static bool    s_display_addr_valid = false;
@@ -40,6 +44,7 @@ static uint32_t s_last_retry_ms = 0;
 static uint32_t s_last_diag_ms = 0;
 static uint32_t s_last_telemetry_ms = 0;
 static uint32_t s_last_scd41_ms = 0;
+static uint32_t s_last_sht45_ms = 0;
 static uint32_t s_start_ms = 0;
 
 static SystemHealthState s_health = SYSTEM_HEALTH_BOOTING;
@@ -211,6 +216,49 @@ static void App_DoPollScd41(void)
     }
 }
 
+/* Synchronize the portable SHT45 diagnostic snapshot (s_temp_rt) from the SHT45
+   runtime so GET_STATUS / AppStatus expose live temperature/humidity state. */
+static void App_RefreshSht45Diagnostics(void)
+{
+    Sht45Runtime_GetDiagnostics(&s_sht45, &s_temp_rt);
+}
+
+/* Start SHT45 single-shot measurement (first boot or bounded recovery). */
+static bool App_DoStartSht45(void)
+{
+    DriverStatus s = Sht45Runtime_Start(&s_sht45);
+    if (s == DRIVER_STATUS_OK)
+        return true;
+    App_RefreshSht45Diagnostics();
+    return false;
+}
+
+/* Advance the SHT45 non-blocking state machine and reflect any accepted /
+   invalidated sample into RoomState. */
+static void App_DoPollSht45(void)
+{
+    bool had_valid = Sht45Runtime_HasValidSample(&s_sht45);
+    Sht45Runtime_Poll(&s_sht45);
+    App_RefreshSht45Diagnostics();
+
+    bool has_valid = Sht45Runtime_HasValidSample(&s_sht45);
+    if (has_valid)
+    {
+        const Sht45Measurement *m = &s_sht45.last_sample;
+        RoomState_UpdateSht45(&s_room,
+                              m->temperature_c, true,
+                              m->relative_humidity_pct, true);
+    }
+    else if (had_valid)
+    {
+        /* Previously-valid SHT45 sample went stale or sensor lost. */
+        RoomState_InvalidateSht45(&s_room);
+    }
+
+    if (s_sht45.state == DEVICE_STATE_ERROR && had_valid)
+        RoomState_InvalidateSht45(&s_room);
+}
+
 static void App_DoProbeDisplay(void)
 {
     uint8_t addr;
@@ -270,11 +318,27 @@ static void App_DoUpdateDisplay(void)
         Display_DrawString(&s_display, 0, 16, "CO2: -- ppm");
     }
 
-    /* SCD41 local T/RH (secondary/internal source, explicit naming). */
-    if (room->scd41_temperature_valid && room->scd41_humidity_valid)
+    /* SHT45 is the preferred environmental T/RH source; fall back to SCD41
+       local/internal T/RH only when SHT45 is invalid. Both stay separately
+       observable in telemetry. */
+    double disp_t = 0.0, disp_rh = 0.0;
+    bool disp_valid = false;
+    if (room->sht45_temperature_valid && room->sht45_humidity_valid)
     {
-        snprintf(buf, sizeof(buf), "RH: %.0f%%  T: %.1f", (double)room->scd41_humidity_pct,
-                 (double)room->scd41_temperature_c);
+        disp_t = (double)room->sht45_temperature_c;
+        disp_rh = (double)room->sht45_humidity_pct;
+        disp_valid = true;
+    }
+    else if (room->scd41_temperature_valid && room->scd41_humidity_valid)
+    {
+        disp_t = (double)room->scd41_temperature_c;
+        disp_rh = (double)room->scd41_humidity_pct;
+        disp_valid = true;
+    }
+
+    if (disp_valid)
+    {
+        snprintf(buf, sizeof(buf), "RH: %.0f%%  T: %.1f", disp_rh, disp_t);
         Display_DrawString(&s_display, 0, 32, buf);
     }
     else
@@ -385,6 +449,26 @@ void App_DoRetry(void)
         default:
             break;
     }
+
+    /* --- SHT45 single-shot runtime (bounded recovery) --- */
+    switch (s_sht45.state)
+    {
+        case DEVICE_STATE_NOT_FOUND:
+        case DEVICE_STATE_RECOVERING:
+            App_DoStartSht45();
+            break;
+
+        case DEVICE_STATE_ERROR:
+            App_RefreshSht45Diagnostics();
+            RoomState_InvalidateSht45(&s_room);
+            /* Reset consecutive errors so the retry path treats this as a fresh
+               start (the runtime already counted the failure). */
+            s_sht45.state = DEVICE_STATE_RECOVERING;
+            break;
+
+        default:
+            break;
+    }
 }
 
 static const char *ResetCauseStr(ResetCause c)
@@ -445,7 +529,7 @@ static void App_PrintBootDiag(void)
 
     printf("BOOT Reset=%s\r\n", ResetCauseStr(s_reset_cause));
 
-    printf("SELFTEST Platform=%s I2C=%s Storage=%s Config=%s ID=%s VEML=%s Disp=%s CO2=%s\r\n",
+    printf("SELFTEST Platform=%s I2C=%s Storage=%s Config=%s ID=%s VEML=%s Disp=%s CO2=%s SHT45=%s\r\n",
            SelfTestResultStr(s_self_test.platform),
            SelfTestResultStr(s_self_test.i2c),
            SelfTestResultStr(s_self_test.storage),
@@ -453,7 +537,8 @@ static void App_PrintBootDiag(void)
            SelfTestResultStr(s_self_test.identity),
            SelfTestResultStr(s_self_test.light_sensor),
            SelfTestResultStr(s_self_test.display),
-           SelfTestResultStr(s_self_test.co2_sensor));
+           SelfTestResultStr(s_self_test.co2_sensor),
+           SelfTestResultStr(s_self_test.temp_humidity_sensor));
 
     printf("CONFIG boot_source=%s cur=read=%s health=%s seq=%u calib=%.3f ID=%s\r\n",
            (s_config_boot_load_status == STORAGE_READ_OK) ? "persisted" : "defaults",
@@ -508,6 +593,15 @@ bool App_Scd41HealthOk(DeviceState state)
             state == DEVICE_STATE_READY);
 }
 
+/* SHT45 SystemHealth contribution: STARTING/WAITING/READY -> acceptable;
+   NOT_FOUND/ERROR/RECOVERING -> NOT OK (degrades health, never FAULT). */
+bool App_Sht45HealthOk(DeviceState state)
+{
+    return (state == DEVICE_STATE_STARTING ||
+            state == DEVICE_STATE_WAITING ||
+            state == DEVICE_STATE_READY);
+}
+
 static void App_UpdateHealth(void)
 {
     if (s_i2c_bus == NULL)
@@ -527,6 +621,10 @@ static void App_UpdateHealth(void)
     /* SCD41 SystemHealth contribution (see App_Scd41HealthOk). */
     bool scd41_ok = App_Scd41HealthOk(s_scd41.state);
 
+    /* SHT45 SystemHealth contribution (see App_Sht45HealthOk). A missing or
+       errored SHT45 degrades health but never faults the device. */
+    bool sht45_ok = App_Sht45HealthOk(s_sht45.state);
+
     /* Persistence redundancy: healthy only when every A/B mirror is HEALTHY.
        A degraded mirror degrades system health without stopping sensing. */
     bool config_healthy  = (Config_GetStorageHealth() == STORAGE_HEALTH_HEALTHY);
@@ -543,7 +641,7 @@ static void App_UpdateHealth(void)
 
     /* A non-OK/FAULT state here is DEGRADED: sensing continues (the scheduler is
        never gated on health) and only the reported health reflects the mirror. */
-    if (runtime_ok && persistence_redundant_ok && scd41_ok)
+    if (runtime_ok && persistence_redundant_ok && scd41_ok && sht45_ok)
         s_health = SYSTEM_HEALTH_OK;
     else
         s_health = SYSTEM_HEALTH_DEGRADED;
@@ -562,6 +660,8 @@ RoomSensor_Status App_Init(void)
     DeviceRuntime_Init(&s_disp_rt, DEVICE_STATE_NOT_FOUND);
     Scd41Runtime_Init(&s_scd41, s_i2c_bus);
     App_RefreshScd41Diagnostics();   /* s_co2_rt mirrors runtime initial state */
+    Sht45Runtime_Init(&s_sht45, s_i2c_bus);
+    App_RefreshSht45Diagnostics();   /* s_temp_rt mirrors runtime initial state */
 
     RoomState_Init(&s_room);
     SelfTest_Init(&s_self_test);
@@ -736,6 +836,18 @@ void App_Run(void)
         }
     }
 
+    /* SHT45 runtime: advance the non-blocking single-shot state machine. */
+    if ((now - s_last_sht45_ms) >= SHT45_RUNTIME_POLL_INTERVAL_MS)
+    {
+        s_last_sht45_ms = now;
+        if (s_sht45.state == DEVICE_STATE_STARTING ||
+            s_sht45.state == DEVICE_STATE_WAITING ||
+            s_sht45.state == DEVICE_STATE_READY)
+        {
+            App_DoPollSht45();
+        }
+    }
+
     if ((now - s_last_display_ms) >= cfg->storage.display_period_ms)
     {
         s_last_display_ms = now;
@@ -755,6 +867,7 @@ void App_Run(void)
                "LIGHT state=%d room_lux=%.0f ops=%lu err=%lu consec=%lu rec=%lu\r\n"
                "DISPLAY state=%d ops=%lu err=%lu consec=%lu rec=%lu\r\n"
                "CO2 state=%d ppm=%.0f valid=%d T=%.1f RH=%.1f ops=%lu err=%lu consec=%lu rec=%lu\r\n"
+               "SHT45 state=%d T=%.1f RH=%.1f Tvalid=%d RHvalid=%d ops=%lu err=%lu consec=%lu rec=%lu\r\n"
                "HEALTH=%d WDG=%d CFG read=%s health=%s "
                "IDENT read=%s health=%s COMM=%d sent=%lu failed=%lu\r\n",
                (unsigned long)(now - s_start_ms),
@@ -778,6 +891,15 @@ void App_Run(void)
                (unsigned long)s_co2_rt.operation_failures,
                (unsigned long)s_co2_rt.consecutive_errors,
                (unsigned long)s_co2_rt.recovery_count,
+               (int)s_temp_rt.state,
+               (double)s_room.sht45_temperature_c,
+               (double)s_room.sht45_humidity_pct,
+               (int)s_room.sht45_temperature_valid,
+               (int)s_room.sht45_humidity_valid,
+               (unsigned long)s_temp_rt.operation_successes,
+               (unsigned long)s_temp_rt.operation_failures,
+               (unsigned long)s_temp_rt.consecutive_errors,
+               (unsigned long)s_temp_rt.recovery_count,
                (int)s_health, (int)s_watchdog_active,
                StorageReadStatus_Str(Config_GetStorageStatus()),
                StorageHealth_Str(Config_GetStorageHealth()),
@@ -821,9 +943,11 @@ void App_GetStatus(AppStatus *status)
 
     /* Refresh the persistent live snapshot (cmd_svc.status points at s_status)
        so GET_STATUS always reads current runtime health. */
+    /* AppStatus: co2 + thermal rely on the runtime diagnostic snapshots. */
     s_status.light_sensor = s_light_rt;
     s_status.display = s_disp_rt;
     s_status.co2_sensor = s_co2_rt;
+    s_status.temp_humidity_sensor = s_temp_rt;
     s_status.health = s_health;
     s_status.reset_cause = s_reset_cause;
     s_status.watchdog_active = s_watchdog_active;

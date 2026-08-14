@@ -203,8 +203,8 @@ static void HandleGetCapabilities(const CommandRequest *req, CommandResponse *rs
     CommandResponse_AppendJsonInt(rsp, "telemetry_schema", TELEMETRY_SCHEMA_VERSION);
     CommandResponse_AppendJsonInt(rsp, "config_schema", CONFIG_SCHEMA_VERSION);
     CommandResponse_AppendJsonBool(rsp, "illuminance", true);
-    CommandResponse_AppendJsonBool(rsp, "temperature", false);
-    CommandResponse_AppendJsonBool(rsp, "humidity", false);
+    CommandResponse_AppendJsonBool(rsp, "temperature", true);   /* SHT45 */
+    CommandResponse_AppendJsonBool(rsp, "humidity", true);      /* SHT45 */
     CommandResponse_AppendJsonBool(rsp, "pressure", false);
     CommandResponse_AppendJsonBool(rsp, "co2", true);
     CommandResponse_AppendJsonBool(rsp, "voc", false);

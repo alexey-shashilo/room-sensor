@@ -156,6 +156,32 @@ static SerializeStatus AppendScd41Block(char *buf, size_t cap, size_t *pos,
     return SERIALIZE_OK;
 }
 
+/* Serialize the SHT45 channels within the room block with explicit validity
+   semantics. SHT45 is the dedicated environmental T/RH source; when invalid no
+   numeric value is emitted (never a fake 0). */
+static SerializeStatus AppendSht45Block(char *buf, size_t cap, size_t *pos,
+                                        const RoomState *room)
+{
+    if (room == NULL)
+        return SERIALIZE_INVALID_ARG;
+
+    SerializeStatus s = AppendMeasurement(buf, cap, pos,
+        "sht45_temperature_c",
+        room->sht45_temperature_c,
+        room->sht45_temperature_valid,
+        true);
+    if (s != SERIALIZE_OK) return s;
+
+    s = AppendMeasurement(buf, cap, pos,
+        "sht45_humidity_pct",
+        room->sht45_humidity_pct,
+        room->sht45_humidity_valid,
+        true);
+    if (s != SERIALIZE_OK) return s;
+
+    return SERIALIZE_OK;
+}
+
 SerializeStatus Telemetry_Serialize(
     const TelemetrySnapshot *snapshot,
     uint8_t *buffer,
@@ -220,6 +246,10 @@ SerializeStatus Telemetry_Serialize(
     /* SCD41-backed channels. CO2 uses integer ppm; invalid -> no numeric value
        (never renders invalid CO2 as 0). */
     s = AppendScd41Block(buf, cap, &pos, &snapshot->room);
+    if (s != SERIALIZE_OK) return s;
+
+    /* SHT45-backed dedicated T/RH channels (separate source from SCD41). */
+    s = AppendSht45Block(buf, cap, &pos, &snapshot->room);
     if (s != SERIALIZE_OK) return s;
 
     s = AppendFormat(buf, cap, &pos, "\n  }\n");

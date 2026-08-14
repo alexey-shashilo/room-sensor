@@ -78,7 +78,7 @@ def main():
     # Case 1: golden, all valid
     d = parse_case(1)
     if d is not None:
-        check(d.get("schema") == 3, "case1 schema==3")
+        check(d.get("schema") == 4, "case1 schema==4")
         bid = d.get("boot_id")
         check(isinstance(bid, str) and len(bid) == 16, "case1 boot_id length==16")
         check(isinstance(bid, str) and all(c in "0123456789abcdef" for c in bid),
@@ -94,6 +94,14 @@ def main():
         check(abs(room.get("illuminance_lux", {}).get("value") - 72.4) < 0.01,
               "case1 illuminance_lux.value==72.4")
         check("value" in room.get("scd41_humidity_pct", {}), "case1 humidity has value")
+        check(abs(room.get("sht45_temperature_c", {}).get("value") - 23.4) < 0.1,
+              "case1 sht45_temperature_c.value==23.4")
+        check(room.get("sht45_temperature_c", {}).get("state") == "valid",
+              "case1 sht45 temp state valid")
+        check(abs(room.get("sht45_humidity_pct", {}).get("value") - 44.1) < 0.1,
+              "case1 sht45_humidity_pct.value==44.1")
+        check(room.get("sht45_humidity_pct", {}).get("state") == "valid",
+              "case1 sht45 rh state valid")
 
     # Case 2: all invalid
     d = parse_case(2)
@@ -105,6 +113,10 @@ def main():
         check(room.get("scd41_humidity_pct", {}).get("state") == "invalid", "case2 RH invalid")
         check("value" not in room.get("scd41_temperature_c", {}), "case2 T no value")
         check("value" not in room.get("scd41_humidity_pct", {}), "case2 RH no value")
+        check(room.get("sht45_temperature_c", {}).get("state") == "invalid", "case2 sht45 T invalid")
+        check(room.get("sht45_humidity_pct", {}).get("state") == "invalid", "case2 sht45 RH invalid")
+        check("value" not in room.get("sht45_temperature_c", {}), "case2 sht45 T no value (never fake 0)")
+        check("value" not in room.get("sht45_humidity_pct", {}), "case2 sht45 RH no value")
 
     # Case 3: mixed
     d = parse_case(3)

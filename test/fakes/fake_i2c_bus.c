@@ -10,6 +10,7 @@
 #define SCD41_FAKE_CMD_STOP_PERIODIC   0x3F86U
 
 #define SCD41_FAKE_WIRE_ADDR   (0xC4U)   /* SCD41 7-bit 0x62 left-shifted */
+#define SHT45_FAKE_WIRE_ADDR   (0x88U)   /* SHT45 7-bit 0x44 left-shifted */
 
 static DriverStatus fake_write(void *ctx, uint16_t addr, const uint8_t *data, size_t size)
 {
@@ -38,6 +39,14 @@ static DriverStatus fake_write(void *ctx, uint16_t addr, const uint8_t *data, si
     if (f->last_write_size == 2U)
         f->last_scd41_cmd = (uint16_t)(((uint16_t)f->last_write_data[0] << 8U) |
                                        (uint16_t)f->last_write_data[1]);
+
+    /* SHT45: a single-byte command write (measure etc.). */
+    if (addr == SHT45_FAKE_WIRE_ADDR && f->last_write_size == 1U)
+    {
+        f->sht45_last_cmd = f->last_write_data[0];
+        if (f->sht45_last_cmd == 0xFDU)   /* high-precision measure */
+            f->sht45_measure_cmd_count++;
+    }
 
     /* Append to the SCD41 command log (SCD41 wire address only). */
     if (addr == SCD41_FAKE_WIRE_ADDR && f->last_scd41_cmd != 0U)
@@ -88,11 +97,21 @@ static DriverStatus fake_read_mem(void *ctx, uint16_t addr, uint8_t reg, uint8_t
 
 static DriverStatus fake_read(void *ctx, uint16_t addr, uint8_t *data, size_t size)
 {
-    (void)addr;
     FakeI2cBus *f = (FakeI2cBus *)ctx;
     f->last_addr = addr;
     f->read_call_count++;
     f->last_read_tick_ms = Platform_GetTickMs();
+
+    /* SHT45: a 6-byte read (T+CRC, RH+CRC). If the conversion is not complete
+       (respond==false) the fake NACKs (BUS_ERROR), matching the datasheet
+       "NACK to read header while busy". */
+    if (addr == SHT45_FAKE_WIRE_ADDR && size == 6U)
+    {
+        if (!f->sht45_respond)
+            return DRIVER_STATUS_BUS_ERROR;
+        memcpy(data, f->sht45_read_response, 6);
+        return f->read_result;
+    }
 
     /* After GET_DATA_READY (0xE4B8), a 3-byte read returns the data-ready word
        followed by its CRC. The 16-bit word is transmitted MSB-first (the
@@ -227,4 +246,11 @@ uint16_t FakeI2cBus_TempRaw(float temp_c)
 uint16_t FakeI2cBus_RhRaw(float rh_pct)
 {
     return (uint16_t)(rh_pct * 65535.0f / 100.0f);
+}
+
+void FakeI2cBus_SetSht45Response(FakeI2cBus *fake, const uint8_t raw6[6], bool respond)
+{
+    if (fake == NULL || raw6 == NULL) return;
+    memcpy(fake->sht45_read_response, raw6, 6);
+    fake->sht45_respond = respond;
 }

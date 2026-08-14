@@ -18,6 +18,7 @@ typedef struct
     DeviceRuntime light_sensor;
     DeviceRuntime display;
     DeviceRuntime co2_sensor;
+    DeviceRuntime temp_humidity_sensor;   /* SHT45 */
 
     SystemHealthState health;
     ResetCause reset_cause;
@@ -63,5 +64,10 @@ void               App_DoRetry(void);
    SystemHealth to DEGRADED, never FAULT). Exported for direct unit testing of
    the health mapping. */
 bool App_Scd41HealthOk(DeviceState state);
+
+/* SHT45 SystemHealth contribution predicate: true only when the SHT45 runtime is
+   STARTING/WAITING/READY. NOT_FOUND/ERROR/RECOVERING -> false (degrades
+   SystemHealth to DEGRADED, never FAULT). Exported for direct unit testing. */
+bool App_Sht45HealthOk(DeviceState state);
 
 #endif
