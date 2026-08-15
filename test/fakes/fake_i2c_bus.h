@@ -109,6 +109,12 @@ typedef struct
     uint16_t bmp390_wire_addr;   /* left-shifted wire address to relay, 0 = disabled */
     uint8_t  bmp390_chip_id;
     uint8_t  bmp390_calib[21];
+
+    /* Shared-bus recovery hook (Phase 6). When `recover_result` is set, the
+       bus's recover fn dispatches here and bumps recover_call_count. Enables
+       tests to exercise I2cBus_Recover and bus-recovery orchestration. */
+    DriverStatus recover_result;
+    int          recover_call_count;
 } FakeI2cBus;
 
 void FakeI2cBus_Init(FakeI2cBus *fake);

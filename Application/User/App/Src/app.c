@@ -20,6 +20,8 @@
 #include "communication_debug.h"
 #include "command.h"
 #include "provisioning.h"
+#include "recovery_policy.h"
+#include "i2c_bus_health.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -58,6 +60,19 @@ static uint32_t s_bmp390_room_commit_ms = 0xFFFFFFFFu;
    validity flicker and needless RoomState timestamp churn on every poll).
    Initialized to a sentinel so the first accepted sample always commits. */
 static uint32_t s_sht45_room_commit_ms = 0xFFFFFFFFu;
+
+/* Shared-bus health monitor (Phase 5/7). A single device failure never triggers
+   shared-bus recovery; only >= 2 distinct previously-healthy devices reporting
+   transport failures within the window (or a persistent bus-busy state) does. */
+static I2cBusHealth s_bus_health;
+
+/* Per-device NOT_FOUND backoff gating (Phase 4). Each present-but-possibly-
+   absent device tracks its own consecutive-absence count and next-probe time so
+   a physically absent optional sensor is not probed on every retry tick. */
+static uint32_t s_veml_absent = 0U;
+static uint32_t s_veml_next_probe_ms = 0U;
+static uint32_t s_disp_absent = 0U;
+static uint32_t s_disp_next_probe_ms = 0U;
 
 static SystemHealthState s_health = SYSTEM_HEALTH_BOOTING;
 static ResetCause        s_reset_cause = RESET_CAUSE_UNKNOWN;
@@ -131,10 +146,30 @@ void App_SetI2C(const I2cBus *bus)
 
 static void App_DoProbeVeml(void)
 {
+    uint32_t now = Platform_GetTickMs();
+    /* Phase 4 backoff: a physically absent VEML is not probed every retry tick.
+       After a probe-and-fail, gate future probes behind the per-device ladder. */
+    if (s_veml_absent > 0U)
+    {
+        if (RecoveryPolicy_Elapsed(now, s_veml_next_probe_ms, 0U) == false ||
+            (uint32_t)(now - s_veml_next_probe_ms) >= 0x80000000U)
+        {
+            s_light_rt.state = DEVICE_STATE_NOT_FOUND;
+            return;
+        }
+    }
+
     if (VEML7700_Probe(s_i2c_bus))
+    {
+        s_veml_absent = 0U;
         s_light_rt.state = DEVICE_STATE_INITIALIZING;
+    }
     else
+    {
+        s_veml_absent = RecoveryPolicy_TrackAbsence(s_veml_absent, true);
+        s_veml_next_probe_ms = now + RecoveryPolicy_BackoffMs(s_veml_absent);
         s_light_rt.state = DEVICE_STATE_NOT_FOUND;
+    }
 }
 
 static void App_DoInitVeml(void)
@@ -331,15 +366,30 @@ static void App_DoPollBmp390(void)
 
 static void App_DoProbeDisplay(void)
 {
+    uint32_t now = Platform_GetTickMs();
+    /* Phase 4 backoff for a physically absent display. */
+    if (s_disp_absent > 0U)
+    {
+        if (RecoveryPolicy_Elapsed(now, s_disp_next_probe_ms, 0U) == false ||
+            (uint32_t)(now - s_disp_next_probe_ms) >= 0x80000000U)
+        {
+            s_disp_rt.state = DEVICE_STATE_NOT_FOUND;
+            return;
+        }
+    }
+
     uint8_t addr;
     if (Display_Probe(s_i2c_bus, &addr))
     {
+        s_disp_absent = 0U;
         s_display_addr = addr;
         s_display_addr_valid = true;
         s_disp_rt.state = DEVICE_STATE_INITIALIZING;
     }
     else
     {
+        s_disp_absent = RecoveryPolicy_TrackAbsence(s_disp_absent, true);
+        s_disp_next_probe_ms = now + RecoveryPolicy_BackoffMs(s_disp_absent);
         s_display_addr_valid = false;
         s_disp_rt.state = DEVICE_STATE_NOT_FOUND;
     }
@@ -452,17 +502,87 @@ static void App_DoUpdateDisplay(void)
 
 void App_DoRetry(void)
 {
+    uint32_t now = Platform_GetTickMs();
+
+    /* --- Shared-bus health reporting (Phase 5) --- */
+    /* Each previously-present I2C device reports its latest transport outcome
+       to the bus monitor. A single device is never enough: only >= 2 distinct
+       previously-healthy devices reporting BUS_ERROR/TIMEOUT within the window
+       (or a persistent bus-busy) triggers shared-bus recovery. CRC/data/device-
+       local errors and NOT_FOUND-from-never-present contribute nothing. */
+    {
+        I2cBusHealth_SetDeviceKnown(&s_bus_health, 0U, (s_veml_absent == 0U));
+        I2cBusHealth_SetDeviceKnown(&s_bus_health, 1U, (s_disp_absent == 0U));
+        I2cBusHealth_SetDeviceKnown(&s_bus_health, 2U, !Scd41Runtime_IsMissing(&s_scd41));
+        I2cBusHealth_SetDeviceKnown(&s_bus_health, 3U, !Sht45Runtime_IsMissing(&s_sht45));
+        I2cBusHealth_SetDeviceKnown(&s_bus_health, 4U, !Bmp390Runtime_IsMissing(&s_bmp390));
+
+        DriverStatus e0 = s_light_rt.state != DEVICE_STATE_READY ? DRIVER_STATUS_NOT_SUPPORTED : DRIVER_STATUS_OK;
+        DriverStatus e1 = s_disp_rt.state != DEVICE_STATE_READY ? DRIVER_STATUS_NOT_SUPPORTED : DRIVER_STATUS_OK;
+        DriverStatus e2 = Scd41Runtime_LastError(&s_scd41);
+        DriverStatus e3 = Sht45Runtime_LastError(&s_sht45);
+        DriverStatus e4 = Bmp390Runtime_LastError(&s_bmp390);
+
+        I2cBusHealth_Report(&s_bus_health, 0U, e0, now);
+        I2cBusHealth_Report(&s_bus_health, 1U, e1, now);
+        I2cBusHealth_Report(&s_bus_health, 2U, e2, now);
+        I2cBusHealth_Report(&s_bus_health, 3U, e3, now);
+        I2cBusHealth_Report(&s_bus_health, 4U, e4, now);
+    }
+
+    /* --- Shared-bus recovery orchestration (Phase 5/6/7) --- */
+    if (I2cBusHealth_ShouldRecover(&s_bus_health) &&
+        I2cBusHealth_RecoveryEligible(&s_bus_health, now) && s_i2c_bus != NULL)
+    {
+        /* Begin the attempt FIRST: this clears the evidence epoch (so old
+           evidence can never survive) and records the cooldown base — whether
+           the attempt then succeeds or fails. */
+        I2cBusHealth_BeginRecovery(&s_bus_health, now);
+        DriverStatus rs = I2cBus_Recover(s_i2c_bus);
+        if (rs == DRIVER_STATUS_OK)
+        {
+            I2cBusHealth_OnRecoverySuccess(&s_bus_health);
+            /* Bus recovered: force controlled reinitialization of every
+               previously-present I2C runtime. Sensors are NOT marked valid;
+               each must obtain a fresh sample. */
+            s_veml_absent = 0U;
+            s_disp_absent = 0U;
+            s_veml.initialized = 0U;
+            s_display.initialized = 0U;
+            s_display_addr_valid = false;
+            /* Reset runtimes to re-probe/re-init so they recover independently. */
+            s_light_rt.state = DEVICE_STATE_NOT_FOUND;
+            s_disp_rt.state = DEVICE_STATE_NOT_FOUND;
+            Scd41Runtime_Recover(&s_scd41);
+            Sht45Runtime_Recover(&s_sht45);
+            Bmp390Runtime_Recover(&s_bmp390);
+            /* Consistent last-good policy after a bus reset (Phase 13): the
+               communication substrate was reset. All I2C sensor samples are
+               invalidated by their runtimes through the Recover() path above
+               (each Recover clears the last sample's validity); a fresh sample
+               is required before any is trusted again. */
+        }
+        else
+        {
+            I2cBusHealth_OnRecoveryFailure(&s_bus_health);
+            /* Recovery failed: the cooldown (RECOVERY_BUS_COOLDOWN_MS) now gates
+               the next attempt; the caller owns scheduling so there is no tight
+               loop and the watchdog path stays clear. */
+        }
+        App_RefreshScd41Diagnostics();
+        App_RefreshSht45Diagnostics();
+        App_RefreshBmp390Diagnostics();
+    }
+
     switch (s_light_rt.state)
     {
         case DEVICE_STATE_NOT_FOUND:
+        case DEVICE_STATE_RECOVERING:
             s_light_rt.state = DEVICE_STATE_PROBING;
             break;
         case DEVICE_STATE_ERROR:
             s_light_rt.recovery_count++;
             s_light_rt.state = DEVICE_STATE_RECOVERING;
-            break;
-        case DEVICE_STATE_RECOVERING:
-            s_light_rt.state = DEVICE_STATE_PROBING;
             break;
         default:
             break;
@@ -760,6 +880,7 @@ RoomSensor_Status App_Init(void)
 
     s_start_ms = Platform_GetTickMs();
 
+    I2cBusHealth_Init(&s_bus_health);
     DeviceRuntime_Init(&s_light_rt, DEVICE_STATE_NOT_FOUND);
     DeviceRuntime_Init(&s_disp_rt, DEVICE_STATE_NOT_FOUND);
     Scd41Runtime_Init(&s_scd41, s_i2c_bus);
@@ -986,7 +1107,7 @@ void App_Run(void)
                "DISPLAY state=%d ops=%lu err=%lu consec=%lu rec=%lu\r\n"
                "CO2 state=%d ppm=%.0f valid=%d T=%.1f RH=%.1f ops=%lu err=%lu consec=%lu rec=%lu\r\n"
                "SHT45 state=%d T=%.1f RH=%.1f Tvalid=%d RHvalid=%d ops=%lu err=%lu consec=%lu rec=%lu\r\n"
-               "HEALTH=%d WDG=%d CFG read=%s health=%s "
+               "HEALTH=%d WDG=%d BUS_ATT=%lu SUC=%lu FAIL=%lu CFG read=%s health=%s "
                "IDENT read=%s health=%s COMM=%d sent=%lu failed=%lu\r\n",
                (unsigned long)(now - s_start_ms),
                (int)s_light_rt.state,
@@ -1019,6 +1140,9 @@ void App_Run(void)
                (unsigned long)s_temp_rt.consecutive_errors,
                (unsigned long)s_temp_rt.recovery_count,
                (int)s_health, (int)s_watchdog_active,
+               (unsigned long)I2cBusHealth_GetBusRecoveryAttempts(&s_bus_health),
+               (unsigned long)I2cBusHealth_GetBusRecoverySuccesses(&s_bus_health),
+               (unsigned long)I2cBusHealth_GetBusRecoveryFailures(&s_bus_health),
                StorageReadStatus_Str(Config_GetStorageStatus()),
                StorageHealth_Str(Config_GetStorageHealth()),
                StorageReadStatus_Str(DeviceIdentity_GetPersistenceStatus()),

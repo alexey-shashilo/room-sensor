@@ -1,5 +1,6 @@
 #include "sht45_runtime.h"
 #include "platform_time.h"
+#include "recovery_policy.h"
 #include <string.h>
 
 /* Non-blocking single-shot measurement state machine.
@@ -93,12 +94,21 @@ void Sht45Runtime_InvalidateSample(Sht45Runtime *rt)
 /* Begin a bounded recovery epoch. See sht45_runtime.h. The key fix: the
    consecutive_error budget is RESET here (not in Start and not by App mutation)
    so a fresh probe/start/read sequence can actually execute instead of Poll
-   immediately re-escalating a stale counter back to ERROR. */
+   immediately re-escalating a stale counter back to ERROR.
+
+   LAST-GOOD POLICY (coherent with bus recovery, Phase 13): entering a recovery
+   epoch INVALIDATES the last-good sample. After a shared-bus reset the
+   communication substrate and any in-flight transaction are no longer trusted,
+   so no sensor keeps "last-good" while another does not; every I2C sensor must
+   obtain a fresh valid sample before it is trusted again. On the per-sensor
+   ERROR path the sample was already invalidated during escalation, so clearing
+   here is a harmless no-op that keeps the contract uniform. */
 void Sht45Runtime_Recover(Sht45Runtime *rt)
 {
     if (rt == NULL) return;
     rt->recovery_count++;
     rt->consecutive_errors = 0;
+    rt->last_sample.valid = false;
     rt->phase = SHT45_PHASE_IDLE;
     rt->state = DEVICE_STATE_RECOVERING;
 }
@@ -117,17 +127,57 @@ static void Sht45Runtime_EnforceFreshness(Sht45Runtime *rt, uint32_t now)
         rt->last_sample.valid = false;
 }
 
+bool Sht45Runtime_ProbeDue(const Sht45Runtime *rt, uint32_t now)
+{
+    if (rt == NULL) return false;
+    if (rt->consecutive_absent == 0U)
+        return true;             /* no absence episode: probe freely */
+    if (RecoveryPolicy_Elapsed(now, rt->next_probe_ms, 0U) == false)
+        return false;            /* backoff window still open */
+    return (uint32_t)(now - rt->next_probe_ms) < 0x80000000U;
+}
+
+DriverStatus Sht45Runtime_LastError(const Sht45Runtime *rt)
+{
+    return rt != NULL ? rt->last_error_class : DRIVER_STATUS_INVALID_ARG;
+}
+
 DriverStatus Sht45Runtime_Start(Sht45Runtime *rt)
 {
     if (rt == NULL)
         return DRIVER_STATUS_INVALID_ARG;
 
+    uint32_t now = Platform_GetTickMs();
+
+    /* Phase 4 NOT_FOUND backoff: when this device is in a confirmed-absent
+       episode, only actually re-probe after the per-device backoff expires
+       (5s->10s->30s->60s cap) instead of every App retry tick. */
+    if (rt->consecutive_absent > 0U)
+    {
+        if (RecoveryPolicy_Elapsed(now, rt->next_probe_ms, 0U) == false ||
+            (uint32_t)(now - rt->next_probe_ms) >= 0x80000000U)
+        {
+            rt->state = DEVICE_STATE_NOT_FOUND;
+            return DRIVER_STATUS_NOT_FOUND;
+        }
+    }
+
     DriverStatus ps = SHT45_Probe(rt->dev.bus);
     if (ps != DRIVER_STATUS_OK)
     {
         rt->state = DEVICE_STATE_NOT_FOUND;
+        rt->last_error_class = ps;
+        /* Count consecutive absence and advance the per-device backoff ladder.
+           App gates re-probes via Sht45Runtime_ProbeDue so an absent sensor is
+           not probed on every retry tick forever. */
+        rt->consecutive_absent = RecoveryPolicy_TrackAbsence(rt->consecutive_absent, true);
+        rt->next_probe_ms = now + RecoveryPolicy_BackoffMs(rt->consecutive_absent);
         return ps;
     }
+
+    /* Probe succeeded: absence episode over, reset backoff to the first rung. */
+    rt->consecutive_absent = 0U;
+    rt->last_error_class = DRIVER_STATUS_OK;
 
     if (rt->dev.initialized == 0U)
         SHT45_Init(&rt->dev, rt->dev.bus);
@@ -138,6 +188,7 @@ DriverStatus Sht45Runtime_Start(Sht45Runtime *rt)
     if (ms != DRIVER_STATUS_OK)
     {
         Sht45Runtime_RecordFailure(rt);
+        rt->last_error_class = ms;
         if (rt->consecutive_errors >= SHT45_RUNTIME_ERROR_THRESHOLD)
             rt->state = DEVICE_STATE_ERROR;
         return ms;
@@ -183,6 +234,7 @@ void Sht45Runtime_Poll(Sht45Runtime *rt)
             rt->phase = SHT45_PHASE_IDLE;
             if (rs != DRIVER_STATUS_OK)
             {
+                rt->last_error_class = rs;
                 if (rs == DRIVER_STATUS_BUS_ERROR)
                 {
                     /* Genuine I2C failure: count it. If it repeats enough times
@@ -214,6 +266,7 @@ void Sht45Runtime_Poll(Sht45Runtime *rt)
                 DriverStatus ms = SHT45_BeginMeasurement(&rt->dev);
                 if (ms != DRIVER_STATUS_OK)
                 {
+                    rt->last_error_class = ms;
                     Sht45Runtime_RecordFailureEscalate(rt);
                     return;
                 }
@@ -234,6 +287,7 @@ void Sht45Runtime_Poll(Sht45Runtime *rt)
             rt->last_valid_measurement_ms = now;
             rt->state = DEVICE_STATE_READY;
             rt->phase = SHT45_PHASE_BETWEEN_MEASUREMENTS;
+            rt->last_error_class = DRIVER_STATUS_OK;
             Sht45Runtime_RecordSuccess(rt);
             return;
         }
@@ -251,6 +305,7 @@ void Sht45Runtime_Poll(Sht45Runtime *rt)
             DriverStatus ms = SHT45_BeginMeasurement(&rt->dev);
             if (ms != DRIVER_STATUS_OK)
             {
+                rt->last_error_class = ms;
                 Sht45Runtime_RecordFailureEscalate(rt);
                 return;
             }

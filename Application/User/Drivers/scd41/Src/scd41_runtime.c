@@ -1,5 +1,6 @@
 #include "scd41_runtime.h"
 #include "platform_time.h"
+#include "recovery_policy.h"
 #include <string.h>
 
 /* Non-blocking periodic measurement state machine.
@@ -98,19 +99,54 @@ static void Scd41Runtime_EnforceFreshness(Scd41Runtime *rt, uint32_t now)
     }
 }
 
+bool Scd41Runtime_ProbeDue(const Scd41Runtime *rt, uint32_t now)
+{
+    if (rt == NULL) return false;
+    if (rt->consecutive_absent == 0U)
+        return true;
+    if (RecoveryPolicy_Elapsed(now, rt->next_probe_ms, 0U) == false)
+        return false;
+    return (uint32_t)(now - rt->next_probe_ms) < 0x80000000U;
+}
+
+DriverStatus Scd41Runtime_LastError(const Scd41Runtime *rt)
+{
+    return rt != NULL ? rt->last_error_class : DRIVER_STATUS_INVALID_ARG;
+}
+
 DriverStatus Scd41Runtime_Start(Scd41Runtime *rt)
 {
     if (rt == NULL)
         return DRIVER_STATUS_INVALID_ARG;
 
+    uint32_t now = Platform_GetTickMs();
+
+    /* Phase 4 NOT_FOUND backoff: gate the re-probe behind the per-device ladder
+       when this device is in a confirmed-absent episode. */
+    if (rt->consecutive_absent > 0U)
+    {
+        if (RecoveryPolicy_Elapsed(now, rt->next_probe_ms, 0U) == false ||
+            (uint32_t)(now - rt->next_probe_ms) >= 0x80000000U)
+        {
+            rt->state = DEVICE_STATE_NOT_FOUND;
+            return DRIVER_STATUS_NOT_FOUND;
+        }
+    }
+
     /* Probe first; a missing sensor stays NOT_FOUND (like VEML) and is retried
-       by App_DoRetry — it is not an error escalation. */
+       by App_DoRetry with per-device backoff — it is not an error escalation. */
     DriverStatus ps = SCD41_Probe(rt->dev.bus);
     if (ps != DRIVER_STATUS_OK)
     {
         rt->state = DEVICE_STATE_NOT_FOUND;
+        rt->last_error_class = ps;
+        rt->consecutive_absent = RecoveryPolicy_TrackAbsence(rt->consecutive_absent, true);
+        rt->next_probe_ms = now + RecoveryPolicy_BackoffMs(rt->consecutive_absent);
         return ps;
     }
+
+    rt->consecutive_absent = 0U;
+    rt->last_error_class = DRIVER_STATUS_OK;
 
     if (rt->dev.initialized == 0U)
         SCD41_Init(&rt->dev, rt->dev.bus);
@@ -141,6 +177,7 @@ DriverStatus Scd41Runtime_Start(Scd41Runtime *rt)
         /* Neither START nor STOP is accepted: a genuine communication failure,
            not the retained-periodic case. Escalate via the bounded error path
            (positive/negative threshold semantics unchanged). */
+        rt->last_error_class = stops;
         Scd41Runtime_RecordFailure(rt);
         if (rt->consecutive_errors >= SCD41_RUNTIME_ERROR_THRESHOLD)
             rt->state = DEVICE_STATE_ERROR;
@@ -176,11 +213,13 @@ void Scd41Runtime_Poll(Scd41Runtime *rt)
             rt->phase = SCD41_PHASE_IDLE;
             if (rs != DRIVER_STATUS_OK)
             {
+                rt->last_error_class = rs;
                 Scd41Runtime_RecordFailureEscalate(rt);
                 return;
             }
             rt->started_at_ms = now;   /* restart accepted: begin periodic wait */
             rt->state = DEVICE_STATE_STARTING;
+            rt->last_error_class = DRIVER_STATUS_OK;
             Scd41Runtime_RecordSuccess(rt);
             return;
         }
@@ -221,6 +260,7 @@ void Scd41Runtime_Poll(Scd41Runtime *rt)
         DriverStatus bs = SCD41_BeginGetDataReady(&rt->dev);
         if (bs != DRIVER_STATUS_OK)
         {
+            rt->last_error_class = bs;
             Scd41Runtime_RecordFailureEscalate(rt);
             return;
         }
@@ -239,6 +279,7 @@ void Scd41Runtime_Poll(Scd41Runtime *rt)
         if (fs != DRIVER_STATUS_OK)
         {
             rt->phase = SCD41_PHASE_IDLE;
+            rt->last_error_class = fs;
             Scd41Runtime_RecordFailureEscalate(rt);
             return;
         }
@@ -253,6 +294,7 @@ void Scd41Runtime_Poll(Scd41Runtime *rt)
         if (mbs != DRIVER_STATUS_OK)
         {
             rt->phase = SCD41_PHASE_IDLE;
+            rt->last_error_class = mbs;
             Scd41Runtime_RecordFailureEscalate(rt);
             return;
         }
@@ -273,6 +315,7 @@ void Scd41Runtime_Poll(Scd41Runtime *rt)
         {
             /* CRC failure included: no partial sample is committed. Escalate via
                the same bounded consecutive-error threshold. */
+            rt->last_error_class = rs;
             Scd41Runtime_RecordFailureEscalate(rt);
             return;
         }
@@ -282,19 +325,28 @@ void Scd41Runtime_Poll(Scd41Runtime *rt)
             rt->last_sample = meas;
             rt->last_valid_measurement_ms = now;
             rt->state = DEVICE_STATE_READY;
+            rt->last_error_class = DRIVER_STATUS_OK;
             Scd41Runtime_RecordSuccess(rt);
         }
     }
 }
 
-/* Bounded recovery: escalate ERROR (or a stuck STARTING) into RECOVERING and
-   increment the recovery counter. App_DoRetry then calls Start() to re-probe
-   and restart periodic measurement. One SCD41 failure never resets the MCU or
-   stops VEML/display/App. */
+/* Bounded recovery: escalate ERROR (or a stuck STARTING) into RECOVERING, reset
+   the consecutive-error budget so the next probe is a NEW epoch, and increment
+   the recovery counter. App_DoRetry then calls Start() to re-probe and restart
+   periodic measurement. One SCD41 failure never resets the MCU or stops
+   VEML/display/App.
+
+   LAST-GOOD POLICY (coherent with bus recovery, Phase 13): entering a recovery
+   epoch invalidates the last-good sample, so after a shared-bus reset no sensor
+   keeps a stale "last-good" while another invalidates. A fresh sample is
+   required before any value is trusted again. */
 void Scd41Runtime_Recover(Scd41Runtime *rt)
 {
     if (rt == NULL) return;
     rt->recovery_count++;
+    rt->consecutive_errors = 0U;
+    rt->last_sample.valid = false;
     rt->state = DEVICE_STATE_RECOVERING;
 }
 

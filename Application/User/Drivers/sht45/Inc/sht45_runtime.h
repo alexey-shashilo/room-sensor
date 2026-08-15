@@ -80,6 +80,17 @@ typedef struct
     /* Freshness policy. */
     uint32_t last_valid_measurement_ms;
 
+    /* NOT_FOUND re-probe backoff (Phase 4). A physically absent optional sensor
+       must not be synchronously probed on every App retry cycle. Consecutive
+       probe failures advance a per-device backoff ladder; a successful probe
+       resets it. */
+    uint32_t consecutive_absent;
+    uint32_t next_probe_ms;
+
+    /* Last real error classified via RecoveryPolicy (for the shared-bus
+       monitor). DRIVER_STATUS_OK means no pending transport evidence. */
+    DriverStatus last_error_class;
+
     /* Internal timing anchors (ms). */
     uint32_t last_tick_ms;
 } Sht45Runtime;
@@ -122,6 +133,17 @@ void Sht45Runtime_InvalidateSample(Sht45Runtime *rt);
    last sample's numeric values are preserved for diagnostics (validity already
    cleared on ERROR). Does NOT claim success before a fresh valid measurement. */
 void Sht45Runtime_Recover(Sht45Runtime *rt);
+
+/* Phase 4 NOT_FOUND backoff. `now` in ticks. Returns true when a re-probe is
+   permitted: called by App on a NOT_FOUND state before invoking Start(). A
+   physically absent sensor is re-probed at 5s->10s->30s->60s (capped), NOT on
+   every App retry tick forever. */
+bool Sht45Runtime_ProbeDue(const Sht45Runtime *rt, uint32_t now);
+
+/* The DriverStatus of the most recent REAL error (transport/data/device), for
+   the shared-bus monitor. DRIVER_STATUS_OK means no error since the last
+   success. */
+DriverStatus Sht45Runtime_LastError(const Sht45Runtime *rt);
 
 /* Fill a portable DeviceRuntime diagnostic snapshot. */
 void Sht45Runtime_GetDiagnostics(const Sht45Runtime *rt, DeviceRuntime *out);

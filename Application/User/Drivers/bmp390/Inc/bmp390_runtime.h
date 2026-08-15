@@ -57,6 +57,18 @@ typedef struct
     uint32_t last_failure_ms;
     uint32_t last_valid_measurement_ms;
 
+    /* NOT_FOUND re-probe backoff (Phase 4). Consecutive absence advances a
+       per-device backoff ladder (5s->10s->30s->60s cap); a successful probe
+       resets it. Prevents probing a physically absent optional sensor on every
+       App retry tick forever. */
+    uint32_t consecutive_absent;
+    uint32_t next_probe_ms;
+
+    /* Last real error classified via RecoveryPolicy. DRIVER_STATUS_OK when no
+       pending transport evidence. BMP390 DEVICE_ERROR is device-local and is
+       never shared-bus evidence. */
+    DriverStatus last_error_class;
+
     uint32_t last_tick_ms;
 } Bmp390Runtime;
 
@@ -79,6 +91,9 @@ void Bmp390Runtime_Init(Bmp390Runtime *rt, const I2cBus *bus);
 DriverStatus Bmp390Runtime_Start(Bmp390Runtime *rt);
 void         Bmp390Runtime_Poll(Bmp390Runtime *rt);
 void         Bmp390Runtime_Recover(Bmp390Runtime *rt);
+
+bool Bmp390Runtime_ProbeDue(const Bmp390Runtime *rt, uint32_t now);
+DriverStatus Bmp390Runtime_LastError(const Bmp390Runtime *rt);
 
 bool Bmp390Runtime_HasValidSample(const Bmp390Runtime *rt);
 bool Bmp390Runtime_IsMissing(const Bmp390Runtime *rt);

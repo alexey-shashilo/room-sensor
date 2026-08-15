@@ -28,6 +28,14 @@ typedef DriverStatus (*I2cBus_ReadMemFn)(void *context, uint16_t addr, uint8_t r
 typedef DriverStatus (*I2cBus_ReadFn)(void *context, uint16_t addr, uint8_t *data, size_t size);
 typedef DriverStatus (*I2cBus_ProbeFn)(void *context, uint16_t addr);
 
+/* Optional platform-neutral recovery hook. Re-derives a usable I2C peripheral
+   from a transport-level failure (bus stuck/busy/error state) WITHOUT involving
+   any HAL type. A driver or the shared-bus health policy may call it only when
+   evidence indicates a real shared-bus failure; it must never be used for a
+   single device-local problem. If the implementation does not provide recovery,
+   the pointer is NULL and I2cBus_Recover returns DRIVER_STATUS_NOT_SUPPORTED. */
+typedef DriverStatus (*I2cBus_RecoverFn)(void *context);
+
 struct I2cBus
 {
     void *context;
@@ -35,6 +43,7 @@ struct I2cBus
     I2cBus_ReadMemFn read_mem;
     I2cBus_ReadFn    read;
     I2cBus_ProbeFn   probe;
+    I2cBus_RecoverFn  recover;
 };
 
 static inline DriverStatus I2cBus_Write(const I2cBus *bus, uint16_t addr, const uint8_t *data, size_t size)
@@ -70,6 +79,15 @@ static inline DriverStatus I2cBus_Probe(const I2cBus *bus, uint16_t addr)
     if (bus == NULL) return DRIVER_STATUS_INVALID_ARG;
     if (bus->probe == NULL) return DRIVER_STATUS_NOT_SUPPORTED;
     return bus->probe(bus->context, addr);
+}
+
+/* Invoke the optional shared-bus recovery hook. Returns NOT_SUPPORTED when the
+   bus does not provide recovery (a missing hook is a normal, healthy state). */
+static inline DriverStatus I2cBus_Recover(const I2cBus *bus)
+{
+    if (bus == NULL) return DRIVER_STATUS_INVALID_ARG;
+    if (bus->recover == NULL) return DRIVER_STATUS_NOT_SUPPORTED;
+    return bus->recover(bus->context);
 }
 
 #endif

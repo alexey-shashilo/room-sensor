@@ -166,6 +166,13 @@ static DriverStatus fake_probe(void *ctx, uint16_t addr)
     return f->probe_result;
 }
 
+static DriverStatus fake_recover(void *ctx)
+{
+    FakeI2cBus *f = (FakeI2cBus *)ctx;
+    f->recover_call_count++;
+    return f->recover_result;
+}
+
 void FakeI2cBus_Init(FakeI2cBus *fake)
 {
     memset(fake, 0, sizeof(*fake));
@@ -173,6 +180,7 @@ void FakeI2cBus_Init(FakeI2cBus *fake)
     fake->read_mem_result = DRIVER_STATUS_OK;
     fake->read_result = DRIVER_STATUS_OK;
     fake->probe_result = DRIVER_STATUS_OK;
+    fake->recover_result = DRIVER_STATUS_OK;
 }
 
 void FakeI2cBus_GetBus(I2cBus *bus, FakeI2cBus *fake)
@@ -182,6 +190,7 @@ void FakeI2cBus_GetBus(I2cBus *bus, FakeI2cBus *fake)
     bus->read_mem = fake_read_mem;
     bus->read = fake_read;
     bus->probe = fake_probe;
+    bus->recover = fake_recover;
 }
 
 void FakeI2cBus_SetAlsRead(FakeI2cBus *fake, uint16_t raw)

@@ -78,6 +78,17 @@ typedef struct
     /* Deadline for the retained-periodic recovery: after STOP_PERIODIC, hold the
        sensor in idle for the official 500 ms settle before re-issuing START. */
     uint32_t stop_settle_deadline_ms;
+
+    /* NOT_FOUND re-probe backoff (Phase 4). A physically absent optional sensor
+       must not be synchronously probed on every App retry cycle. Consecutive
+       probe failures advance a per-device backoff ladder; a successful probe
+       resets it. */
+    uint32_t consecutive_absent;
+    uint32_t next_probe_ms;
+
+    /* Last real error classified via RecoveryPolicy (for the shared-bus
+       monitor). DRIVER_STATUS_OK means no pending transport evidence. */
+    DriverStatus last_error_class;
 } Scd41Runtime;
 
 /* Default timing tunables. Kept OUT of persistent Config (task §20): they are
@@ -107,6 +118,14 @@ void Scd41Runtime_Poll(Scd41Runtime *rt);
 /* Bounded recovery: escalate ERROR into RECOVERING and increment the recovery
    counter; App_DoRetry then calls Start() to re-probe + restart. */
 void Scd41Runtime_Recover(Scd41Runtime *rt);
+
+/* Phase 4 NOT_FOUND backoff. `now` in ticks. Returns true when a re-probe is
+   permitted (a physically absent sensor is re-probed at 5s->10s->30s->60s, not
+   every App retry tick forever). */
+bool Scd41Runtime_ProbeDue(const Scd41Runtime *rt, uint32_t now);
+
+/* The DriverStatus of the most recent REAL error for the shared-bus monitor. */
+DriverStatus Scd41Runtime_LastError(const Scd41Runtime *rt);
 
 /* True when at least one valid sample has been accepted and is FRESH. */
 bool Scd41Runtime_HasValidSample(const Scd41Runtime *rt);

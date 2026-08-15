@@ -1,5 +1,6 @@
 #include "bmp390_runtime.h"
 #include "platform_time.h"
+#include "recovery_policy.h"
 #include <string.h>
 
 /* Non-blocking FORCED-mode measurement state machine. */
@@ -64,16 +65,51 @@ static void EnforceFreshness(Bmp390Runtime *rt, uint32_t now)
         rt->last_sample.valid = false;
 }
 
+bool Bmp390Runtime_ProbeDue(const Bmp390Runtime *rt, uint32_t now)
+{
+    if (rt == NULL) return false;
+    if (rt->consecutive_absent == 0U)
+        return true;
+    if (RecoveryPolicy_Elapsed(now, rt->next_probe_ms, 0U) == false)
+        return false;
+    return (uint32_t)(now - rt->next_probe_ms) < 0x80000000U;
+}
+
+DriverStatus Bmp390Runtime_LastError(const Bmp390Runtime *rt)
+{
+    return rt != NULL ? rt->last_error_class : DRIVER_STATUS_INVALID_ARG;
+}
+
 DriverStatus Bmp390Runtime_Start(Bmp390Runtime *rt)
 {
     if (rt == NULL) return DRIVER_STATUS_INVALID_ARG;
+
+    uint32_t now = Platform_GetTickMs();
+
+    /* Phase 4 NOT_FOUND backoff: gate the re-probe behind the per-device ladder
+       when this device is in a confirmed-absent episode. */
+    if (rt->consecutive_absent > 0U)
+    {
+        if (RecoveryPolicy_Elapsed(now, rt->next_probe_ms, 0U) == false ||
+            (uint32_t)(now - rt->next_probe_ms) >= 0x80000000U)
+        {
+            rt->state = DEVICE_STATE_NOT_FOUND;
+            return DRIVER_STATUS_NOT_FOUND;
+        }
+    }
 
     DriverStatus s = BMP390_Detect(&rt->dev);
     if (s != DRIVER_STATUS_OK)
     {
         rt->state = DEVICE_STATE_NOT_FOUND;
+        rt->last_error_class = s;
+        rt->consecutive_absent = RecoveryPolicy_TrackAbsence(rt->consecutive_absent, true);
+        rt->next_probe_ms = now + RecoveryPolicy_BackoffMs(rt->consecutive_absent);
         return s;
     }
+
+    rt->consecutive_absent = 0U;
+    rt->last_error_class = DRIVER_STATUS_OK;
 
     /* Identity OK: (re)load calibration + configure profile, then trigger the
        first measurement. */
@@ -81,11 +117,15 @@ DriverStatus Bmp390Runtime_Start(Bmp390Runtime *rt)
     {
         s = BMP390_InitCalibration(&rt->dev);
         if (s != DRIVER_STATUS_OK)
+        {
+            rt->last_error_class = s;
             return s;
+        }
     }
     s = BMP390_ConfigureRoomProfile(&rt->dev);
     if (s != DRIVER_STATUS_OK)
     {
+        rt->last_error_class = s;
         RecordFailure(rt);
         if (rt->consecutive_errors >= BMP390_RUNTIME_ERROR_THRESHOLD)
             rt->state = DEVICE_STATE_ERROR;
@@ -95,6 +135,7 @@ DriverStatus Bmp390Runtime_Start(Bmp390Runtime *rt)
     s = BMP390_TriggerMeasurement(&rt->dev);
     if (s != DRIVER_STATUS_OK)
     {
+        rt->last_error_class = s;
         RecordFailure(rt);
         if (rt->consecutive_errors >= BMP390_RUNTIME_ERROR_THRESHOLD)
             rt->state = DEVICE_STATE_ERROR;
@@ -113,6 +154,10 @@ void Bmp390Runtime_Recover(Bmp390Runtime *rt)
     if (rt == NULL) return;
     rt->recovery_count++;
     rt->consecutive_errors = 0;
+    /* LAST-GOOD POLICY (Phase 13): entering a recovery epoch invalidates the
+       last-good sample so after a shared-bus reset all I2C sensors clear last-good
+       uniformly; a fresh sample must be obtained before any value is trusted. */
+    rt->last_sample.valid = false;
     rt->phase = BMP390_PHASE_IDLE;
     rt->state = DEVICE_STATE_RECOVERING;
 }
@@ -148,6 +193,7 @@ void Bmp390Runtime_Poll(Bmp390Runtime *rt)
         DriverStatus rs = BMP390_ReadStatus(&rt->dev, &status);
         if (rs != DRIVER_STATUS_OK)
         {
+            rt->last_error_class = rs;
             if (rs == DRIVER_STATUS_DEVICE_ERROR)
             {
                 RecordFailure(rt);
@@ -184,6 +230,7 @@ void Bmp390Runtime_Poll(Bmp390Runtime *rt)
             DriverStatus er = BMP390_ReadError(&rt->dev, &err);
             if (er == DRIVER_STATUS_DEVICE_ERROR)
             {
+                rt->last_error_class = er;
                 RecordFailure(rt);
                 if (rt->consecutive_errors >= BMP390_RUNTIME_ERROR_THRESHOLD)
                     EscalateError(rt);
@@ -195,6 +242,7 @@ void Bmp390Runtime_Poll(Bmp390Runtime *rt)
             }
             else if (er != DRIVER_STATUS_OK)
             {
+                rt->last_error_class = er;
                 RecordFailure(rt);
                 if (rt->consecutive_errors >= BMP390_RUNTIME_ERROR_THRESHOLD)
                     EscalateError(rt);
@@ -209,6 +257,7 @@ void Bmp390Runtime_Poll(Bmp390Runtime *rt)
         rt->phase = BMP390_PHASE_BETWEEN_MEASUREMENTS;
         if (rr != DRIVER_STATUS_OK)
         {
+            rt->last_error_class = rr;
             RecordFailure(rt);
             if (rt->consecutive_errors >= BMP390_RUNTIME_ERROR_THRESHOLD)
                 EscalateError(rt);
@@ -221,6 +270,7 @@ void Bmp390Runtime_Poll(Bmp390Runtime *rt)
             /* Compensation/plausibility failure (out-of-range or non-finite).
                Do NOT publish an implausible pressure/temperature to RoomState.
                Bounded retry. */
+            rt->last_error_class = DRIVER_STATUS_CRC_ERROR;
             RecordFailure(rt);
             if (rt->consecutive_errors >= BMP390_RUNTIME_ERROR_THRESHOLD)
                 EscalateError(rt);
@@ -231,6 +281,7 @@ void Bmp390Runtime_Poll(Bmp390Runtime *rt)
         rt->last_sample = sample;
         rt->last_valid_measurement_ms = now;
         rt->state = DEVICE_STATE_READY;
+        rt->last_error_class = DRIVER_STATUS_OK;
         RecordSuccess(rt);
         return;
     }
@@ -244,6 +295,7 @@ void Bmp390Runtime_Poll(Bmp390Runtime *rt)
         DriverStatus ms = BMP390_TriggerMeasurement(&rt->dev);
         if (ms != DRIVER_STATUS_OK)
         {
+            rt->last_error_class = ms;
             RecordFailure(rt);
             if (rt->consecutive_errors >= BMP390_RUNTIME_ERROR_THRESHOLD)
                 EscalateError(rt);
