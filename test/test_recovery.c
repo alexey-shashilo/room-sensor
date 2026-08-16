@@ -295,6 +295,52 @@ int main(void)
         check(I2cBusHealth_ShouldRecover(&h) == false, "disappearance alone never triggers bus recovery");
     }
 
+    /* ============ P1-2C: historical health is monotonic + App-level path ============ */
+    printf("=== P1-2: previously-healthy history survives NOT_FOUND transition ===\n");
+    {
+        /* Reproduce the App orchestration: MarkHealth on real READY/valid
+           evidence, then the device disappears (NOT_FOUND), then it reports a
+           genuine transport BUS_ERROR. The healthy history MUST survive the
+           disappearance so the device can still contribute bus evidence (it was
+           a genuine participant). */
+        I2cBusHealth h; I2cBusHealth_Init(&h);
+        /* SCD41 (slot2) and SHT45 (slot3) previously READY with valid samples. */
+        I2cBusHealth_MarkHealth(&h, 2U, true);
+        I2cBusHealth_MarkHealth(&h, 3U, true);
+        check(h.previously_healthy[2U] == true, "SCD41 healthy latched");
+        check(h.previously_healthy[3U] == true, "SHT45 healthy latched");
+
+        /* Device transitions through NOT_FOUND: alone must NOT be transport evidence
+           (device-local disappearance), but ALSO must not un-latch health. */
+        I2cBusHealth_Report(&h, 2U, DRIVER_STATUS_NOT_FOUND, 1000);
+        I2cBusHealth_Report(&h, 3U, DRIVER_STATUS_NOT_FOUND, 1100);
+        check(h.previously_healthy[2U] == true, "SCD41 health survives NOT_FOUND");
+        check(h.previously_healthy[3U] == true, "SHT45 health survives NOT_FOUND");
+        check(I2cBusHealth_ShouldRecover(&h) == false, "both-NOT_FOUND alone -> no bus recovery");
+
+        /* Genuine transport outage: both devices now report BUS_ERROR. Because the
+         * healthy history survived, two DISTINCT previously-healthy devices give
+         * evidence -> exactly one eligible collective recovery. */
+        check(I2cBusHealth_Report(&h, 2U, DRIVER_STATUS_BUS_ERROR, 2000) == false,
+              "SC41 BUS_ERROR contributes distinct evidence (no trigger yet)");
+        bool trig = I2cBusHealth_Report(&h, 3U, DRIVER_STATUS_BUS_ERROR, 2000);
+        check(trig == true, "SHT45 BUS_ERROR + SCD41 BUS_ERROR -> recovery eligible");
+        check(I2cBusHealth_ShouldRecover(&h) == true, "RECOVERING with 2 distinct participants");
+
+        /* Exactly one recovery; evidence clears; cooldown effective. */
+        I2cBusHealth_BeginRecovery(&h, 2100);
+        I2cBusHealth_OnRecoverySuccess(&h);
+        check(I2cBusHealth_GetBusRecoveryCount(&h) == 1, "exactly one recovery");
+        check(I2cBusHealth_ShouldRecover(&h) == false, "evidence cleared after recovery");
+        /* Immediate re-report of both within cooldown: evidence may re-arm the
+           RECOVERING state, but the ACTUAL recovery is gated by cooldown, so no
+           second recovery may execute yet. */
+        I2cBusHealth_Report(&h, 2U, DRIVER_STATUS_BUS_ERROR, 3000);
+        I2cBusHealth_Report(&h, 3U, DRIVER_STATUS_BUS_ERROR, 3100);
+        check(I2cBusHealth_RecoveryEligible(&h, 3100) == false, "cooldown blocks re-recovery execution");
+        check(I2cBusHealth_GetBusRecoveryCount(&h) == 1, "still exactly one recovery (cooldown enforced)");
+    }
+
     /* ============ evidence reset: success AND failure ============ */
     printf("=== evidence reset after recovery (success + failure) ===\n");
     {

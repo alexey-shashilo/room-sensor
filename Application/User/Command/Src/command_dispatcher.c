@@ -184,6 +184,10 @@ static void HandleSelfTest(const CommandRequest *req, CommandResponse *rsp, cons
                                SelfTestResult_ToProtocolString(st->display));
     CommandResponse_AppendJson(rsp, "co2_sensor",
                                SelfTestResult_ToProtocolString(st->co2_sensor));
+    CommandResponse_AppendJson(rsp, "temp_humidity_sensor",
+                               SelfTestResult_ToProtocolString(st->temp_humidity_sensor));
+    CommandResponse_AppendJson(rsp, "pressure_sensor",
+                               SelfTestResult_ToProtocolString(st->pressure_sensor));
     CommandResponse_Finalize(rsp);
 }
 
@@ -198,25 +202,43 @@ static void HandleReboot(const CommandRequest *req, CommandResponse *rsp, const 
 static void HandleGetCapabilities(const CommandRequest *req, CommandResponse *rsp, const CommandServices *svc)
 {
     (void)svc;
+    /* P1-4 / P2-7: derive EVERY capability from the single canonical
+       DeviceCapabilities_Get() source instead of a second hand-maintained table.
+       This eliminates the pressure=true (canonical) / pressure=false
+       (GET_CAPABILITIES) drift and lets NOx / presence / display /
+       persistent_config / telemetry / command_control / watchdog / self_test all
+       come from one place, so they cannot silently drift from the manifest. */
+    DeviceCapabilities caps;
+    DeviceCapabilities_Get(&caps);
+
     CommandResponse_Init(rsp, req->request_id, COMMAND_STATUS_OK);
     CommandResponse_AppendJsonInt(rsp, "command_schema", COMMAND_SCHEMA_VERSION);
     CommandResponse_AppendJsonInt(rsp, "telemetry_schema", TELEMETRY_SCHEMA_VERSION);
     CommandResponse_AppendJsonInt(rsp, "config_schema", CONFIG_SCHEMA_VERSION);
-    CommandResponse_AppendJsonBool(rsp, "illuminance", true);
-    CommandResponse_AppendJsonBool(rsp, "temperature", true);   /* SHT45 */
-    CommandResponse_AppendJsonBool(rsp, "humidity", true);      /* SHT45 */
-    CommandResponse_AppendJsonBool(rsp, "pressure", false);
-    CommandResponse_AppendJsonBool(rsp, "co2", true);
-    CommandResponse_AppendJsonBool(rsp, "voc", false);
-    CommandResponse_AppendJsonBool(rsp, "presence", false);
+    CommandResponse_AppendJsonBool(rsp, "illuminance", caps.illuminance);
+    CommandResponse_AppendJsonBool(rsp, "temperature", caps.temperature);
+    CommandResponse_AppendJsonBool(rsp, "humidity", caps.relative_humidity);
+    CommandResponse_AppendJsonBool(rsp, "pressure", caps.pressure);
+    CommandResponse_AppendJsonBool(rsp, "co2", caps.co2);
+    CommandResponse_AppendJsonBool(rsp, "voc", caps.voc);
+    CommandResponse_AppendJsonBool(rsp, "nox", caps.nox);
+    CommandResponse_AppendJsonBool(rsp, "presence", caps.presence);
     CommandResponse_Finalize(rsp);
 }
 
 static void HandleGetManifest(const CommandRequest *req, CommandResponse *rsp, const CommandServices *svc)
 {
-    (void)svc;
+    /* SECURITY (P1-3): GET_MANIFEST is READ_ONLY and may be served to an
+       untrusted source. The manifest is BUILT from the authoritative runtime
+       identity owned by App (svc->identity), never by re-reading persistence.
+       DeviceManifest_Build fully initializes every field, so no uninitialized
+       bytes can ever be serialized even when identity storage is CORRUPT /
+       IO_ERROR / NOT_FOUND. */
     DeviceManifest manifest;
-    DeviceManifest_Build(&manifest);
+    if (svc != NULL)
+        DeviceManifest_Build(&manifest, svc->identity);
+    else
+        DeviceManifest_Build(&manifest, NULL);
 
     uint8_t buf[DEVICE_MANIFEST_SERIALIZED_MAX_SIZE];
     size_t written = 0;

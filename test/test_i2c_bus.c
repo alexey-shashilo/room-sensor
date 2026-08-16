@@ -145,6 +145,24 @@ int main(void)
         check(stub.probe_calls == 1, "probe reached callback");
     }
 
+    /* UINT16_MAX size boundary (P2-4): UINT16_MAX must dispatch to the callback;
+       UINT16_MAX+1 must be rejected WITHOUT dispatching (no HAL narrowing). */
+    {
+        I2cBus bus; Stub stub;
+        fill_bus(&bus, &stub);
+        /* UINT16_MAX accepted by the portable contract (reaches callback). */
+        size_t max16 = (size_t)UINT16_MAX;
+        check(I2cBus_Write(&bus, 0x10, data, max16) == DRIVER_STATUS_OK, "Write size=UINT16_MAX reaches callback");
+        check(stub.write_calls == 1, "UINT16_MAX write dispatched");
+        /* UINT16_MAX+1 rejected before any callback. */
+        size_t over = (size_t)UINT16_MAX + 1U;
+        check(I2cBus_Write(&bus, 0x10, data, over) == DRIVER_STATUS_INVALID_ARG, "Write size=UINT16_MAX+1 -> INVALID_ARG");
+        check(I2cBus_ReadMem(&bus, 0x10, 0, data, over) == DRIVER_STATUS_INVALID_ARG, "ReadMem size=UINT16_MAX+1 -> INVALID_ARG");
+        check(I2cBus_Read(&bus, 0x10, data, over) == DRIVER_STATUS_INVALID_ARG, "Read size=UINT16_MAX+1 -> INVALID_ARG");
+        check(stub.write_calls == 1 && stub.readmem_calls == 0 && stub.read_calls == 0,
+              "oversize rejected without dispatching to any callback");
+    }
+
     printf("\n=== Summary ===\n");
     printf("  Cases: %d\n", s_case);
     printf("  Passed: %d\n", s_pass);

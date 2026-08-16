@@ -27,6 +27,6 @@ typedef struct
     BootSession session;
 } DeviceManifest;
 
-void DeviceManifest_Build(DeviceManifest *manifest);
+void DeviceManifest_Build(DeviceManifest *manifest, const DeviceIdentity *authoritative_identity);
 
 #endif

@@ -20,18 +20,22 @@ static DriverStatus I2cBus_Stm32_MapHAL(HAL_StatusTypeDef hal)
 static DriverStatus I2cBus_Stm32_Write(void *context, uint16_t addr, const uint8_t *data, size_t size)
 {
     I2cBus_Stm32Context *ctx = (I2cBus_Stm32Context *)context;
+    /* P2-4: HAL accepts uint16_t; refuse a size that would truncate. */
+    if (size > UINT16_MAX) return DRIVER_STATUS_INVALID_ARG;
     return I2cBus_Stm32_MapHAL(HAL_I2C_Master_Transmit(ctx->hi2c, addr, (uint8_t *)data, (uint16_t)size, ctx->timeout_ms));
 }
 
 static DriverStatus I2cBus_Stm32_ReadMem(void *context, uint16_t addr, uint8_t reg, uint8_t *data, size_t size)
 {
     I2cBus_Stm32Context *ctx = (I2cBus_Stm32Context *)context;
+    if (size > UINT16_MAX) return DRIVER_STATUS_INVALID_ARG;
     return I2cBus_Stm32_MapHAL(HAL_I2C_Mem_Read(ctx->hi2c, addr, reg, I2C_MEMADD_SIZE_8BIT, data, (uint16_t)size, ctx->timeout_ms));
 }
 
 static DriverStatus I2cBus_Stm32_Read(void *context, uint16_t addr, uint8_t *data, size_t size)
 {
     I2cBus_Stm32Context *ctx = (I2cBus_Stm32Context *)context;
+    if (size > UINT16_MAX) return DRIVER_STATUS_INVALID_ARG;
     return I2cBus_Stm32_MapHAL(HAL_I2C_Master_Receive(ctx->hi2c, addr, data, (uint16_t)size, ctx->timeout_ms));
 }
 

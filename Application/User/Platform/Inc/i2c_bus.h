@@ -8,7 +8,7 @@
 /* Portable I2C bus abstraction. Each operation is a thin wrapper that validates
    its arguments and dispatches to the implementation's function pointer.
 
-   Defensive contract (consistent across all four operations):
+Defensive contract (consistent across all four operations):
      - bus == NULL                 -> DRIVER_STATUS_INVALID_ARG
      - missing operation fn pointer -> DRIVER_STATUS_NOT_SUPPORTED
    For data-transfer operations (Write/ReadMem/Read):
@@ -16,6 +16,10 @@
        I2C transfer has no meaningful hardware semantics and is not used by any
        driver, so it is rejected uniformly rather than left to HAL behavior.
      - size > 0 && data == NULL    -> DRIVER_STATUS_INVALID_ARG
+     - size > UINT16_MAX           -> DRIVER_STATUS_INVALID_ARG. The underlying
+       hardware (STM32 HAL) addresses a uint16_t transfer size; refusing before
+       narrowing avoids silently truncating a large request (P2-4). The check
+       lives in the portable contract (host-testable) AND the STM32 adapter.
 
    The I2C address argument is the on-wire 8-bit (left-shifted) address and is
    passed through unchanged; this contract does not alter the address
@@ -50,7 +54,7 @@ static inline DriverStatus I2cBus_Write(const I2cBus *bus, uint16_t addr, const 
 {
     if (bus == NULL) return DRIVER_STATUS_INVALID_ARG;
     if (bus->write == NULL) return DRIVER_STATUS_NOT_SUPPORTED;
-    if (size == 0U || (data == NULL)) return DRIVER_STATUS_INVALID_ARG;
+    if (size == 0U || size > UINT16_MAX || (data == NULL)) return DRIVER_STATUS_INVALID_ARG;
     return bus->write(bus->context, addr, data, size);
 }
 
@@ -58,7 +62,7 @@ static inline DriverStatus I2cBus_ReadMem(const I2cBus *bus, uint16_t addr, uint
 {
     if (bus == NULL) return DRIVER_STATUS_INVALID_ARG;
     if (bus->read_mem == NULL) return DRIVER_STATUS_NOT_SUPPORTED;
-    if (size == 0U || (data == NULL)) return DRIVER_STATUS_INVALID_ARG;
+    if (size == 0U || size > UINT16_MAX || (data == NULL)) return DRIVER_STATUS_INVALID_ARG;
     return bus->read_mem(bus->context, addr, reg, data, size);
 }
 
@@ -70,7 +74,7 @@ static inline DriverStatus I2cBus_Read(const I2cBus *bus, uint16_t addr, uint8_t
 {
     if (bus == NULL) return DRIVER_STATUS_INVALID_ARG;
     if (bus->read == NULL) return DRIVER_STATUS_NOT_SUPPORTED;
-    if (size == 0U || (data == NULL)) return DRIVER_STATUS_INVALID_ARG;
+    if (size == 0U || size > UINT16_MAX || (data == NULL)) return DRIVER_STATUS_INVALID_ARG;
     return bus->read(bus->context, addr, data, size);
 }
 

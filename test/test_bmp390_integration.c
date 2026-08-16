@@ -49,6 +49,7 @@ typedef struct
     DriverStatus read_mem_status;
     DriverStatus write_status;
     DriverStatus probe_status;
+    DriverStatus read_sample_status;   /* fail ONLY the 6-byte sample-data read */
 
     uint16_t last_addr;
     int probe_count, read_mem_count, write_count;
@@ -62,6 +63,7 @@ static void bmp_fake_reset(void)
     g_fake.prim_present = g_fake.sec_present = false;
     g_fake.prim_chip = g_fake.sec_chip = 0x60U;
     g_fake.read_mem_status = g_fake.write_status = g_fake.probe_status = DRIVER_STATUS_OK;
+    g_fake.read_sample_status = DRIVER_STATUS_OK;
     g_fake.drdy_press = g_fake.drdy_temp = true;
     memcpy(g_fake.sample, RAW_OK, 6);
     memcpy(&g_fake.prim_regs[0x31], CAL1, 21);
@@ -84,8 +86,15 @@ static DriverStatus bmp_f_read_mem(void *ctx, uint16_t addr, uint8_t reg, uint8_
 {
     BmpFake *f = (BmpFake *)ctx;
     f->last_addr = addr; f->read_mem_count++;
-    if (f->read_mem_status != DRIVER_STATUS_OK) return f->read_mem_status;
     uint8_t *regs = (addr == BMP390_WIRE_PRIM) ? f->prim_regs : f->sec_regs;
+
+    if (reg == 0x04U && size == 6U)
+    {
+        if (f->read_sample_status != DRIVER_STATUS_OK) return f->read_sample_status;
+        memcpy(data, f->sample, 6);
+        return DRIVER_STATUS_OK;
+    }
+    if (f->read_mem_status != DRIVER_STATUS_OK) return f->read_mem_status;
 
     if (reg == 0x00U) { data[0] = (addr == BMP390_WIRE_PRIM) ? f->prim_chip : f->sec_chip; return DRIVER_STATUS_OK; }
     if (reg == 0x31U) { if (size > 21U) size = 21U; memcpy(data, &regs[0x31], size); return DRIVER_STATUS_OK; }
@@ -97,7 +106,6 @@ static DriverStatus bmp_f_read_mem(void *ctx, uint16_t addr, uint8_t reg, uint8_
         if (f->drdy_temp)  data[0] |= (uint8_t)BMP390_STATUS_DRDY_TEMP;
         return DRIVER_STATUS_OK;
     }
-    if (reg == 0x04U && size == 6U) { memcpy(data, f->sample, 6); return DRIVER_STATUS_OK; }
     if (size > 0) { memcpy(data, &regs[reg], size); return DRIVER_STATUS_OK; }
     return DRIVER_STATUS_OK;
 }
@@ -352,6 +360,130 @@ static void test_longrun_wrap(void)
     (void)before;
 }
 
+/* ---- Liveness / no-dead-state regression (P1-1) ----
+   The BMP390 runtime is FORCED-mode single-shot: data-ready -> one 6-byte read
+   consumes the sample. A failed/indge-consumed read MUST re-trigger a fresh
+   forced measurement (bounded forward progress), NOT strand the runtime in a
+   state/phase combination with no legal forward transition. On a sub-threshold
+   read failure, the runtime must remain live and reach READY again (recovery)
+   or escalate to ERROR - never spin forever in a dead state. */
+static int reach_ready(I2cBus *bus, Bmp390Runtime *rt)
+{
+    int g = 0;
+    bmp_fake_reset(); g_fake.prim_present = true; g_fake.prim_chip = 0x60;
+    g_fake.drdy_press = g_fake.drdy_temp = true;
+    FakePlatform_SetTick(0);
+    Bmp390Runtime_Init(rt, bus);
+    if (Bmp390Runtime_Start(rt) != DRIVER_STATUS_OK) return -1;
+    while (rt->state != DEVICE_STATE_READY && g < 30)
+    {
+        FakePlatform_AdvanceTick(BMP390_RUNTIME_MEASUREMENT_DEADLINE_MS + 5);
+        Bmp390Runtime_Poll(rt);
+        g++;
+    }
+    return rt->state == DEVICE_STATE_READY ? g : -1;
+}
+
+static void test_liveness(void)
+{
+    printf("\n== Liveness / no-dead-state (P1-1) ==\n");
+    I2cBus bus; bmp_f_bus(&bus);
+
+    /* 1) READY -> trigger next -> ReadSample BUS_ERROR once -> runtime must stay
+          live and re-trigger (recover to READY on next successful read). */
+    {
+        bmp_fake_reset(); g_fake.prim_present = true; g_fake.prim_chip = 0x60;
+        FakePlatform_SetTick(0);
+        Bmp390Runtime rt; Bmp390Runtime_Init(&rt, &bus);
+        check(Bmp390Runtime_Start(&rt) == DRIVER_STATUS_OK, "L1: start OK");
+        int g = 0;
+        while (rt.state != DEVICE_STATE_READY && g < 30)
+        {
+            FakePlatform_AdvanceTick(BMP390_RUNTIME_MEASUREMENT_DEADLINE_MS + 5);
+            Bmp390Runtime_Poll(&rt);
+            g++;
+        }
+        check(rt.state == DEVICE_STATE_READY, "L1: reached READY pre-fault");
+
+        /* next measurement: data ready, ReadSample BUS_ERROR once. */
+        g_fake.drdy_press = g_fake.drdy_temp = true;
+        FakePlatform_AdvanceTick(BMP390_RUNTIME_MEASUREMENT_INTERVAL_MS);
+        Bmp390Runtime_Poll(&rt);          /* READY -> STARTING (trigger) */
+        check(rt.state == DEVICE_STATE_STARTING, "L1: re-triggered STARTING");
+        FakePlatform_AdvanceTick(BMP390_RUNTIME_MEASUREMENT_DEADLINE_MS + 5);
+        g_fake.read_sample_status = DRIVER_STATUS_BUS_ERROR;   /* data-reg read fails once */
+        Bmp390Runtime_Poll(&rt);
+        g_fake.read_sample_status = DRIVER_STATUS_OK;
+        check(rt.consecutive_errors >= 1, "L1: read BUS_ERROR counted");
+        check(rt.state != DEVICE_STATE_ERROR, "L1: single read error not ERROR yet");
+
+        /* The runtime must keep advancing: after the retry it must become
+           READY again (re-trigger -> read OK). */
+        int l = 0;
+        while (rt.state != DEVICE_STATE_READY && l < 40)
+        {
+            FakePlatform_AdvanceTick(BMP390_RUNTIME_MEASUREMENT_DEADLINE_MS + 5);
+            Bmp390Runtime_Poll(&rt);
+            l++;
+        }
+        check(rt.state == DEVICE_STATE_READY, "L1: reached READY after retry (not dead-locked)");
+    }
+
+    /* 2) ReadSample below-threshold CRC/data (returns OK but sample invalid
+          via 0xFF raw data) -> runtime continues to progress, not stuck. */
+    {
+        bmp_fake_reset(); g_fake.prim_present = true; g_fake.prim_chip = 0x60;
+        FakePlatform_SetTick(0);
+        Bmp390Runtime rt; Bmp390Runtime_Init(&rt, &bus);
+        check(Bmp390Runtime_Start(&rt) == DRIVER_STATUS_OK, "L2: start");
+        int g = 0;
+        while (rt.state != DEVICE_STATE_READY && g < 30)
+        {
+            FakePlatform_AdvanceTick(BMP390_RUNTIME_MEASUREMENT_DEADLINE_MS + 5);
+            Bmp390Runtime_Poll(&rt);
+            g++;
+        }
+        check(rt.state == DEVICE_STATE_READY, "L2: READY pre");
+
+        FakePlatform_AdvanceTick(BMP390_RUNTIME_MEASUREMENT_INTERVAL_MS);
+        Bmp390Runtime_Poll(&rt);   /* trigger */
+        memset(g_fake.sample, 0xFF, 6);   /* implausible -> valid=false */
+        FakePlatform_AdvanceTick(BMP390_RUNTIME_MEASUREMENT_DEADLINE_MS + 5);
+        Bmp390Runtime_Poll(&rt);
+        check(rt.consecutive_errors >= 1, "L2: invalid sample counted");
+        check(rt.state != DEVICE_STATE_ERROR, "L2: single invalid not ERROR");
+        /* acquire a NEW valid sample (test must NOT re-validate an old one). */
+        memcpy(g_fake.sample, RAW_OK, 6);
+        int l = 0;
+        while (rt.state != DEVICE_STATE_READY && l < 40)
+        {
+            FakePlatform_AdvanceTick(BMP390_RUNTIME_MEASUREMENT_DEADLINE_MS + 5);
+            Bmp390Runtime_Poll(&rt);
+            l++;
+        }
+        check(rt.state == DEVICE_STATE_READY, "L2: READY after invalid-then-valid (keeps moving)");
+        check(Bmp390Runtime_HasValidSample(&rt), "L2: fresh valid sample acquired");
+    }
+
+    /* 3) successful READY remains live through many normal cycles (no deadlock
+          on the happy path). */
+    {
+        bmp_fake_reset(); g_fake.prim_present = true; g_fake.prim_chip = 0x60;
+        Bmp390Runtime rt;
+        check(reach_ready(&bus, &rt) >= 0, "L3: reach READY");
+        for (int i = 0; i < 20; i++)
+        {
+            FakePlatform_AdvanceTick(BMP390_RUNTIME_MEASUREMENT_INTERVAL_MS);
+            Bmp390Runtime_Poll(&rt);   /* READY -> STARTING */
+            FakePlatform_AdvanceTick(BMP390_RUNTIME_MEASUREMENT_DEADLINE_MS + 5);
+            Bmp390Runtime_Poll(&rt);   /* STARTING -> READY */
+            if (rt.state != DEVICE_STATE_READY) break;
+        }
+        check(rt.state == DEVICE_STATE_READY, "L3: stays READY across cycles");
+        check(Bmp390Runtime_HasValidSample(&rt), "L3: valid sample maintained");
+    }
+}
+
 int main(void)
 {
     printf("BMP390 driver & runtime integration tests\n");
@@ -360,6 +492,7 @@ int main(void)
     test_range();
     test_runtime_roomstate();
     test_longrun_wrap();
+    test_liveness();
 
     printf("\n%d pass, %d fail\n", s_pass, s_fail);
     return (s_fail == 0) ? 0 : 1;

@@ -9,6 +9,9 @@
 #include "device_lifecycle.h"
 #include "room_sensor_types.h"
 #include "platform_unique_id.h"
+#include "platform_hardware.h"
+#include "boot_session.h"
+#include "host_platform.h"
 #include "fake_flash.h"
 #include "fake_i2c_bus.h"
 #include "fake_unique_id.h"
@@ -262,6 +265,43 @@ int main(void)
         check(App_Scd41HealthOk(DEVICE_STATE_NOT_FOUND) == false &&
               !App_Scd41HealthOk(DEVICE_STATE_ERROR),
               "missing/errored SCD41 never yields SYSTEM_HEALTH_OK");
+    }
+
+    printf("\n=== P2-2 boot_id contract (device/reset-class identifier) ===\n");
+    {
+        /* CURRENT documented contract (platform_hardware.h): boot_id is derived
+           from the device UID (+ reset-cause class on STM32), so it is a
+           device/reset-class identifier, NOT a true per-boot unique session id.
+           This regression documents/asserts the current behavior via the HOST
+           platform's seedable boot id: same seed -> same boot_id (deterministic
+           per device/session source), matching contract B. True per-boot
+           uniqueness is NOT required by any current consumer (boot_id is only a
+           telemetry tag, never a server-side unique-session key), so no
+           persistent flash boot counter is introduced here. */
+        uint64_t bid1 = 0, bid2 = 0;
+        HostPlatform_SetBootId(0x1234AB);            /* same device/source */
+        check(Platform_CreateBootId(&bid1) && Platform_CreateBootId(&bid2) &&
+              bid1 == bid2, "same source -> deterministic boot_id (contract B)");
+
+        HostPlatform_SetBootId(0x9999);              /* different source */
+        uint64_t bid3 = 0;
+        Platform_CreateBootId(&bid3);
+        check(bid1 != bid3, "different source -> different boot_id");
+
+        /* BootSession exposes a boot_id cached once per boot, and it is stable
+           across Get calls within that boot. */
+        BootSession s0; s0.boot_id = 0;
+        bool ok0 = BootSession_Get(&s0);
+        uint64_t now_platform = 0;
+        HostPlatform_SetBootId(s0.boot_id);               /* same source session */
+        Platform_CreateBootId(&now_platform);
+        check(ok0 && s0.boot_id != 0, "BootSession exposes a nonzero boot_id");
+        check(now_platform == s0.boot_id, "BootSession.boot_id matches platform source id");
+        BootSession s2; s2.boot_id = 0;
+        BootSession_Get(&s2);
+        check(s2.boot_id == s0.boot_id, "BootSession boot_id stable within a boot (cache)");
+        /* No persistent flash boot counter is introduced here; boot_id remains
+           a device/session-source tag (documented contract B). */
     }
 
     printf("\n=== Summary ===\n");

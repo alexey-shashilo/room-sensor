@@ -149,6 +149,12 @@ ManifestSerializeStatus DeviceManifest_Serialize(
     if (s != MANIFEST_SERIALIZE_OK) return s;
     s = AppendBool(buf, cap, &pos, "voc", c->voc);
     if (s != MANIFEST_SERIALIZE_OK) return s;
+    /* P2-7: expose `nox` to keep the manifest capabilities consistent with the
+       single canonical DeviceCapabilities source (canonical has a `nox` field;
+       GET_CAPABILITIES already exposes it). Additive + backward compatible; the
+       manifest schema wire version is not bumped for an added false-able field. */
+    s = AppendBool(buf, cap, &pos, "nox", c->nox);
+    if (s != MANIFEST_SERIALIZE_OK) return s;
     s = AppendBool(buf, cap, &pos, "presence", c->presence);
     if (s != MANIFEST_SERIALIZE_OK) return s;
     s = AppendBoolLast(buf, cap, &pos, "display", c->display);

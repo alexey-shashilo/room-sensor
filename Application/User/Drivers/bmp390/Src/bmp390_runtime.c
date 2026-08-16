@@ -75,6 +75,38 @@ bool Bmp390Runtime_ProbeDue(const Bmp390Runtime *rt, uint32_t now)
     return (uint32_t)(now - rt->next_probe_ms) < 0x80000000U;
 }
 
+/* Re-trigger a fresh FORCED-mode single-shot measurement. Called to recover
+   from a consumed/invalid ReadSample, or to start the next FORCED sample from
+   READY. "FORCED" is the Bosch sensing-mode name (single-shot per trigger, the
+   sensor returns to sleep); this function itself is NON-BLOCKING — it issues a
+   sub-ms I2C trigger write and returns. Transitions into STARTING + MEASURING
+   with a fresh data-ready deadline. Returns true on success. Never used during
+   NOT_FOUND/ERROR/RECOVERING. */
+static bool ReTriggerMeasurement(Bmp390Runtime *rt, uint32_t now)
+{
+    DriverStatus ts = BMP390_TriggerMeasurement(&rt->dev);
+    if (ts != DRIVER_STATUS_OK)
+    {
+        rt->last_error_class = ts;
+        RecordFailure(rt);
+        if (rt->consecutive_errors >= BMP390_RUNTIME_ERROR_THRESHOLD)
+        {
+            rt->phase = BMP390_PHASE_IDLE;
+            EscalateError(rt);
+        }
+        else
+        {
+            rt->phase = BMP390_PHASE_MEASURING;
+            rt->state  = DEVICE_STATE_STARTING;
+        }
+        return false;
+    }
+    rt->deadline_ms = now + BMP390_RUNTIME_MEASUREMENT_DEADLINE_MS;
+    rt->phase = BMP390_PHASE_MEASURING;
+    rt->state  = DEVICE_STATE_STARTING;
+    return true;
+}
+
 DriverStatus Bmp390Runtime_LastError(const Bmp390Runtime *rt)
 {
     return rt != NULL ? rt->last_error_class : DRIVER_STATUS_INVALID_ARG;
@@ -254,14 +286,22 @@ void Bmp390Runtime_Poll(Bmp390Runtime *rt)
 
         Bmp390Sample sample;
         DriverStatus rr = BMP390_ReadSample(&rt->dev, &sample);
-        rt->phase = BMP390_PHASE_BETWEEN_MEASUREMENTS;
         if (rr != DRIVER_STATUS_OK)
         {
             rt->last_error_class = rr;
             RecordFailure(rt);
             if (rt->consecutive_errors >= BMP390_RUNTIME_ERROR_THRESHOLD)
+            {
+                rt->phase = BMP390_PHASE_IDLE;
                 EscalateError(rt);
-            rt->deadline_ms = now + BMP390_RUNTIME_MEASUREMENT_DEADLINE_MS;
+                return;
+            }
+            /* Read failed but below threshold: the forced-mode single-shot data
+               was consumed/indeterminate. Re-trigger a fresh forced measurement
+               so the runtime keeps making forward progress and will re-read a NEW
+               sample on the next data-ready. STAY in STARTING+MEASURING — never
+               orphan into a phase/state pairing with no forward transition. */
+            ReTriggerMeasurement(rt, now);
             return;
         }
 
@@ -269,18 +309,25 @@ void Bmp390Runtime_Poll(Bmp390Runtime *rt)
         {
             /* Compensation/plausibility failure (out-of-range or non-finite).
                Do NOT publish an implausible pressure/temperature to RoomState.
-               Bounded retry. */
+               The 6 bytes were CONSUMED; re-trigger a new forced measurement to
+               acquire a genuinely fresh sample rather than re-reading the same
+               consumed/invalid data forever. Bounded. */
             rt->last_error_class = DRIVER_STATUS_CRC_ERROR;
             RecordFailure(rt);
             if (rt->consecutive_errors >= BMP390_RUNTIME_ERROR_THRESHOLD)
+            {
+                rt->phase = BMP390_PHASE_IDLE;
                 EscalateError(rt);
-            rt->deadline_ms = now + BMP390_RUNTIME_MEASUREMENT_DEADLINE_MS;
+                return;
+            }
+            ReTriggerMeasurement(rt, now);
             return;
         }
 
         rt->last_sample = sample;
         rt->last_valid_measurement_ms = now;
         rt->state = DEVICE_STATE_READY;
+        rt->phase = BMP390_PHASE_BETWEEN_MEASUREMENTS;
         rt->last_error_class = DRIVER_STATUS_OK;
         RecordSuccess(rt);
         return;

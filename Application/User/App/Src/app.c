@@ -505,26 +505,33 @@ void App_DoRetry(void)
     uint32_t now = Platform_GetTickMs();
 
     /* --- Shared-bus health reporting (Phase 5) --- */
-    /* Each previously-present I2C device reports its latest transport outcome
-       to the bus monitor. A single device is never enough: only >= 2 distinct
-       previously-healthy devices reporting BUS_ERROR/TIMEOUT within the window
-       (or a persistent bus-busy) triggers shared-bus recovery. CRC/data/device-
-       local errors and NOT_FOUND-from-never-present contribute nothing. */
-    {
-        I2cBusHealth_SetDeviceKnown(&s_bus_health, 0U, (s_veml_absent == 0U));
-        I2cBusHealth_SetDeviceKnown(&s_bus_health, 1U, (s_disp_absent == 0U));
-        I2cBusHealth_SetDeviceKnown(&s_bus_health, 2U, !Scd41Runtime_IsMissing(&s_scd41));
-        I2cBusHealth_SetDeviceKnown(&s_bus_health, 3U, !Sht45Runtime_IsMissing(&s_sht45));
-        I2cBusHealth_SetDeviceKnown(&s_bus_health, 4U, !Bmp390Runtime_IsMissing(&s_bmp390));
+    /* Each previously-established-healthy I2C device reports its latest
+       transport outcome to the bus monitor. The monitor's previously_healthy
+       latch is MONOTONIC within a boot (P1-2) so a device that was READY and
+       has since gone NOT_FOUND still retains its healthy history and may
+       contribute transport evidence while it was a genuine bus participant.
 
-        DriverStatus e0 = s_light_rt.state != DEVICE_STATE_READY ? DRIVER_STATUS_NOT_SUPPORTED : DRIVER_STATUS_OK;
-        DriverStatus e1 = s_disp_rt.state != DEVICE_STATE_READY ? DRIVER_STATUS_NOT_SUPPORTED : DRIVER_STATUS_OK;
+       PARTICIPANT SET (P1-2B): only the SCD41 / SHT45 / BMP390 runtimes
+       participate, because they (and only they) surface a real DriverStatus
+       last-error from their I2C transactions. VEML7700 and the SSD1306 display
+       drivers return bool (success/fail) and do NOT retain a portable
+       DriverStatus, so a BUS_ERROR/TIMEOUT from them cannot be distinguished
+       from a device-local or config failure. Per the audit, they are therefore
+       EXCLUDED from shared-bus evidence rather than reporting a fabricated
+       BUS_ERROR derived from DEVICE_STATE_ERROR. This reduces the participant
+       set to three runtimes, which still meet the >=2-distinct-healthy-device
+       evidence threshold. Their device-local errors still trigger per-sensor
+       recovery at their own level. */
+    {
+        /* Establish healthy history from actual READY evidence (monotonic). */
+        I2cBusHealth_MarkHealth(&s_bus_health, 2U, Scd41Runtime_HasValidSample(&s_scd41));
+        I2cBusHealth_MarkHealth(&s_bus_health, 3U, Sht45Runtime_HasValidSample(&s_sht45));
+        I2cBusHealth_MarkHealth(&s_bus_health, 4U, Bmp390Runtime_HasValidSample(&s_bmp390));
+
         DriverStatus e2 = Scd41Runtime_LastError(&s_scd41);
         DriverStatus e3 = Sht45Runtime_LastError(&s_sht45);
         DriverStatus e4 = Bmp390Runtime_LastError(&s_bmp390);
 
-        I2cBusHealth_Report(&s_bus_health, 0U, e0, now);
-        I2cBusHealth_Report(&s_bus_health, 1U, e1, now);
         I2cBusHealth_Report(&s_bus_health, 2U, e2, now);
         I2cBusHealth_Report(&s_bus_health, 3U, e3, now);
         I2cBusHealth_Report(&s_bus_health, 4U, e4, now);

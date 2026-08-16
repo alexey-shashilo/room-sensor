@@ -1,3 +1,16 @@
+/* DISPLAY BLOCKING CONTRACT (P2-5, decision A):
+   Display_Init() performs a bounded blocking init/recovery sequence — two
+   Platform_DelayMs(10) power-on/controller-settle delays plus ~20 sub-ms I2C
+   writes. Worst-case synchronous cost is ~25 ms, comfortably within the
+   WATCHDOG_TIMEOUT_MS (4000) and the App scheduler budget. This is the
+   DOCUMENTED truth: display init/recovery is a SHORT, bounded blocking
+   operation, NOT part of the fully non-blocking sensor runtime state machines
+   (SCD41/SHT45/BMP390). The display never holds the I2C bus or runs a loop, so
+   sensor acquisition is only momentarily serialized (<< 1 sensor poll). This
+   contract was chosen over a phased non-blocking display state machine because
+   the measured worst-case (~25 ms << 4 s watchdog) does not require it and the
+   display is an output device, not an environmental sensor. */
+
 #ifndef DISPLAY_H
 #define DISPLAY_H
 

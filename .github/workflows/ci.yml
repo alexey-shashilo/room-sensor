@@ -37,7 +37,11 @@ jobs:
           -I Application/User/Drivers/veml7700/Inc
           -I Application/User/Drivers/display/Inc
           -I Application/User/Drivers/scd41/Inc
+          -I Application/User/Drivers/sht45/Inc
+          -I Application/User/Drivers/bmp390/Inc
           -I Application/User/Platform/Inc
+          -I Application/User/Device/Inc
+          -I Application/User/Provisioning/Inc
           -I Application/User/Storage/Inc
           -I Application/User/Telemetry/Inc
           -I Application/User/Communication/Inc
@@ -191,7 +195,7 @@ jobs:
 
       - name: Check no HAL_Delay in portable modules
         run: |
-          BAD=$(grep -rln 'HAL_Delay' Application/User/App/ Application/User/Drivers/ Application/User/Communication/ Application/User/Command/ Application/User/Telemetry/ Application/User/Storage/ 2>/dev/null || true)
+          BAD=$(grep -rln 'HAL_Delay' Application/User/App/ Application/User/Drivers/ Application/User/Communication/ Application/User/Command/ Application/User/Telemetry/ Application/User/Storage/ Application/User/Device/ Application/User/Provisioning/ Application/User/Common/ 2>/dev/null || true)
           if [ -n "$BAD" ]; then
             echo "ERROR: HAL_Delay found in portable modules:"
             echo "$BAD"
@@ -201,7 +205,7 @@ jobs:
 
       - name: Check no stm32 HAL include in portable modules
         run: |
-          BAD=$(grep -rln 'stm32g4xx_hal\.h' Application/User/App/ Application/User/Drivers/ Application/User/Communication/ Application/User/Command/ Application/User/Telemetry/ Application/User/Storage/ 2>/dev/null || true)
+          BAD=$(grep -rln 'stm32g4xx_hal\.h' Application/User/App/ Application/User/Drivers/ Application/User/Communication/ Application/User/Command/ Application/User/Telemetry/ Application/User/Storage/ Application/User/Device/ Application/User/Provisioning/ Application/User/Common/ 2>/dev/null || true)
           if [ -n "$BAD" ]; then
             echo "ERROR: stm32g4xx_hal.h included in portable modules:"
             echo "$BAD"
@@ -211,7 +215,7 @@ jobs:
 
       - name: Check no HAL I2C/flash/GPIO handle types in portable modules
         run: |
-          BAD=$(grep -rln 'I2C_HandleTypeDef\|GPIO_TypeDef\|HAL_StatusTypeDef\|HAL_FLASH\|HAL_IWDG\|HAL_Delay\|HAL_GetTick\|HAL_I2C' Application/User/App/ Application/User/Drivers/ Application/User/Communication/ Application/User/Command/ Application/User/Telemetry/ Application/User/Storage/ 2>/dev/null || true)
+          BAD=$(grep -rln 'I2C_HandleTypeDef\|GPIO_TypeDef\|HAL_StatusTypeDef\|HAL_FLASH\|HAL_IWDG\|HAL_Delay\|HAL_GetTick\|HAL_I2C' Application/User/App/ Application/User/Drivers/ Application/User/Communication/ Application/User/Command/ Application/User/Telemetry/ Application/User/Storage/ Application/User/Device/ Application/User/Provisioning/ Application/User/Common/ 2>/dev/null || true)
           if [ -n "$BAD" ]; then
             echo "ERROR: STM32 HAL symbols leaked into portable modules:"
             echo "$BAD"

@@ -112,15 +112,46 @@ static inline void I2cBusHealth_Init(I2cBusHealth *h)
     h->state = I2C_BUS_HEALTH_OK;
 }
 
-/* Register whether a device slot is ever present (so a never-present device's
-   NOT_FOUND is never bus evidence). Slot must be < 8. */
+/* Register current-discovery presence. IMPORTANT (P1-2): `previously_healthy`
+   is HISTORICAL and monotonic-within-a-boot — once a device has positively been
+   established as healthy it stays latched even if it later disappears. So this
+   never unconditionally overwrites the latch. Passing ever_present=true latches
+   health; passing ever_present=false records "not seen this discovery pass" but
+   does NOT forget that the device was previously known healthy. To CLEAR health
+   only Init() may be used (fresh boot). A device that has never responded stays
+   never_present=true and previously_healthy=false. Slot must be < 8. */
 static inline void I2cBusHealth_SetDeviceKnown(I2cBusHealth *h, uint8_t slot, bool ever_present)
 {
     if (h == NULL || slot >= 8U) return;
-    h->never_present[slot] = !ever_present;
-    h->previously_healthy[slot] = ever_present;
-    if (!ever_present)
-        h->last_transport_ms[slot] = 0U;
+    if (ever_present)
+    {
+        h->never_present[slot] = false;
+        h->previously_healthy[slot] = true;   /* monotonic latch */
+    }
+    else
+    {
+        /* Device currently not seen: keep never_present=true only if it was
+           never established as healthy; but never un-latch a previously healthy
+           device here. */
+        if (!h->previously_healthy[slot])
+            h->never_present[slot] = true;
+    }
+}
+
+/* Positive healthy evidence: pass true when an actual successful probe / init /
+   transaction / READY / valid-sample transition was observed this pass. Latches
+   previously_healthy (monotonic within boot) and clears never_present when true.
+   Passing false is a no-op (a momentary absence must never un-latch history).
+   This is the preferred API for App to confirm real device health (P1-2),
+   distinct from mere current-absence status. Slot must be < 8. */
+static inline void I2cBusHealth_MarkHealth(I2cBusHealth *h, uint8_t slot, bool observed)
+{
+    if (h == NULL || slot >= 8U) return;
+    if (observed)
+    {
+        h->never_present[slot] = false;
+        h->previously_healthy[slot] = true;
+    }
 }
 
 static inline bool I2cBusHealth_ShouldRecover(const I2cBusHealth *h)
