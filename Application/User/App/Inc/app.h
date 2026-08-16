@@ -20,6 +20,7 @@ typedef struct
     DeviceRuntime co2_sensor;
     DeviceRuntime temp_humidity_sensor;   /* SHT45 */
     DeviceRuntime pressure_sensor;        /* BMP390 */
+    DeviceRuntime gas_sensor;             /* SGP41 VOC/NOx */
 
     SystemHealthState health;
     ResetCause reset_cause;
@@ -72,7 +73,11 @@ bool App_Scd41HealthOk(DeviceState state);
 bool App_Sht45HealthOk(DeviceState state);
 
 /* BMP390 SystemHealth contribution: true only when STARTING/WAITING/READY.
-   NOT_FOUND/ERROR/RECOVERING -> false (degrades health, never FAULT). */
+    NOT_FOUND/ERROR/RECOVERING -> false (degrades health, never FAULT). */
 bool App_Bmp390HealthOk(DeviceState state);
+
+/* SGP41 SystemHealth contribution: true only when STARTING/WAITING/READY.
+    NOT_FOUND/ERROR/RECOVERING -> false (degrades health, never FAULT). */
+bool App_Sgp41HealthOk(DeviceState state);
 
 #endif

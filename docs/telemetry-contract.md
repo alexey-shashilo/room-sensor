@@ -2,9 +2,9 @@
 
 ## Schema
 
-- **Version:** 3 (`TELEMETRY_SCHEMA_VERSION`)
+- **Version:** 5 (`TELEMETRY_SCHEMA_VERSION`)
 - **Format:** JSON (UTF-8 without BOM)
-- **Maximum payload size:** 1024 bytes (`TELEMETRY_SERIALIZED_MAX_SIZE`)
+- **Maximum payload size:** 2048 bytes (`TELEMETRY_SERIALIZED_MAX_SIZE`)
 - **Transport:** independent — currently UART debug, future MQTT/Wi-Fi
 
 ## Top-Level Fields
@@ -28,6 +28,22 @@
 | `co2_ppm` | `object` | SCD41 CO2 concentration (ppm) |
 | `scd41_temperature_c` | `object` | SCD41 internal/local temperature (secondary source) |
 | `scd41_humidity_pct` | `object` | SCD41 internal/local RH (secondary source) |
+| `sht45_temperature_c` | `object` | SHT45 temperature (primary room T) |
+| `sht45_humidity_pct` | `object` | SHT45 relative humidity (primary room RH) |
+| `bmp390_pressure_pa` | `object` | BMP390 barometric pressure (Pa) |
+| `bmp390_temperature_c` | `object` | BMP390 internal temperature (secondary source) |
+| `voc_raw` | `object` | SGP41 raw VOC ticks (gas-index input, not an index) |
+| `nox_raw` | `object` | SGP41 raw NOx ticks (gas-index input, not an index) |
+| `voc_index` | `object` | SGP41 processed VOC Index (1..500; only when out of warm-up) |
+| `nox_index` | `object` | SGP41 processed NOx Index (1..500; only when out of warm-up) |
+
+The SGP41 VOC/NOx fields (last four) are ADDITIVE OPTIONAL fields added to the
+`room` object without a schema bump (v5). Per the compatibility policy, each
+carries an explicit `state: valid|invalid`; a numeric `value` is emitted ONLY
+when valid. The raw signals may be `valid` while the corresponding index is
+still `invalid` during warm-up — the firmware never fabricates a valid index for
+a missing sensor, stale sample, algorithm warm-up, failed CRC, or failed
+measurement.
 
 Each measurement object:
 

@@ -12,6 +12,9 @@
 #define SCD41_FAKE_WIRE_ADDR   (0xC4U)   /* SCD41 7-bit 0x62 left-shifted */
 #define SHT45_FAKE_WIRE_ADDR   (0x88U)   /* SHT45 7-bit 0x44 left-shifted */
 
+/* SGP41 7-bit 0x59 left-shifted -> wire byte 0xB2. */
+#define SGP41_FAKE_WIRE_ADDR   (0xB2U)
+
 static DriverStatus fake_write(void *ctx, uint16_t addr, const uint8_t *data, size_t size)
 {
     FakeI2cBus *f = (FakeI2cBus *)ctx;
@@ -39,6 +42,17 @@ static DriverStatus fake_write(void *ctx, uint16_t addr, const uint8_t *data, si
     if (f->last_write_size == 2U)
         f->last_scd41_cmd = (uint16_t)(((uint16_t)f->last_write_data[0] << 8U) |
                                        (uint16_t)f->last_write_data[1]);
+
+    /* SGP41: a 2-byte MSB-first command word written to the SGP41 wire address.
+       The measure/conditioning/self-test commands count so tests can prove the
+       exact protocol sequence. */
+    if (addr == SGP41_FAKE_WIRE_ADDR && f->last_write_size >= 2U)
+    {
+        f->sgp41_last_cmd = (uint16_t)(((uint16_t)f->last_write_data[0] << 8U) |
+                                       (uint16_t)f->last_write_data[1]);
+        if (f->sgp41_last_cmd == 0x2619U)
+            f->sgp41_measure_cmd_count++;
+    }
 
     /* SHT45: a single-byte command write (measure etc.). */
     if (addr == SHT45_FAKE_WIRE_ADDR && f->last_write_size == 1U)
@@ -134,6 +148,21 @@ static DriverStatus fake_read(void *ctx, uint16_t addr, uint8_t *data, size_t si
         return f->read_result;
     }
 
+    /* SGP41 (0xB2): a plain read returns the scripted response verbatim. */
+    if (addr == SGP41_FAKE_WIRE_ADDR)
+    {
+        size_t n = size;
+        if (n > f->sgp41_read_response_size)
+            n = f->sgp41_read_response_size;
+        if (n > sizeof(f->sgp41_read_response))
+            n = sizeof(f->sgp41_read_response);
+        if (n > 0)
+            memcpy(data, f->sgp41_read_response, n);
+        if (n < size)
+            memset(data + n, 0, size - n);
+        return f->sgp41_read_result;
+    }
+
     /* After GET_DATA_READY (0xE4B8), a 3-byte read returns the data-ready word
        followed by its CRC. The 16-bit word is transmitted MSB-first (the
        official SCD4x wire order). */
@@ -159,10 +188,15 @@ static DriverStatus fake_read(void *ctx, uint16_t addr, uint8_t *data, size_t si
 
 static DriverStatus fake_probe(void *ctx, uint16_t addr)
 {
-    (void)addr;
     FakeI2cBus *f = (FakeI2cBus *)ctx;
     f->last_addr = addr;
     f->probe_call_count++;
+
+    /* SGP41-specific absence: a declared-absent SGP41 NACKs its own probe
+       without disturbing the shared global probe_result used by others. */
+    if (f->sgp41_absent && addr == SGP41_FAKE_WIRE_ADDR)
+        return DRIVER_STATUS_NOT_FOUND;
+
     return f->probe_result;
 }
 
@@ -181,6 +215,7 @@ void FakeI2cBus_Init(FakeI2cBus *fake)
     fake->read_result = DRIVER_STATUS_OK;
     fake->probe_result = DRIVER_STATUS_OK;
     fake->recover_result = DRIVER_STATUS_OK;
+    fake->sgp41_read_result = DRIVER_STATUS_OK;
 }
 
 void FakeI2cBus_GetBus(I2cBus *bus, FakeI2cBus *fake)
@@ -306,4 +341,27 @@ void FakeI2cBus_SetBmp390Absent(FakeI2cBus *fake)
     if (fake == NULL) return;
     fake->bmp390_wire_addr = 0;
     fake->bmp390_chip_id = 0;
+}
+
+void FakeI2cBus_SetSgp41Response(FakeI2cBus *fake, const uint8_t *raw, size_t size)
+{
+    if (fake == NULL || raw == NULL) return;
+    size_t n = (size < sizeof(fake->sgp41_read_response)) ? size : sizeof(fake->sgp41_read_response);
+    memcpy(fake->sgp41_read_response, raw, n);
+    fake->sgp41_read_response_size = n;
+}
+
+void FakeI2cBus_SetSgp41Absent(FakeI2cBus *fake)
+{
+    if (fake == NULL) return;
+    /* Declare the SGP41 absent: its probe NACKs (address-aware) and the
+       scripted read response is cleared. Other devices' probes are unaffected. */
+    fake->sgp41_absent = true;
+    fake->sgp41_read_response_size = 0U;
+}
+
+uint16_t FakeI2cBus_Sgp41Cmd(const uint8_t data[2])
+{
+    if (data == NULL) return 0U;
+    return (uint16_t)(((uint16_t)data[0] << 8U) | (uint16_t)data[1]);
 }

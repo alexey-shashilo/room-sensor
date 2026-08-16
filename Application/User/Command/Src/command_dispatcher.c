@@ -188,6 +188,8 @@ static void HandleSelfTest(const CommandRequest *req, CommandResponse *rsp, cons
                                SelfTestResult_ToProtocolString(st->temp_humidity_sensor));
     CommandResponse_AppendJson(rsp, "pressure_sensor",
                                SelfTestResult_ToProtocolString(st->pressure_sensor));
+    CommandResponse_AppendJson(rsp, "air_quality_sensor",
+                               SelfTestResult_ToProtocolString(st->air_quality_sensor));
     CommandResponse_Finalize(rsp);
 }
 

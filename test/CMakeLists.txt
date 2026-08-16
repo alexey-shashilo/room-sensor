@@ -173,6 +173,9 @@ add_executable(test_boot_health
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/sht45/Src/sht45_runtime.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/bmp390/Src/bmp390.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/bmp390/Src/bmp390_runtime.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/sgp41/Src/sgp41.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/sgp41/Src/sgp41_runtime.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/gas_index/Src/gas_index.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Storage/Src/storage.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Provisioning/Src/provisioning.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Device/Src/device_lifecycle.c
@@ -214,6 +217,8 @@ target_include_directories(test_boot_health PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/scd41/Inc
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/sht45/Inc
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/bmp390/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/sgp41/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/gas_index/Inc
     ${CMAKE_CURRENT_SOURCE_DIR}/../Platform/Host/Inc
 )
 target_link_libraries(test_boot_health m)
@@ -230,6 +235,7 @@ add_executable(test_self_test
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/scd41/Src/scd41.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/sht45/Src/sht45.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/bmp390/Src/bmp390.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/sgp41/Src/sgp41.c
     ${CMAKE_CURRENT_SOURCE_DIR}/fakes/fake_i2c_bus.c
     ${CMAKE_CURRENT_SOURCE_DIR}/fakes/fake_flash.c
     ${CMAKE_CURRENT_SOURCE_DIR}/fakes/fake_unique_id.c
@@ -246,6 +252,7 @@ target_include_directories(test_self_test PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/scd41/Inc
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/sht45/Inc
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/bmp390/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/sgp41/Inc
 )
 add_test(NAME test_self_test COMMAND test_self_test)
 
@@ -286,6 +293,7 @@ add_executable(test_command
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/sht45/Src/sht45_runtime.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/bmp390/Src/bmp390.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/bmp390/Src/bmp390_runtime.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/sgp41/Src/sgp41.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Device/Src/device_manifest.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Device/Src/device_capabilities.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Device/Src/firmware_metadata.c
@@ -314,6 +322,7 @@ target_include_directories(test_command PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/scd41/Inc
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/sht45/Inc
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/bmp390/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/sgp41/Inc
 )
 target_include_directories(test_command PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Telemetry/Inc)
 target_include_directories(test_command PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Communication/Inc)
@@ -343,6 +352,7 @@ add_executable(test_dispatcher
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/sht45/Src/sht45_runtime.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/bmp390/Src/bmp390.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/bmp390/Src/bmp390_runtime.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/sgp41/Src/sgp41.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Device/Src/device_manifest.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Device/Src/device_capabilities.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Device/Src/firmware_metadata.c
@@ -371,6 +381,7 @@ target_include_directories(test_dispatcher PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/scd41/Inc
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/sht45/Inc
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/bmp390/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/sgp41/Inc
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Telemetry/Inc
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Communication/Inc
     ${CMAKE_CURRENT_SOURCE_DIR}/../Platform/Host/Inc
@@ -471,6 +482,7 @@ add_executable(test_scd41
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/sht45/Src/sht45_runtime.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/bmp390/Src/bmp390.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/bmp390/Src/bmp390_runtime.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/sgp41/Src/sgp41.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Common/Src/hex64.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/App/Src/room_state.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/App/Src/config.c
@@ -506,6 +518,7 @@ target_include_directories(test_scd41 PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/scd41/Inc
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/sht45/Inc
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/bmp390/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/sgp41/Inc
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/App/Inc
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Platform/Inc
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Common/Inc
@@ -601,6 +614,32 @@ target_include_directories(test_bmp390_integration PRIVATE
 )
 target_link_libraries(test_bmp390_integration m)
 add_test(NAME test_bmp390_integration COMMAND test_bmp390_integration)
+
+# SGP41 driver + runtime + gas-index + RoomState + telemetry + capabilities.
+add_executable(test_sgp41
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_sgp41.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/sgp41/Src/sgp41.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/sgp41/Src/sgp41_runtime.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/gas_index/Src/gas_index.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/App/Src/room_state.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Telemetry/Src/telemetry_serializer.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Device/Src/device_capabilities.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Common/Src/hex64.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/fakes/fake_i2c_bus.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/fakes/fake_platform_time.c
+)
+target_include_directories(test_sgp41 PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/fakes
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/sgp41/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/gas_index/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/App/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Platform/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Common/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Telemetry/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Device/Inc
+)
+target_link_libraries(test_sgp41 m)
+add_test(NAME test_sgp41 COMMAND test_sgp41)
 
 # Recovery policy / NOT_FOUND backoff / shared-bus health / long-run fault
 # injection (Phases 2-10). Links the runtimes + fakes; the policy/monitor are

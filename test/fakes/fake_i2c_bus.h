@@ -110,6 +110,17 @@ typedef struct
     uint8_t  bmp390_chip_id;
     uint8_t  bmp390_calib[21];
 
+    /* SGP41 (0xB2 wire addr) fake transport. SGP41 is command/response with
+       MSB-first words + CRC. `sgp41_read_response` holds the scripted response
+       returned verbatim on a plain read for the SGP41 wire address, so tests
+       can pre-select valid or corrupted bytes. */
+    uint8_t  sgp41_read_response[16];
+    size_t   sgp41_read_response_size;
+    DriverStatus sgp41_read_result;   /* per-read result for the SGP41 address */
+    int      sgp41_measure_cmd_count;
+    uint16_t sgp41_last_cmd;          /* last decoded 2-byte SGP41 command */
+    bool     sgp41_absent;            /* when true, SGP41 probe NACKs (absent) */
+
     /* Shared-bus recovery hook (Phase 6). When `recover_result` is set, the
        bus's recover fn dispatches here and bumps recover_call_count. Enables
        tests to exercise I2cBus_Recover and bus-recovery orchestration. */
@@ -179,6 +190,14 @@ void FakeI2cBus_SetSht45Response(FakeI2cBus *fake, const uint8_t raw6[6], bool r
 void FakeI2cBus_SetBmp390Present(FakeI2cBus *fake, uint16_t wire_addr,
                                  uint8_t chip_id, const uint8_t calib[21]);
 void FakeI2cBus_SetBmp390Absent(FakeI2cBus *fake);
+
+/* SGP41 scripting. `raw` is the exact on-wire response (MSB-first words + CRC)
+   returned verbatim on a plain read to the SGP41 wire address. The CRC is NOT
+   injected, so tests can supply fixed or corrupted vectors. */
+void FakeI2cBus_SetSgp41Response(FakeI2cBus *fake, const uint8_t *raw, size_t size);
+void FakeI2cBus_SetSgp41Absent(FakeI2cBus *fake);
+/* Decode helper for the SGP41 command word in last_write_data. */
+uint16_t FakeI2cBus_Sgp41Cmd(const uint8_t data[2]);
 
 #ifdef __cplusplus
 }

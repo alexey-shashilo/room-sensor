@@ -54,6 +54,24 @@ typedef struct
     float  bmp390_temperature_c;
     bool   bmp390_temperature_valid;
 
+    /* SGP41 VOC/NOx gas-index channels. raw_* are the raw tick signals; the
+       voc_index/nox_index are the gas-index algorithm outputs (1..500 when
+       valid). No partial commitment: each *_valid is set only when the backing
+       measurement is fresh and (for the index channels) the gas-index is out of
+       warm-up/blackout. The raw signals can be valid even while the index
+       channels are not yet valid (during warm-up). */
+    float  voc_raw;
+    bool   voc_raw_valid;
+
+    float  nox_raw;
+    bool   nox_raw_valid;
+
+    float  voc_index;
+    bool   voc_index_valid;
+
+    float  nox_index;
+    bool   nox_index_valid;
+
     /* Monotonic tick when the last measurement was committed. */
     uint32_t timestamp_ms;
 } RoomState;
@@ -69,10 +87,16 @@ void         RoomState_UpdateSht45(RoomState *state,
                                    float temperature_c, bool temperature_valid,
                                    float humidity_pct, bool humidity_valid);
 void         RoomState_InvalidateSht45(RoomState *state);
-void         RoomState_UpdateBmp390(RoomState *state,
-                                    float pressure_pa, bool pressure_valid,
-                                    float temperature_c, bool temperature_valid);
+void RoomState_UpdateBmp390(RoomState *state,
+                            float pressure_pa, bool pressure_valid,
+                            float temperature_c, bool temperature_valid);
 void         RoomState_InvalidateBmp390(RoomState *state);
+void         RoomState_UpdateSgp41(RoomState *state,
+                                   float voc_raw, bool voc_raw_valid,
+                                   float nox_raw, bool nox_raw_valid,
+                                   float voc_index, bool voc_index_valid,
+                                   float nox_index, bool nox_index_valid);
+void         RoomState_InvalidateSgp41(RoomState *state);
 const RoomState *RoomState_Get(const RoomState *state);
 
 #endif

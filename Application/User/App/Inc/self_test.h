@@ -26,6 +26,7 @@ typedef struct
     SelfTestResult co2_sensor;
     SelfTestResult temp_humidity_sensor;   /* SHT45 */
     SelfTestResult pressure_sensor;        /* BMP390 (identity-verified) */
+    SelfTestResult air_quality_sensor;     /* SGP41 (address probe) */
 } SelfTestReport;
 
 void SelfTest_Init(SelfTestReport *report);

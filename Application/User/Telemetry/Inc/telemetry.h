@@ -15,7 +15,14 @@
      v2: baseline room metrics (illuminance).
      v3: added SCD41 CO2, temperature and RH channels (explicit validity).
      v4: added SHT45 temperature and RH channels (dedicated environmental T/RH).
-     v5: added BMP390 barometric pressure (Pa) and sensor-internal temperature. */
+     v5: added BMP390 barometric pressure (Pa) and sensor-internal temperature.
+
+   The SGP41 VOC/NOx channels (voc_raw, nox_raw, voc_index, nox_index) are
+   ADDITIVE OPTIONAL fields added to the room object WITHOUT a schema bump. Per
+   the documented compatibility policy (docs/telemetry-contract.md), new optional
+   fields may be added without changing `schema`; the wire is backward
+   compatible (each carries explicit state valid|invalid and omits its numeric
+   value when invalid). */
 #define TELEMETRY_SCHEMA_VERSION 5U
 
 typedef struct

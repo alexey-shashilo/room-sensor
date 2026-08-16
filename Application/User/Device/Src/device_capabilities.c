@@ -10,8 +10,8 @@ void DeviceCapabilities_Get(DeviceCapabilities *caps)
     caps->relative_humidity = true;/* SHT45 humidity channel */
     caps->pressure = true;   /* BMP390 barometric pressure */
     caps->co2 = true;      /* SCD41 CO2 concentration (ppm) */
-    caps->voc = false;
-    caps->nox = false;
+    caps->voc = true;      /* SGP41 VOC Index + raw VOC */
+    caps->nox = true;      /* SGP41 NOx Index + raw NOx */
     caps->presence = false;
 
     caps->display = true;

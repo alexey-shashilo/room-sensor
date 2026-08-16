@@ -9,6 +9,8 @@
 #include "sht45_runtime.h"
 #include "bmp390.h"
 #include "bmp390_runtime.h"
+#include "sgp41.h"
+#include "sgp41_runtime.h"
 #include "platform_time.h"
 #include "platform_watchdog.h"
 #include "storage.h"
@@ -32,6 +34,7 @@ static Display_HandleTypeDef  s_display;
 static Scd41Runtime           s_scd41;
 static Sht45Runtime           s_sht45;
 static Bmp390Runtime          s_bmp390;
+static Sgp41Runtime           s_sgp41;
 
 static const I2cBus *s_i2c_bus = NULL;
 
@@ -40,6 +43,7 @@ static DeviceRuntime s_disp_rt  = { .state = DEVICE_STATE_UNKNOWN };
 static DeviceRuntime s_co2_rt   = { .state = DEVICE_STATE_UNKNOWN };
 static DeviceRuntime s_temp_rt  = { .state = DEVICE_STATE_UNKNOWN };   /* SHT45 */
 static DeviceRuntime s_pres_rt  = { .state = DEVICE_STATE_UNKNOWN };   /* BMP390 */
+static DeviceRuntime s_gas_rt   = { .state = DEVICE_STATE_UNKNOWN };   /* SGP41 */
 
 static uint8_t s_display_addr = 0U;
 static bool    s_display_addr_valid = false;
@@ -52,6 +56,7 @@ static uint32_t s_last_telemetry_ms = 0;
 static uint32_t s_last_scd41_ms = 0;
 static uint32_t s_last_sht45_ms = 0;
 static uint32_t s_last_bmp390_ms = 0;
+static uint32_t s_last_sgp41_ms = 0;
 static uint32_t s_start_ms = 0;
 /* Commit tracker for BMP390 (see s_sht45_room_commit_ms). */
 static uint32_t s_bmp390_room_commit_ms = 0xFFFFFFFFu;
@@ -364,6 +369,70 @@ static void App_DoPollBmp390(void)
         RoomState_InvalidateBmp390(&s_room);
 }
 
+/* Sync the portable SGP41 diagnostic snapshot from the runtime. */
+static void App_RefreshSgp41Diagnostics(void)
+{
+    Sgp41Runtime_GetDiagnostics(&s_sgp41, &s_gas_rt);
+}
+
+/* Start SGP41 (probe + conditioning + measurement). */
+static bool App_DoStartSgp41(void)
+{
+    DriverStatus s = Sgp41Runtime_Start(&s_sgp41);
+    if (s == DRIVER_STATUS_OK)
+        return true;
+    App_RefreshSgp41Diagnostics();
+    return false;
+}
+
+/* Advance the SGP41 non-blocking state machine, supplying compensation from the
+   fresh SHT45 reading when available (else the SGP41 defaults), and reflect any
+   accepted/invalidated sample into RoomState. */
+static void App_DoPollSgp41(void)
+{
+    bool had_valid = Sgp41Runtime_HasValidSample(&s_sgp41);
+
+    /* Compensation: use a fresh, valid SHT45 T/RH when available; otherwise the
+       SGP41 documented defaults (SHT45 absent/stale must NOT make SGP41 error).
+       SGP41 therefore needs no remaining->no dependency on RoomState here: the
+       runtime consumes it via the explicit SetCompensation interface. */
+    Sgp41Compensation comp;
+    memset(&comp, 0, sizeof(comp));
+    comp.valid = false;
+    if (s_sht45.state == DEVICE_STATE_READY &&
+        s_room.sht45_temperature_valid && s_room.sht45_humidity_valid)
+    {
+        comp.valid = true;
+        comp.temperature_c = s_room.sht45_temperature_c;
+        comp.relative_humidity_pct = s_room.sht45_humidity_pct;
+    }
+    Sgp41Runtime_SetCompensation(&s_sgp41, &comp);
+
+    Sgp41Runtime_Poll(&s_sgp41);
+    App_RefreshSgp41Diagnostics();
+
+    bool has_raw = Sgp41Runtime_HasValidSample(&s_sgp41);
+    bool has_voc = Sgp41Runtime_HasValidVocIndex(&s_sgp41);
+    bool has_nox = Sgp41Runtime_HasValidNoxIndex(&s_sgp41);
+
+    if (has_raw)
+    {
+        const Sgp41RawMeasurement *m = &s_sgp41.last_sample;
+        RoomState_UpdateSgp41(&s_room,
+                              (float)m->raw_voc, true,
+                              (float)m->raw_nox, true,
+                              (float)s_sgp41.voc_index, has_voc,
+                              (float)s_sgp41.nox_index, has_nox);
+    }
+    else if (had_valid)
+    {
+        RoomState_InvalidateSgp41(&s_room);
+    }
+
+    if (s_sgp41.state == DEVICE_STATE_ERROR && had_valid)
+        RoomState_InvalidateSgp41(&s_room);
+}
+
 static void App_DoProbeDisplay(void)
 {
     uint32_t now = Platform_GetTickMs();
@@ -527,14 +596,17 @@ void App_DoRetry(void)
         I2cBusHealth_MarkHealth(&s_bus_health, 2U, Scd41Runtime_HasValidSample(&s_scd41));
         I2cBusHealth_MarkHealth(&s_bus_health, 3U, Sht45Runtime_HasValidSample(&s_sht45));
         I2cBusHealth_MarkHealth(&s_bus_health, 4U, Bmp390Runtime_HasValidSample(&s_bmp390));
+        I2cBusHealth_MarkHealth(&s_bus_health, 5U, Sgp41Runtime_HasValidSample(&s_sgp41));
 
         DriverStatus e2 = Scd41Runtime_LastError(&s_scd41);
         DriverStatus e3 = Sht45Runtime_LastError(&s_sht45);
         DriverStatus e4 = Bmp390Runtime_LastError(&s_bmp390);
+        DriverStatus e5 = Sgp41Runtime_LastError(&s_sgp41);
 
         I2cBusHealth_Report(&s_bus_health, 2U, e2, now);
         I2cBusHealth_Report(&s_bus_health, 3U, e3, now);
         I2cBusHealth_Report(&s_bus_health, 4U, e4, now);
+        I2cBusHealth_Report(&s_bus_health, 5U, e5, now);
     }
 
     /* --- Shared-bus recovery orchestration (Phase 5/6/7) --- */
@@ -563,6 +635,7 @@ void App_DoRetry(void)
             Scd41Runtime_Recover(&s_scd41);
             Sht45Runtime_Recover(&s_sht45);
             Bmp390Runtime_Recover(&s_bmp390);
+            Sgp41Runtime_Recover(&s_sgp41);
             /* Consistent last-good policy after a bus reset (Phase 13): the
                communication substrate was reset. All I2C sensor samples are
                invalidated by their runtimes through the Recover() path above
@@ -579,6 +652,7 @@ void App_DoRetry(void)
         App_RefreshScd41Diagnostics();
         App_RefreshSht45Diagnostics();
         App_RefreshBmp390Diagnostics();
+        App_RefreshSgp41Diagnostics();
     }
 
     switch (s_light_rt.state)
@@ -688,6 +762,25 @@ void App_DoRetry(void)
         default:
             break;
     }
+
+    /* --- SGP41 VOC/NOx runtime (bounded recovery) --- */
+    switch (s_sgp41.state)
+    {
+        case DEVICE_STATE_NOT_FOUND:
+        case DEVICE_STATE_RECOVERING:
+            App_DoStartSgp41();
+            break;
+
+        case DEVICE_STATE_ERROR:
+            App_RefreshSgp41Diagnostics();
+            RoomState_InvalidateSgp41(&s_room);
+            Sgp41Runtime_Recover(&s_sgp41);
+            App_RefreshSgp41Diagnostics();
+            break;
+
+        default:
+            break;
+    }
 }
 
 static const char *ResetCauseStr(ResetCause c)
@@ -748,7 +841,7 @@ static void App_PrintBootDiag(void)
 
     printf("BOOT Reset=%s\r\n", ResetCauseStr(s_reset_cause));
 
-    printf("SELFTEST Platform=%s I2C=%s Storage=%s Config=%s ID=%s VEML=%s Disp=%s CO2=%s SHT45=%s\r\n",
+    printf("SELFTEST Platform=%s I2C=%s Storage=%s Config=%s ID=%s VEML=%s Disp=%s CO2=%s SHT45=%s SGP41=%s\n",
            SelfTestResultStr(s_self_test.platform),
            SelfTestResultStr(s_self_test.i2c),
            SelfTestResultStr(s_self_test.storage),
@@ -757,7 +850,8 @@ static void App_PrintBootDiag(void)
            SelfTestResultStr(s_self_test.light_sensor),
            SelfTestResultStr(s_self_test.display),
            SelfTestResultStr(s_self_test.co2_sensor),
-           SelfTestResultStr(s_self_test.temp_humidity_sensor));
+           SelfTestResultStr(s_self_test.temp_humidity_sensor),
+           SelfTestResultStr(s_self_test.air_quality_sensor));
 
     printf("CONFIG boot_source=%s cur=read=%s health=%s seq=%u calib=%.3f ID=%s\r\n",
            (s_config_boot_load_status == STORAGE_READ_OK) ? "persisted" : "defaults",
@@ -830,6 +924,15 @@ bool App_Bmp390HealthOk(DeviceState state)
             state == DEVICE_STATE_READY);
 }
 
+/* SGP41 SystemHealth contribution: STARTING/WAITING/READY -> acceptable;
+   NOT_FOUND/ERROR/RECOVERING -> NOT OK (degrades health, never FAULT). */
+bool App_Sgp41HealthOk(DeviceState state)
+{
+    return (state == DEVICE_STATE_STARTING ||
+            state == DEVICE_STATE_WAITING ||
+            state == DEVICE_STATE_READY);
+}
+
 static void App_UpdateHealth(void)
 {
     if (s_i2c_bus == NULL)
@@ -856,6 +959,9 @@ static void App_UpdateHealth(void)
     /* BMP390 SystemHealth contribution (see App_Bmp390HealthOk). */
     bool bmp390_ok = App_Bmp390HealthOk(s_bmp390.state);
 
+    /* SGP41 SystemHealth contribution (see App_Sgp41HealthOk). */
+    bool sgp41_ok = App_Sgp41HealthOk(s_sgp41.state);
+
     /* Persistence redundancy: healthy only when every A/B mirror is HEALTHY.
        A degraded mirror degrades system health without stopping sensing. */
     bool config_healthy  = (Config_GetStorageHealth() == STORAGE_HEALTH_HEALTHY);
@@ -872,7 +978,7 @@ static void App_UpdateHealth(void)
 
     /* A non-OK/FAULT state here is DEGRADED: sensing continues (the scheduler is
        never gated on health) and only the reported health reflects the mirror. */
-    if (runtime_ok && persistence_redundant_ok && scd41_ok && sht45_ok && bmp390_ok)
+    if (runtime_ok && persistence_redundant_ok && scd41_ok && sht45_ok && bmp390_ok && sgp41_ok)
         s_health = SYSTEM_HEALTH_OK;
     else
         s_health = SYSTEM_HEALTH_DEGRADED;
@@ -896,6 +1002,8 @@ RoomSensor_Status App_Init(void)
     App_RefreshSht45Diagnostics();   /* s_temp_rt mirrors runtime initial state */
     Bmp390Runtime_Init(&s_bmp390, s_i2c_bus);
     App_RefreshBmp390Diagnostics();  /* s_pres_rt mirrors runtime initial state */
+    Sgp41Runtime_Init(&s_sgp41, s_i2c_bus);
+    App_RefreshSgp41Diagnostics();   /* s_gas_rt mirrors runtime initial state */
 
     RoomState_Init(&s_room);
     SelfTest_Init(&s_self_test);
@@ -1094,6 +1202,18 @@ void App_Run(void)
         }
     }
 
+    /* SGP41 runtime: advance the non-blocking VOC/NOx state machine. */
+    if ((now - s_last_sgp41_ms) >= SGP41_RUNTIME_POLL_INTERVAL_MS)
+    {
+        s_last_sgp41_ms = now;
+        if (s_sgp41.state == DEVICE_STATE_STARTING ||
+            s_sgp41.state == DEVICE_STATE_WAITING ||
+            s_sgp41.state == DEVICE_STATE_READY)
+        {
+            App_DoPollSgp41();
+        }
+    }
+
     if ((now - s_last_display_ms) >= cfg->storage.display_period_ms)
     {
         s_last_display_ms = now;
@@ -1114,6 +1234,7 @@ void App_Run(void)
                "DISPLAY state=%d ops=%lu err=%lu consec=%lu rec=%lu\r\n"
                "CO2 state=%d ppm=%.0f valid=%d T=%.1f RH=%.1f ops=%lu err=%lu consec=%lu rec=%lu\r\n"
                "SHT45 state=%d T=%.1f RH=%.1f Tvalid=%d RHvalid=%d ops=%lu err=%lu consec=%lu rec=%lu\r\n"
+               "SGP41 state=%d voc_raw=%.0f nox_raw=%.0f voc_idx=%d nox_idx=%d valid=%d/%d/%d ops=%lu err=%lu consec=%lu rec=%lu\r\n"
                "HEALTH=%d WDG=%d BUS_ATT=%lu SUC=%lu FAIL=%lu CFG read=%s health=%s "
                "IDENT read=%s health=%s COMM=%d sent=%lu failed=%lu\r\n",
                (unsigned long)(now - s_start_ms),
@@ -1146,6 +1267,18 @@ void App_Run(void)
                (unsigned long)s_temp_rt.operation_failures,
                (unsigned long)s_temp_rt.consecutive_errors,
                (unsigned long)s_temp_rt.recovery_count,
+               (int)s_gas_rt.state,
+               (double)s_room.voc_raw,
+               (double)s_room.nox_raw,
+               (int)s_room.voc_index,
+               (int)s_room.nox_index,
+               (int)s_room.voc_raw_valid,
+               (int)s_room.voc_index_valid,
+               (int)s_room.nox_index_valid,
+               (unsigned long)s_gas_rt.operation_successes,
+               (unsigned long)s_gas_rt.operation_failures,
+               (unsigned long)s_gas_rt.consecutive_errors,
+               (unsigned long)s_gas_rt.recovery_count,
                (int)s_health, (int)s_watchdog_active,
                (unsigned long)I2cBusHealth_GetBusRecoveryAttempts(&s_bus_health),
                (unsigned long)I2cBusHealth_GetBusRecoverySuccesses(&s_bus_health),
@@ -1198,6 +1331,7 @@ void App_GetStatus(AppStatus *status)
     s_status.co2_sensor = s_co2_rt;
     s_status.temp_humidity_sensor = s_temp_rt;
     s_status.pressure_sensor = s_pres_rt;
+    s_status.gas_sensor = s_gas_rt;
     s_status.health = s_health;
     s_status.reset_cause = s_reset_cause;
     s_status.watchdog_active = s_watchdog_active;

@@ -4,6 +4,7 @@
 #include "scd41.h"
 #include "sht45.h"
 #include "bmp390.h"
+#include "sgp41.h"
 #include "storage.h"
 #include "config.h"
 #include "device_identity.h"
@@ -77,6 +78,7 @@ void SelfTest_Run(SelfTestReport *report, const I2cBus *bus)
         report->co2_sensor = SELF_TEST_SKIPPED;
         report->temp_humidity_sensor = SELF_TEST_SKIPPED;
         report->pressure_sensor = SELF_TEST_SKIPPED;
+        report->air_quality_sensor = SELF_TEST_SKIPPED;
     }
     else
     {
@@ -102,6 +104,11 @@ void SelfTest_Run(SelfTestReport *report, const I2cBus *bus)
                 ok = 1;
             report->pressure_sensor = ProbeToResult(ok != 0);
         }
+        /* SGP41: observational address probe only. We deliberately do NOT run
+           the 320 ms execute_self_test command here — that long device self-test
+           would add a multi-second blocking path to boot SelfTest. The address
+           probe confirms presence without disturbing the measurement. */
+        report->air_quality_sensor = ProbeToResult(SGP41_Probe(bus) == DRIVER_STATUS_OK);
     }
 
     /* Storage subsystem initialization is runtime state, not something a

@@ -95,6 +95,39 @@ void RoomState_InvalidateBmp390(RoomState *state)
     state->timestamp_ms = Platform_GetTickMs();
 }
 
+/* Commit a fully-valid SGP41 sample into the room state. Explicit per-channel
+   validity; no partial commitment. Invalid/not-ready is handled via
+   RoomState_InvalidateSgp41, never by passing valid=false here (which would
+   wipe last-good numeric values the dispatcher may need for diagnostics while
+   keeping validity explicit). */
+void RoomState_UpdateSgp41(RoomState *state,
+                           float voc_raw, bool voc_raw_valid,
+                           float nox_raw, bool nox_raw_valid,
+                           float voc_index, bool voc_index_valid,
+                           float nox_index, bool nox_index_valid)
+{
+    if (state == NULL) return;
+    state->voc_raw = voc_raw;
+    state->voc_raw_valid = voc_raw_valid;
+    state->nox_raw = nox_raw;
+    state->nox_raw_valid = nox_raw_valid;
+    state->voc_index = voc_index;
+    state->voc_index_valid = voc_index_valid;
+    state->nox_index = nox_index;
+    state->nox_index_valid = nox_index_valid;
+    state->timestamp_ms = Platform_GetTickMs();
+}
+
+void RoomState_InvalidateSgp41(RoomState *state)
+{
+    if (state == NULL) return;
+    state->voc_raw_valid = false;
+    state->nox_raw_valid = false;
+    state->voc_index_valid = false;
+    state->nox_index_valid = false;
+    state->timestamp_ms = Platform_GetTickMs();
+}
+
 const RoomState *RoomState_Get(const RoomState *state)
 {
     return state;

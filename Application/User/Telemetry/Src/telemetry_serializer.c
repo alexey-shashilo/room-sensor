@@ -183,8 +183,8 @@ static SerializeStatus AppendSht45Block(char *buf, size_t cap, size_t *pos,
 }
 
 /* Serialize the BMP390 channels. Pressure (Pa) is the primary value; BMP390
-   temperature is its internal compensation temperature (not the canonical room
-   T/RH). %.1f gives 0.1 Pa / 0.1 degC. Invalid -> no fake 0. */
+    temperature is its internal compensation temperature (not the canonical room
+    T/RH). %.1f gives 0.1 Pa / 0.1 degC. Invalid -> no fake 0. */
 static SerializeStatus AppendBmp390Block(char *buf, size_t cap, size_t *pos,
                                          const RoomState *room)
 {
@@ -199,6 +199,41 @@ static SerializeStatus AppendBmp390Block(char *buf, size_t cap, size_t *pos,
         "bmp390_temperature_c",
         room->bmp390_temperature_c,
         room->bmp390_temperature_valid,
+        true);
+    if (s != SERIALIZE_OK) return s;
+    return SERIALIZE_OK;
+}
+
+/* Serialize the SGP41 channels. Raw VOC/NOx ticks and the processed VOC/NOx
+   index are additive optional fields with explicit validity; when invalid no
+   numeric value is emitted (never a fabricated 0). The raw signals may be valid
+   while their corresponding index is not yet valid (gas-index warm-up). */
+static SerializeStatus AppendSgp41Block(char *buf, size_t cap, size_t *pos,
+                                        const RoomState *room)
+{
+    if (room == NULL) return SERIALIZE_INVALID_ARG;
+    SerializeStatus s = AppendMeasurement(buf, cap, pos,
+        "voc_raw",
+        room->voc_raw,
+        room->voc_raw_valid,
+        true);
+    if (s != SERIALIZE_OK) return s;
+    s = AppendMeasurement(buf, cap, pos,
+        "nox_raw",
+        room->nox_raw,
+        room->nox_raw_valid,
+        true);
+    if (s != SERIALIZE_OK) return s;
+    s = AppendMeasurement(buf, cap, pos,
+        "voc_index",
+        room->voc_index,
+        room->voc_index_valid,
+        true);
+    if (s != SERIALIZE_OK) return s;
+    s = AppendMeasurement(buf, cap, pos,
+        "nox_index",
+        room->nox_index,
+        room->nox_index_valid,
         true);
     if (s != SERIALIZE_OK) return s;
     return SERIALIZE_OK;
@@ -276,6 +311,10 @@ SerializeStatus Telemetry_Serialize(
 
     /* BMP390-backed barometric pressure and its internal temperature. */
     s = AppendBmp390Block(buf, cap, &pos, &snapshot->room);
+    if (s != SERIALIZE_OK) return s;
+
+    /* SGP41-backed VOC/NOx raw + gas-index channels (additive optional). */
+    s = AppendSgp41Block(buf, cap, &pos, &snapshot->room);
     if (s != SERIALIZE_OK) return s;
 
     s = AppendFormat(buf, cap, &pos, "\n  }\n");
