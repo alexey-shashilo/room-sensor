@@ -641,6 +641,229 @@ target_include_directories(test_sgp41 PRIVATE
 target_link_libraries(test_sgp41 m)
 add_test(NAME test_sgp41 COMMAND test_sgp41)
 
+# Phase 15 telemetry-from-simulation validation. Runs ~2 min of the production
+# portable core under virtual time and emits every serialized telemetry frame;
+# test_telemetry_sim.py parses each with a real JSON parser.
+add_executable(test_sim_telemetry
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_sim_telemetry.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/virtual_device.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/App/Src/app.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/App/Src/room_state.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/App/Src/config.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/App/Src/device_identity.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/App/Src/self_test.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/veml7700/Src/veml7700.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/display/Src/display.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/scd41/Src/scd41.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/scd41/Src/scd41_runtime.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/sht45/Src/sht45.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/sht45/Src/sht45_runtime.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/bmp390/Src/bmp390.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/bmp390/Src/bmp390_runtime.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/sgp41/Src/sgp41.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/sgp41/Src/sgp41_runtime.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/gas_index/Src/gas_index.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Storage/Src/storage.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Telemetry/Src/telemetry.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Telemetry/Src/telemetry_serializer.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Communication/Src/communication.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Communication/Src/communication_debug.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Command/Src/command.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Command/Src/command_dispatcher.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Command/Src/command_parser.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Command/Src/command_response.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Device/Src/device_manifest.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Device/Src/device_capabilities.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Device/Src/firmware_metadata.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Device/Src/boot_session.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Device/Src/device_lifecycle.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Device/Src/device_manifest_serializer.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Provisioning/Src/provisioning.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Common/Src/hex64.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Platform/Host/Src/platform_host_reset.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Platform/Host/Src/platform_host_watchdog.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Platform/Host/Src/platform_host_hardware.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/fakes/fake_platform_time.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/fakes/fake_flash.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/fakes/fake_i2c_bus.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/fakes/fake_communication_port.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/fakes/fake_unique_id.c
+)
+target_include_directories(test_sim_telemetry PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/fakes
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/App/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Platform/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Common/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Storage/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Device/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Command/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Communication/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Telemetry/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Provisioning/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/veml7700/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/display/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/scd41/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/sht45/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/bmp390/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/sgp41/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/gas_index/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Platform/Host/Inc
+)
+target_link_libraries(test_sim_telemetry m)
+add_test(NAME test_sim_telemetry COMMAND test_sim_telemetry)
+if(Python3_Interpreter_FOUND)
+    add_test(NAME test_telemetry_sim_json
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test_telemetry_sim.py $<TARGET_FILE:test_sim_telemetry>)
+endif()
+
+# Phase 15 command-path-in-simulation. Boots the production portable core and
+# injects GET_MANIFEST/GET_CAPABILITIES/SELF_TEST through the production
+# software command path; test_command_sim.py validates responses with real JSON.
+add_executable(test_sim_command
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_sim_command.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/virtual_device.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/App/Src/app.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/App/Src/room_state.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/App/Src/config.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/App/Src/device_identity.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/App/Src/self_test.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/veml7700/Src/veml7700.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/display/Src/display.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/scd41/Src/scd41.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/scd41/Src/scd41_runtime.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/sht45/Src/sht45.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/sht45/Src/sht45_runtime.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/bmp390/Src/bmp390.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/bmp390/Src/bmp390_runtime.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/sgp41/Src/sgp41.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/sgp41/Src/sgp41_runtime.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/gas_index/Src/gas_index.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Storage/Src/storage.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Telemetry/Src/telemetry.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Telemetry/Src/telemetry_serializer.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Communication/Src/communication.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Communication/Src/communication_debug.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Command/Src/command.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Command/Src/command_dispatcher.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Command/Src/command_parser.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Command/Src/command_response.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Device/Src/device_manifest.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Device/Src/device_capabilities.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Device/Src/firmware_metadata.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Device/Src/boot_session.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Device/Src/device_lifecycle.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Device/Src/device_manifest_serializer.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Provisioning/Src/provisioning.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Common/Src/hex64.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Platform/Host/Src/platform_host_reset.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Platform/Host/Src/platform_host_watchdog.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Platform/Host/Src/platform_host_hardware.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/fakes/fake_platform_time.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/fakes/fake_flash.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/fakes/fake_i2c_bus.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/fakes/fake_communication_port.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/fakes/fake_unique_id.c
+)
+target_include_directories(test_sim_command PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/fakes
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/App/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Platform/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Common/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Storage/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Device/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Command/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Communication/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Telemetry/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Provisioning/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/veml7700/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/display/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/scd41/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/sht45/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/bmp390/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/sgp41/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/gas_index/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Platform/Host/Inc
+)
+target_link_libraries(test_sim_command m)
+add_test(NAME test_sim_command COMMAND test_sim_command)
+if(Python3_Interpreter_FOUND)
+    add_test(NAME test_command_sim_json
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test_command_sim.py $<TARGET_FILE:test_sim_command>)
+endif()
+
+# Whole-device deterministic virtual host simulator (Phase 15). Drives the REAL
+# portable core (App_Init/App_Run + all production sensor runtimes, RoomState,
+# telemetry, shared-bus recovery) against a scriptable fake I2C bus under
+# virtual time. Exercises healthy 30-min, disappearance/reappearance, CRC,
+# shared-bus, uint32 wrap, 24h long-run, restart.
+add_executable(test_virtual_device
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_virtual_device.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/virtual_device.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/App/Src/app.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/App/Src/room_state.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/App/Src/config.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/App/Src/device_identity.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/App/Src/self_test.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/veml7700/Src/veml7700.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/display/Src/display.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/scd41/Src/scd41.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/scd41/Src/scd41_runtime.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/sht45/Src/sht45.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/sht45/Src/sht45_runtime.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/bmp390/Src/bmp390.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/bmp390/Src/bmp390_runtime.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/sgp41/Src/sgp41.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/sgp41/Src/sgp41_runtime.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/gas_index/Src/gas_index.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Storage/Src/storage.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Telemetry/Src/telemetry.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Telemetry/Src/telemetry_serializer.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Communication/Src/communication.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Communication/Src/communication_debug.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Command/Src/command.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Command/Src/command_dispatcher.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Command/Src/command_parser.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Command/Src/command_response.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Device/Src/device_manifest.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Device/Src/device_capabilities.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Device/Src/firmware_metadata.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Device/Src/boot_session.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Device/Src/device_lifecycle.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Device/Src/device_manifest_serializer.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Provisioning/Src/provisioning.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Common/Src/hex64.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Platform/Host/Src/platform_host_reset.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Platform/Host/Src/platform_host_watchdog.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Platform/Host/Src/platform_host_hardware.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/fakes/fake_platform_time.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/fakes/fake_flash.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/fakes/fake_i2c_bus.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/fakes/fake_communication_port.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/fakes/fake_unique_id.c
+)
+target_include_directories(test_virtual_device PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/fakes
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/App/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Platform/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Common/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Storage/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Device/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Command/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Communication/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Telemetry/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Provisioning/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/veml7700/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/display/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/scd41/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/sht45/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/bmp390/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/sgp41/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/gas_index/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Platform/Host/Inc
+)
+target_link_libraries(test_virtual_device m)
+add_test(NAME test_virtual_device COMMAND test_virtual_device)
+
 # Recovery policy / NOT_FOUND backoff / shared-bus health / long-run fault
 # injection (Phases 2-10). Links the runtimes + fakes; the policy/monitor are
 # header-inline.

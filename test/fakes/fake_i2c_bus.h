@@ -5,6 +5,17 @@
 #include <stddef.h>
 #include "i2c_bus.h"
 
+/* Maximum length of a scripted per-address transport-outcome sequence. */
+#ifndef FAKE_I2C_SCRIPT_MAX
+#define FAKE_I2C_SCRIPT_MAX 64U
+#endif
+
+/* Number of simultaneous per-address script slots (distinct devices on a
+   shared bus that may fail concurrently). */
+#ifndef FAKE_I2C_SCRIPT_SLOTS
+#define FAKE_I2C_SCRIPT_SLOTS 8U
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -126,6 +137,49 @@ typedef struct
        tests to exercise I2cBus_Recover and bus-recovery orchestration. */
     DriverStatus recover_result;
     int          recover_call_count;
+
+    /* ---- Phase 15: deterministic whole-device scenario scripting ---- */
+
+    /* Generic per-address PRESENCE tracking (immediate toggle, time-driven by
+       scenario events). `present_addrs[]` lists the addresses that have been
+       tracked; `present[]` is the current presence. The probe probe() consults
+       this first (a tracked-absent device NACKs), independent of the global
+       probe_result and of the SGP41-specific sgp41_absent bool. Default (not
+       tracked) behavior is unchanged so existing tests are unaffected. */
+    uint16_t present_addrs[8];
+    bool     present[8];
+    uint8_t  present_count;
+
+    /* Generic PER-ADDRESS TRANSACTION OUTCOME SCRIPTS. Each of the up-to-8
+       script slots is bound to one on-wire address. When a slot is active, the
+       NEXT `count` I2C operations (probe/write/read/read_mem) to that address
+       return the scripted DriverStatus verbatim and DO NOT run the normal device
+       logic first — so a scripted BUS_ERROR/TIMEOUT/NOT_FOUND models a real
+       transport failure. When a slot's script is exhausted it is cleared and
+       normal behavior resumes ("success forever" after N faulted operations).
+       Multiple addresses can be scripted simultaneously (e.g. SCD41 + SHT45),
+       enabling whole-device shared-bus scenarios. This is the substrate for
+       "success x20, timeout x3, success forever" style deterministic scripts. */
+    uint16_t  script_addr[FAKE_I2C_SCRIPT_SLOTS];
+    bool      script_active[FAKE_I2C_SCRIPT_SLOTS];
+    DriverStatus script_status[FAKE_I2C_SCRIPT_SLOTS][FAKE_I2C_SCRIPT_MAX];
+    uint32_t    script_count[FAKE_I2C_SCRIPT_SLOTS];
+    uint32_t    script_idx[FAKE_I2C_SCRIPT_SLOTS];
+
+    /* BMP390 register-map relay extension: besides CHIP_ID (0x00) and CALIB
+       (0x31), also serve STATUS (0x03), ERR (0x02) and the paired pressure/
+       temperature sample DATA (0x04..0x09) from dedicated fields so a sustained
+       whole-device run can keep VEML (shared regs[0x04..0x05]) and BMP390
+       measuring simultaneously without their flat maps colliding. */
+    uint8_t  bmp390_status_reg;
+    uint8_t  bmp390_err_reg;
+    uint8_t  bmp390_p_t_data[6];
+
+    /* SGP41 conditioning vs measure responses, served by last-decoded command
+       (conditioning 0x2612 returns CONDITIONING_RESPONSE_BYTES=3; measure
+       0x2619 returns MEASURE_RESPONSE_BYTES=6). Keeps a whole-device run that
+       exercises both phases scriptable. */
+    uint8_t  sgp41_conditioning_response[3];
 } FakeI2cBus;
 
 void FakeI2cBus_Init(FakeI2cBus *fake);
@@ -198,6 +252,35 @@ void FakeI2cBus_SetSgp41Response(FakeI2cBus *fake, const uint8_t *raw, size_t si
 void FakeI2cBus_SetSgp41Absent(FakeI2cBus *fake);
 /* Decode helper for the SGP41 command word in last_write_data. */
 uint16_t FakeI2cBus_Sgp41Cmd(const uint8_t data[2]);
+
+/* ---- Phase 15 scenario-scripting API ---- */
+
+/* Track presence for an on-wire (left-shifted) address. Once tracked, probe()
+   reports present/absent from the `present[]` bitmap before falling through to
+   the global probe_result. Used to toggle a sensor's physical presence at a
+   specific virtual time. */
+void FakeI2cBus_SetPresent(FakeI2cBus *fake, uint16_t wire_addr, bool present);
+
+/* Script the next `count` I2C operations to `wire_addr` to return statuses
+   verbatim (BUS_ERROR/TIMEOUT/NOT_FOUND/CRC_ERROR/etc.) WITHOUT running the
+   normal device logic. After the script is exhausted the device responds
+   normally ("success forever"). A NULL/empty script clears any active script. */
+void FakeI2cBus_Script(FakeI2cBus *fake, uint16_t wire_addr,
+                       const DriverStatus *statuses, uint32_t count);
+
+/* Convenience: script `count` identical statuses then return to normal. */
+void FakeI2cBus_ScriptRepeat(FakeI2cBus *fake, uint16_t wire_addr,
+                             DriverStatus status, uint32_t count);
+
+/* BMP390 register-map relay: set STATUS (0x03), ERR (0x02) and the paired
+   P/T raw sample (DATA 0x04..0x09). Takes effect for the configured BMP390
+   wire address set by FakeI2cBus_SetBmp390Present(). */
+void FakeI2cBus_SetBmp390Regs(FakeI2cBus *fake, uint8_t status, uint8_t err,
+                              const uint8_t p_t_data[6]);
+
+/* Set the SGP41 conditioning response (3 bytes: word + CRC). The fake returns
+   it for a plain read after the conditioning command (0x2612) was written. */
+void FakeI2cBus_SetSgp41ConditioningResponse(FakeI2cBus *fake, const uint8_t raw[3]);
 
 #ifdef __cplusplus
 }

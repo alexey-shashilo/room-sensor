@@ -12,6 +12,11 @@ void FakePlatform_AdvanceTick(uint32_t delta)
     s_fake_tick += delta;
 }
 
+uint32_t FakePlatform_GetTick(void)
+{
+    return s_fake_tick;
+}
+
 uint32_t Platform_GetTickMs(void)
 {
     return s_fake_tick;

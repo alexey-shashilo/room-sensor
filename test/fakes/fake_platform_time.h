@@ -9,6 +9,7 @@ extern "C" {
 
 void FakePlatform_SetTick(uint32_t ms);
 void FakePlatform_AdvanceTick(uint32_t delta);
+uint32_t FakePlatform_GetTick(void);
 uint32_t Platform_GetTickMs(void);
 void Platform_DelayMs(uint32_t ms);
 

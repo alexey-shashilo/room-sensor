@@ -15,11 +15,62 @@
 /* SGP41 7-bit 0x59 left-shifted -> wire byte 0xB2. */
 #define SGP41_FAKE_WIRE_ADDR   (0xB2U)
 
+/* Consume the next scripted status for `addr`, if a script is active for that
+   address. Returns the scripted status and advances the script; when exhausted
+   (or inactive) returns DRIVER_STATUS_OK sentinel meaning "run normal logic".
+   The script overrides BOTH the outcome and the device logic, so a scripted
+   BUS_ERROR models a real transport failure for that device. */
+/* Consume the next scripted status for `addr`, if a script slot is active for
+   that address. Returns the scripted status and advances that slot; when the slot
+   is exhausted (or none matches) returns DRIVER_STATUS_OK sentinel meaning "run
+   normal logic". The script overrides BOTH the outcome and the device logic, so
+   a scripted BUS_ERROR models a real transport failure for that device. */
+static DriverStatus fake_take_script(FakeI2cBus *f, uint16_t addr)
+{
+    if (f == NULL)
+        return DRIVER_STATUS_OK;   /* sentinel: normal behavior */
+    for (uint8_t i = 0; i < FAKE_I2C_SCRIPT_SLOTS; i++)
+    {
+        if (!f->script_active[i] || f->script_addr[i] != addr)
+            continue;
+        if (f->script_idx[i] >= f->script_count[i])
+        {
+            f->script_active[i] = false;   /* exhausted -> "success forever" */
+            return DRIVER_STATUS_OK;
+        }
+        DriverStatus s = f->script_status[i][f->script_idx[i]];
+        f->script_idx[i]++;
+        return s;
+    }
+    return DRIVER_STATUS_OK;
+}
+
+/* True when `addr` is tracked as ABSENT in the presence bitmap. Untracked
+   addresses report present (unchanged behavior). */
+static bool fake_is_absent(FakeI2cBus *f, uint16_t addr)
+{
+    if (f == NULL) return false;
+    for (uint8_t i = 0; i < f->present_count; i++)
+        if (f->present_addrs[i] == addr)
+            return !f->present[i];
+    return false;
+}
+
 static DriverStatus fake_write(void *ctx, uint16_t addr, const uint8_t *data, size_t size)
 {
     FakeI2cBus *f = (FakeI2cBus *)ctx;
+    /* Scripted transport outcome for this address takes priority (models a real
+       write-time failure); consumes one script step even on failure. */
+    {
+        DriverStatus scr = fake_take_script(f, addr);
+        if (scr != DRIVER_STATUS_OK)
+            return scr;
+    }
     f->last_addr = addr;
     f->write_call_count++;
+    /* A tracked-absent (physically removed) device NACKs every transaction. */
+    if (fake_is_absent(f, addr))
+        return DRIVER_STATUS_NOT_FOUND;
     if (size >= 1)
     {
         uint8_t reg = data[0];
@@ -103,7 +154,16 @@ static DriverStatus fake_read_mem(void *ctx, uint16_t addr, uint8_t reg, uint8_t
 {
     (void)addr;
     FakeI2cBus *f = (FakeI2cBus *)ctx;
+    /* Scripted transport outcome overrides the register read. */
+    {
+        DriverStatus scr = fake_take_script(f, addr);
+        if (scr != DRIVER_STATUS_OK)
+            return scr;
+    }
     f->read_mem_call_count++;
+    /* A tracked-absent (physically removed) device NACKs every transaction. */
+    if (fake_is_absent(f, addr))
+        return DRIVER_STATUS_NOT_FOUND;
 
     /* BMP390 relay: the shared flat regs[] map is used by VEML at reg 0x00
        (ALS_CONF), which collides with the BMP390 CHIP_ID at the same register.
@@ -123,6 +183,27 @@ static DriverStatus fake_read_mem(void *ctx, uint16_t addr, uint8_t reg, uint8_t
             memcpy(data, f->bmp390_calib, n);
             return f->read_mem_result;
         }
+        /* STATUS / ERR / paired sample DATA relay (Phase 15 whole-device run).
+           The BMP390 status register (bit5=P DRDY, bit6=T DRDY) and 6-byte raw
+           P/T data live at different offsets from VEML's ALS 0x04/0x05 use, so
+           serve them from dedicated fields (a whole-device run keeps VEML and
+           BMP390 measuring simultaneously without their flat maps colliding). */
+        if (reg == 0x03U && size >= 1U && f->bmp390_chip_id != 0)
+        {
+            data[0] = f->bmp390_status_reg;
+            return f->read_mem_result;
+        }
+        if (reg == 0x02U && size >= 1U && f->bmp390_chip_id != 0)
+        {
+            data[0] = f->bmp390_err_reg;
+            return f->read_mem_result;
+        }
+        if (reg == 0x04U && f->bmp390_chip_id != 0)
+        {
+            size_t n = (size < 6U) ? size : 6U;
+            memcpy(data, f->bmp390_p_t_data, n);
+            return f->read_mem_result;
+        }
     }
 
     if (size > 256) size = 256;
@@ -133,9 +214,18 @@ static DriverStatus fake_read_mem(void *ctx, uint16_t addr, uint8_t reg, uint8_t
 static DriverStatus fake_read(void *ctx, uint16_t addr, uint8_t *data, size_t size)
 {
     FakeI2cBus *f = (FakeI2cBus *)ctx;
+    /* Scripted transport outcome overrides the device read. */
+    {
+        DriverStatus scr = fake_take_script(f, addr);
+        if (scr != DRIVER_STATUS_OK)
+            return scr;
+    }
     f->last_addr = addr;
     f->read_call_count++;
     f->last_read_tick_ms = Platform_GetTickMs();
+    /* A tracked-absent (physically removed) device NACKs every transaction. */
+    if (fake_is_absent(f, addr))
+        return DRIVER_STATUS_NOT_FOUND;
 
     /* SHT45: a 6-byte read (T+CRC, RH+CRC). If the conversion is not complete
        (respond==false) the fake NACKs (BUS_ERROR), matching the datasheet
@@ -148,9 +238,21 @@ static DriverStatus fake_read(void *ctx, uint16_t addr, uint8_t *data, size_t si
         return f->read_result;
     }
 
-    /* SGP41 (0xB2): a plain read returns the scripted response verbatim. */
+    /* SGP41 (0xB2): a plain read returns the scripted response verbatim. The
+       response is chosen by the last SGP41 command: conditioning (0x2612) -> the
+       dedicated 3-byte conditioning response; measure/selftest/serial -> the
+       generic scripted response. */
     if (addr == SGP41_FAKE_WIRE_ADDR)
     {
+        if (f->sgp41_last_cmd == 0x2612U && f->sgp41_conditioning_response[0] != 0U)
+        {
+            size_t n = size < 3U ? size : 3U;
+            if (n > 0)
+                memcpy(data, f->sgp41_conditioning_response, n);
+            if (n < size)
+                memset(data + n, 0, size - n);
+            return f->sgp41_read_result;
+        }
         size_t n = size;
         if (n > f->sgp41_read_response_size)
             n = f->sgp41_read_response_size;
@@ -192,6 +294,18 @@ static DriverStatus fake_probe(void *ctx, uint16_t addr)
     f->last_addr = addr;
     f->probe_call_count++;
 
+    /* Scripted transport outcome for this address overrides presence. */
+    {
+        DriverStatus scr = fake_take_script(f, addr);
+        if (scr != DRIVER_STATUS_OK)
+            return scr;
+    }
+
+    /* Tracked-absent device NACKs its own probe (scenario disappearance),
+       independent of the global probe_result. */
+    if (fake_is_absent(f, addr))
+        return DRIVER_STATUS_NOT_FOUND;
+
     /* SGP41-specific absence: a declared-absent SGP41 NACKs its own probe
        without disturbing the shared global probe_result used by others. */
     if (f->sgp41_absent && addr == SGP41_FAKE_WIRE_ADDR)
@@ -216,6 +330,9 @@ void FakeI2cBus_Init(FakeI2cBus *fake)
     fake->probe_result = DRIVER_STATUS_OK;
     fake->recover_result = DRIVER_STATUS_OK;
     fake->sgp41_read_result = DRIVER_STATUS_OK;
+    /* BMP390 relay defaults: status all-clear, no data-ready (runtime waits). */
+    fake->bmp390_status_reg = 0U;
+    fake->bmp390_err_reg = 0U;
 }
 
 void FakeI2cBus_GetBus(I2cBus *bus, FakeI2cBus *fake)
@@ -364,4 +481,87 @@ uint16_t FakeI2cBus_Sgp41Cmd(const uint8_t data[2])
 {
     if (data == NULL) return 0U;
     return (uint16_t)(((uint16_t)data[0] << 8U) | (uint16_t)data[1]);
+}
+
+/* ---- Phase 15 scenario-scripting API ---- */
+
+void FakeI2cBus_SetPresent(FakeI2cBus *fake, uint16_t wire_addr, bool present)
+{
+    if (fake == NULL) return;
+    for (uint8_t i = 0; i < fake->present_count; i++)
+        if (fake->present_addrs[i] == wire_addr)
+        {
+            fake->present[i] = present;
+            return;
+        }
+    if (fake->present_count < (uint8_t)(sizeof(fake->present_addrs) /
+                                        sizeof(fake->present_addrs[0])))
+    {
+        fake->present_addrs[fake->present_count] = wire_addr;
+        fake->present[fake->present_count] = present;
+        fake->present_count++;
+    }
+}
+
+void FakeI2cBus_Script(FakeI2cBus *fake, uint16_t wire_addr,
+                       const DriverStatus *statuses, uint32_t count)
+{
+    if (fake == NULL) return;
+    if (statuses == NULL || count == 0U || count > FAKE_I2C_SCRIPT_MAX)
+    {
+        /* Find and clear any active slot for this address (NULL = clear). */
+        for (uint8_t i = 0; i < FAKE_I2C_SCRIPT_SLOTS; i++)
+            if (fake->script_active[i] && fake->script_addr[i] == wire_addr)
+                fake->script_active[i] = false;
+        return;
+    }
+    /* Reuse an existing slot bound to this address, else the first free slot. */
+    uint8_t slot = FAKE_I2C_SCRIPT_SLOTS;
+    for (uint8_t i = 0; i < FAKE_I2C_SCRIPT_SLOTS; i++)
+    {
+        if (fake->script_active[i] && fake->script_addr[i] == wire_addr)
+        { slot = i; break; }
+        if (!fake->script_active[i] && slot == FAKE_I2C_SCRIPT_SLOTS)
+            slot = i;
+    }
+    if (slot >= FAKE_I2C_SCRIPT_SLOTS) return;   /* no free slot */
+    for (uint32_t i = 0; i < count; i++)
+        fake->script_status[slot][i] = statuses[i];
+    fake->script_addr[slot] = wire_addr;
+    fake->script_active[slot] = true;
+    fake->script_count[slot] = count;
+    fake->script_idx[slot] = 0U;
+}
+
+void FakeI2cBus_ScriptRepeat(FakeI2cBus *fake, uint16_t wire_addr,
+                             DriverStatus status, uint32_t count)
+{
+    if (fake == NULL) return;
+    if (count == 0U || count > FAKE_I2C_SCRIPT_MAX)
+    {
+        FakeI2cBus_Script(fake, wire_addr, NULL, 0U);
+        return;
+    }
+    DriverStatus statuses[FAKE_I2C_SCRIPT_MAX];
+    for (uint32_t i = 0; i < count; i++)
+        statuses[i] = status;
+    FakeI2cBus_Script(fake, wire_addr, statuses, count);
+}
+
+void FakeI2cBus_SetBmp390Regs(FakeI2cBus *fake, uint8_t status, uint8_t err,
+                              const uint8_t p_t_data[6])
+{
+    if (fake == NULL) return;
+    fake->bmp390_status_reg = status;
+    fake->bmp390_err_reg = err;
+    if (p_t_data != NULL)
+        memcpy(fake->bmp390_p_t_data, p_t_data, 6);
+    else
+        memset(fake->bmp390_p_t_data, 0, 6);
+}
+
+void FakeI2cBus_SetSgp41ConditioningResponse(FakeI2cBus *fake, const uint8_t raw[3])
+{
+    if (fake == NULL || raw == NULL) return;
+    memcpy(fake->sgp41_conditioning_response, raw, 3);
 }

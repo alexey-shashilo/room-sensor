@@ -42,3 +42,6 @@ STM32CubeIDE/
 *.old
 *.bak
 ssd1306new.*
+# Python bytecode cache from test JSON validators
+__pycache__/
+*.pyc
