@@ -893,3 +893,150 @@ target_include_directories(test_recovery PRIVATE
 )
 target_link_libraries(test_recovery m)
 add_test(NAME test_recovery COMMAND test_recovery)
+
+# Phase 16 portable NetworkTransport: cooperative non-blocking byte-stream
+# mechanism, tested against a deterministic host fake adapter under the virtual
+# clock. Links the real production port (network_transport.c) + fake time.
+add_executable(test_network_transport
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_network_transport.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Network/Src/network_transport.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/fakes/fake_network_adapter.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/fakes/fake_platform_time.c
+)
+target_include_directories(test_network_transport PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/fakes
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Network/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Platform/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Common/Inc
+)
+target_link_libraries(test_network_transport m)
+add_test(NAME test_network_transport COMMAND test_network_transport)
+
+# Phase 16.1 byte-lifecycle contract adjudication (Send acceptance, stale TX/RX
+# across reconnect, remote-close RX, late-connect, disconnect cleanup, zero-len).
+add_executable(test_network_transport_contract
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_network_transport_contract.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Network/Src/network_transport.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/fakes/fake_network_adapter.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/fakes/fake_platform_time.c
+)
+target_include_directories(test_network_transport_contract PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/fakes
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Network/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Platform/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Common/Inc
+)
+target_link_libraries(test_network_transport_contract m)
+add_test(NAME test_network_transport_contract COMMAND test_network_transport_contract)
+
+# Phase 16 long-run / outage: 24h virtual run + bounded outage, test-only policy.
+add_executable(test_network_transport_longrun
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_network_transport_longrun.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Network/Src/network_transport.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/fakes/fake_network_adapter.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/fakes/fake_platform_time.c
+)
+target_include_directories(test_network_transport_longrun PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/fakes
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Network/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Platform/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Common/Inc
+)
+target_link_libraries(test_network_transport_longrun m)
+add_test(NAME test_network_transport_longrun COMMAND test_network_transport_longrun)
+
+# Phase 16 live integration: real production telemetry serializer -> transport
+# (forced partial sends) -> reconstruct; plus fragmented command-byte survival.
+add_executable(test_network_transport_live
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_network_transport_live.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Network/Src/network_transport.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Telemetry/Src/telemetry.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Telemetry/Src/telemetry_serializer.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/App/Src/room_state.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Common/Src/hex64.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/fakes/fake_network_adapter.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/fakes/fake_platform_time.c
+)
+target_include_directories(test_network_transport_live PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/fakes
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Network/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Platform/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Common/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Telemetry/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/App/Inc
+)
+target_link_libraries(test_network_transport_live m)
+add_test(NAME test_network_transport_live COMMAND test_network_transport_live)
+
+# Phase 16 whole-device network outage: real portable core + sensors keep
+# acquiring during a connected-transport outage; no I2C/sensor recovery impact.
+add_executable(test_network_transport_whole_device
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_network_transport_whole_device.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/virtual_device.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Network/Src/network_transport.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/App/Src/app.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/App/Src/room_state.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/App/Src/config.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/App/Src/device_identity.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/App/Src/self_test.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/veml7700/Src/veml7700.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/display/Src/display.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/scd41/Src/scd41.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/scd41/Src/scd41_runtime.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/sht45/Src/sht45.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/sht45/Src/sht45_runtime.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/bmp390/Src/bmp390.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/bmp390/Src/bmp390_runtime.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/sgp41/Src/sgp41.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/sgp41/Src/sgp41_runtime.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/gas_index/Src/gas_index.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Storage/Src/storage.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Telemetry/Src/telemetry.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Telemetry/Src/telemetry_serializer.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Communication/Src/communication.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Communication/Src/communication_debug.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Command/Src/command.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Command/Src/command_dispatcher.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Command/Src/command_parser.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Command/Src/command_response.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Device/Src/device_manifest.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Device/Src/device_capabilities.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Device/Src/firmware_metadata.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Device/Src/boot_session.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Device/Src/device_lifecycle.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Device/Src/device_manifest_serializer.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Provisioning/Src/provisioning.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Common/Src/hex64.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Platform/Host/Src/platform_host_reset.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Platform/Host/Src/platform_host_watchdog.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Platform/Host/Src/platform_host_hardware.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/fakes/fake_platform_time.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/fakes/fake_flash.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/fakes/fake_i2c_bus.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/fakes/fake_communication_port.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/fakes/fake_unique_id.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/fakes/fake_network_adapter.c
+)
+target_include_directories(test_network_transport_whole_device PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/fakes
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Network/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/App/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Platform/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Common/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Storage/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Device/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Command/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Communication/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Telemetry/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Provisioning/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/veml7700/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/display/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/scd41/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/sht45/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/bmp390/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/sgp41/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/gas_index/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Platform/Host/Inc
+)
+target_link_libraries(test_network_transport_whole_device m)
+add_test(NAME test_network_transport_whole_device COMMAND test_network_transport_whole_device)
