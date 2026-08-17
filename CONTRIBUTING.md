@@ -45,6 +45,37 @@ cmake --build build-fw --target room_sensor --parallel
 - No RTOS
 - No blocking HAL_Delay in runtime loops
 
+## Build hygiene: canonical build directories
+
+Agents and developers MUST use only the canonical build directories below and
+MUST NOT create ad-hoc `build-*`/`cmake-build-*` directories for individual
+checks.
+
+| Purpose                | Directory           | Configured with                      |
+|------------------------|---------------------|--------------------------------------|
+| Host tests + CTest     | `build-host`        | `-DBUILD_HOST_TESTS=ON`              |
+| Portable core (host)   | `build-core`        | `-DBUILD_HOST_PLATFORM=ON`           |
+| ARM firmware (Debug)   | `build-fw-debug`    | `-DCMAKE_BUILD_TYPE=Debug` + ARM toolchain |
+| ARM firmware (Release) | `build-fw-release`  | `-DCMAKE_BUILD_TYPE=Release` + ARM toolchain |
+| Sanitizer host build   | `build-sanitizers`  | `-DBUILD_HOST_TESTS=ON` + `-fsanitize` |
+
+Rules:
+
+- Use ONLY the canonical directories. Do not invent `build-check`, `build-final`,
+  `build-tmpXY`, etc.
+- For a clean build, delete the relevant canonical directory and reconfigure
+  there — do not create another uniquely named directory.
+- Temporary build directories are allowed only when technically required and
+  MUST be removed before the phase ends.
+- Build directories and generated artifacts (`.o`, `.obj`, `.elf`, `.bin`,
+  `.hex`, `.map`, `.su`, `CMakeCache.txt`, `build.ninja`, `Testing/`) must remain
+  ignored by Git (see `.gitignore`).
+- Never place manually-authored source or persistent data inside a build
+  directory.
+- Before finishing a phase, verify no unexpected build artifacts are tracked or
+  left in the repository root.
+- Never run a broad `git clean -fdx` while uncommitted work exists.
+
 ## Schema versioning
 
 When changing wire format:

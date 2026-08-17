@@ -30,6 +30,9 @@ EWARM/
 CMakeFiles/
 cmake-build-*/
 out/
+out-*/
+# CMake test output tree
+Testing/
 # CMSIS — only keep Device/ST and Include/Core needed for compilation
 Drivers/CMSIS/DSP/
 Drivers/CMSIS/NN/
