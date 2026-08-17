@@ -1040,3 +1040,175 @@ target_include_directories(test_network_transport_whole_device PRIVATE
 )
 target_link_libraries(test_network_transport_whole_device m)
 add_test(NAME test_network_transport_whole_device COMMAND test_network_transport_whole_device)
+
+# Phase 17 MQTT codec (pure encode/decode, no I/O).
+add_executable(test_mqtt_codec
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_mqtt_codec.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Mqtt/Src/mqtt_codec.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Mqtt/Src/mqtt_utf8.c
+)
+target_include_directories(test_mqtt_codec PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Mqtt/Inc
+)
+add_test(NAME test_mqtt_codec COMMAND test_mqtt_codec)
+
+
+# Phase 17 MQTT client (codec+client over NetworkTransport + fake adapter).
+add_executable(test_mqtt_client
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_mqtt_client.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Mqtt/Src/mqtt_codec.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Mqtt/Src/mqtt_utf8.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Mqtt/Src/mqtt_client.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Network/Src/network_transport.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/fakes/fake_network_adapter.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/fakes/fake_platform_time.c
+)
+target_include_directories(test_mqtt_client PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/fakes
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Mqtt/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Network/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Platform/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Common/Inc
+)
+target_link_libraries(test_mqtt_client m)
+add_test(NAME test_mqtt_client COMMAND test_mqtt_client)
+
+
+# Phase 17 MQTT contract / negative-controls.
+add_executable(test_mqtt_contract
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_mqtt_contract.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Mqtt/Src/mqtt_codec.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Mqtt/Src/mqtt_utf8.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Mqtt/Src/mqtt_client.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Network/Src/network_transport.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/fakes/fake_network_adapter.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/fakes/fake_platform_time.c
+)
+target_include_directories(test_mqtt_contract PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/fakes
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Mqtt/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Network/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Platform/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Common/Inc
+)
+target_link_libraries(test_mqtt_contract m)
+add_test(NAME test_mqtt_contract COMMAND test_mqtt_contract)
+
+
+# Phase 17 MQTT long-run (24h + wrap), test-only reconnect policy.
+add_executable(test_mqtt_longrun
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_mqtt_longrun.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Mqtt/Src/mqtt_codec.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Mqtt/Src/mqtt_utf8.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Mqtt/Src/mqtt_client.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Network/Src/network_transport.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/fakes/fake_network_adapter.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/fakes/fake_platform_time.c
+)
+target_include_directories(test_mqtt_longrun PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/fakes
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Mqtt/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Network/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Platform/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Common/Inc
+)
+target_link_libraries(test_mqtt_longrun m)
+add_test(NAME test_mqtt_longrun COMMAND test_mqtt_longrun)
+
+
+# Phase 17 whole-device MQTT isolation + telemetry/command payloads.
+add_executable(test_mqtt_whole_device
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_mqtt_whole_device.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/virtual_device.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Mqtt/Src/mqtt_codec.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Mqtt/Src/mqtt_utf8.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Mqtt/Src/mqtt_client.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Network/Src/network_transport.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/App/Src/app.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/App/Src/room_state.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/App/Src/config.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/App/Src/device_identity.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/App/Src/self_test.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/veml7700/Src/veml7700.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/display/Src/display.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/scd41/Src/scd41.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/scd41/Src/scd41_runtime.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/sht45/Src/sht45.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/sht45/Src/sht45_runtime.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/bmp390/Src/bmp390.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/bmp390/Src/bmp390_runtime.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/sgp41/Src/sgp41.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/sgp41/Src/sgp41_runtime.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/gas_index/Src/gas_index.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Storage/Src/storage.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Telemetry/Src/telemetry.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Telemetry/Src/telemetry_serializer.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Communication/Src/communication.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Communication/Src/communication_debug.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Command/Src/command.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Command/Src/command_dispatcher.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Command/Src/command_parser.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Command/Src/command_response.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Device/Src/device_manifest.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Device/Src/device_capabilities.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Device/Src/firmware_metadata.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Device/Src/boot_session.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Device/Src/device_lifecycle.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Device/Src/device_manifest_serializer.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Provisioning/Src/provisioning.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Common/Src/hex64.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Platform/Host/Src/platform_host_reset.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Platform/Host/Src/platform_host_watchdog.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Platform/Host/Src/platform_host_hardware.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/fakes/fake_platform_time.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/fakes/fake_flash.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/fakes/fake_i2c_bus.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/fakes/fake_communication_port.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/fakes/fake_unique_id.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/fakes/fake_network_adapter.c
+)
+target_include_directories(test_mqtt_whole_device PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/fakes
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Mqtt/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Network/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/App/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Platform/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Common/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Storage/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Device/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Command/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Communication/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Telemetry/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Provisioning/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/veml7700/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/display/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/scd41/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/sht45/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/bmp390/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/sgp41/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/gas_index/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Platform/Host/Inc
+)
+target_link_libraries(test_mqtt_whole_device m)
+add_test(NAME test_mqtt_whole_device COMMAND test_mqtt_whole_device)
+
+
+# Phase 17.1 MQTT UTF-8 / topic / fixed-header compliance.
+add_executable(test_mqtt_utf8
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_mqtt_utf8.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Mqtt/Src/mqtt_utf8.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Mqtt/Src/mqtt_codec.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Mqtt/Src/mqtt_client.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Network/Src/network_transport.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/fakes/fake_network_adapter.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/fakes/fake_platform_time.c
+)
+target_include_directories(test_mqtt_utf8 PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/fakes
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Mqtt/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Network/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Platform/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Common/Inc
+)
+target_link_libraries(test_mqtt_utf8 m)
+add_test(NAME test_mqtt_utf8 COMMAND test_mqtt_utf8)

@@ -56,9 +56,18 @@ static NetworkStatus net_poll(void *ctx)
     }
 }
 
+static void capture_bytes(FakeNetworkAdapter *f, const uint8_t *data, size_t n)
+{
+    if (f == NULL || data == NULL || n == 0U) return;
+    size_t room = FAKE_NET_CAPTURE_MAX - f->tx_capture_len;
+    if (n > room) n = room;
+    if (n == 0U) return;
+    memcpy(f->tx_capture + f->tx_capture_len, data, n);
+    f->tx_capture_len += n;
+}
+
 static NetworkStatus net_send(void *ctx, const uint8_t *data, size_t n, size_t *sent)
 {
-    (void)data;
     FakeNetworkAdapter *f = (FakeNetworkAdapter *)ctx;
     if (f == NULL || sent == NULL) return NET_INVALID_ARG;
     *sent = 0U;
@@ -82,6 +91,7 @@ static NetworkStatus net_send(void *ctx, const uint8_t *data, size_t n, size_t *
             size_t take = n > cap ? cap : n;
             *sent = take;
             f->accepted_total += take;
+            capture_bytes(f, data, take);
             return NET_OK;
         }
         case FAKE_NET_SEND_CAPN_THEN_ERROR:
@@ -92,12 +102,14 @@ static NetworkStatus net_send(void *ctx, const uint8_t *data, size_t n, size_t *
             size_t take = n > f->send_cap ? f->send_cap : n;
             *sent = take;                      /* partial write */
             f->accepted_total += take;
+            capture_bytes(f, data, take);
             return NET_OK;
         }
         case FAKE_NET_SEND_ALL:
         default:
             *sent = n;
             f->accepted_total += n;
+            capture_bytes(f, data, n);
             return NET_OK;
     }
 }

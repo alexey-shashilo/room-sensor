@@ -26,6 +26,7 @@
    */
 
 #define FAKE_NET_PEER_BUF  512U
+#define FAKE_NET_CAPTURE_MAX 4096U
 
 typedef enum
 {
@@ -82,6 +83,11 @@ typedef struct
     size_t             close_count;
     int                open_count;
     int                poll_count;
+
+    /* wire capture: exact bytes handed to the adapter (test-only, to verify
+       MQTT/transport partial-send byte-exactness). Reset() clears it. */
+    uint8_t            tx_capture[FAKE_NET_CAPTURE_MAX];
+    size_t             tx_capture_len;
 } FakeNetworkAdapter;
 
 /* Bind a fake into a NetworkTransportAdapter (persistent in the caller). */

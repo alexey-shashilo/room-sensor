@@ -35,6 +35,9 @@ set(CORE_SRC
     ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/Provisioning/Src/provisioning.c
     ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/Common/Src/hex64.c
     ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/Network/Src/network_transport.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/Mqtt/Src/mqtt_codec.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/Mqtt/Src/mqtt_client.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/Mqtt/Src/mqtt_utf8.c
 )
 
 set(CORE_INC
@@ -55,6 +58,7 @@ set(CORE_INC
     ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/Provisioning/Inc
     ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/Common/Inc
     ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/Network/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/Mqtt/Inc
 )
 
 function(core_add_library TARGET)
