@@ -12,8 +12,10 @@ uint8_t DisplayPages_Advance(uint32_t now, uint32_t *last_switch_ms, uint8_t cur
     if (elapsed >= DISPLAY_PAGE_PERIOD_MS)
     {
         *last_switch_ms += DISPLAY_PAGE_PERIOD_MS;
-        current_page = (current_page == DISPLAY_PAGE_ENV) ? DISPLAY_PAGE_AIR_QUALITY
-                                                          : DISPLAY_PAGE_ENV;
+        /* PAGE1 -> PAGE2 -> PAGE3 -> PAGE1 cycle. */
+        current_page = (uint8_t)(current_page + 1U);
+        if (current_page >= DISPLAY_PAGE_COUNT)
+            current_page = DISPLAY_PAGE_ENV;
     }
 
     if (current_page >= DISPLAY_PAGE_COUNT)
@@ -56,4 +58,21 @@ void DisplayPages_FormatGasLine(char *buf, size_t cap, const char *label,
             (void)snprintf(buf, cap, "%s: ---", label);
             break;
     }
+}
+
+/* PAGE3 pressure formatter. Pa -> hPa (Pa / 100.0) for presentation only; the
+   generic RoomState stays in Pa. Invalid/provider-NONE never renders a numeric,
+   so no fabricated pressure is shown. */
+void DisplayPages_FormatPressure(char *buf, size_t cap, float pressure_pa, bool valid)
+{
+    if (buf == NULL || cap == 0U)
+        return;
+
+    if (!valid || !(pressure_pa == pressure_pa))   /* non-finite also invalid */
+    {
+        (void)snprintf(buf, cap, "---.- hPa");
+        return;
+    }
+
+    (void)snprintf(buf, cap, "%.1f hPa", (double)(pressure_pa / 100.0f));
 }

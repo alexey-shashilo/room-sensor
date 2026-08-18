@@ -65,9 +65,9 @@ static uint32_t s_last_bmp390_ms = 0;
 static uint32_t s_last_bmp380_ms = 0;
 static uint32_t s_last_sgp41_ms = 0;
 static uint32_t s_start_ms = 0;
-/* Display page alternation (Phase 17.6): last tick a page switch was applied
-   and the currently active page (DISPLAY_PAGE_ENV or DISPLAY_PAGE_AIR_QUALITY).
-   Advanced every DISPLAY_PAGE_PERIOD_MS with wrap-safe modular timing. */
+/* Display page alternation (Phase 17.6, extended Phase 17.8): last tick a page
+   switch was applied and the currently active page (ENV / AIR_QUALITY /
+   PRESSURE). Advanced every DISPLAY_PAGE_PERIOD_MS with wrap-safe modular timing. */
 static uint32_t s_display_page_switch_ms = 0U;
 static uint8_t  s_display_page = DISPLAY_PAGE_ENV;
 /* Commit tracker for BMP390 (see s_sht45_room_commit_ms). */
@@ -669,6 +669,40 @@ static void App_RenderDisplayPageAirQuality(void)
                       (int32_t)room->nox_index, 32);
 }
 
+/* PAGE 3: barometric pressure page. Consumes ONLY generic production RoomState
+   (barometric_pressure_pa / _valid / provider); never touches the BMP380/BMP390
+   drivers or runtimes. Pa->hPa is presentation-only. An invalid/provider-NONE
+   pressure renders a non-numeric placeholder (never a fabricated value). Optional
+   source label is shown only if there is room and does not displace the pressure
+   readability line. */
+static void App_RenderDisplayPagePressure(void)
+{
+    const RoomState *room = RoomState_Get(&s_room);
+    char buf[22];
+
+    Display_Clear(&s_display);
+    Display_DrawString(&s_display, 0, 0, "Pressure");
+
+    DisplayPages_FormatPressure(buf, sizeof(buf),
+                                room->barometric_pressure_pa,
+                                room->barometric_pressure_valid);
+    Display_DrawString(&s_display, 0, 16, buf);
+
+    /* Optional readable source label from the generic provider field. */
+    switch (room->barometric_provider)
+    {
+        case BAROMETER_PROVIDER_BMP390:
+            Display_DrawString(&s_display, 0, 32, "BMP390");
+            break;
+        case BAROMETER_PROVIDER_BMP380:
+            Display_DrawString(&s_display, 0, 32, "BMP380");
+            break;
+        case BAROMETER_PROVIDER_NONE:
+        default:
+            break;
+    }
+}
+
 static void App_DoUpdateDisplay(void)
 {
     s_display_page = DisplayPages_Advance(Platform_GetTickMs(),
@@ -677,6 +711,8 @@ static void App_DoUpdateDisplay(void)
 
     if (s_display_page == DISPLAY_PAGE_AIR_QUALITY)
         App_RenderDisplayPageAirQuality();
+    else if (s_display_page == DISPLAY_PAGE_PRESSURE)
+        App_RenderDisplayPagePressure();
     else
         App_RenderDisplayPageEnv();
 

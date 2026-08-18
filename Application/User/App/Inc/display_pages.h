@@ -13,9 +13,10 @@
 
 #define DISPLAY_PAGE_ENV            0U  /* PAGE 1: existing environmental page */
 #define DISPLAY_PAGE_AIR_QUALITY    1U  /* PAGE 2: SGP41 VOC/NOx air-quality page */
-#define DISPLAY_PAGE_COUNT          2U
+#define DISPLAY_PAGE_PRESSURE       2U  /* PAGE 3: barometric pressure (hPa) */
+#define DISPLAY_PAGE_COUNT          3U
 
-/* Automatic PAGE1 <-> PAGE2 alternation period. */
+/* PAGE1 -> PAGE2 -> PAGE3 -> PAGE1 alternation period. */
 #define DISPLAY_PAGE_PERIOD_MS      5000U
 
 /* Render state for ONE gas-index channel, derived from the existing production
@@ -32,11 +33,11 @@ typedef enum
 extern "C" {
 #endif
 
-/* Wrap-safe page advance. Toggles *page between DISPLAY_PAGE_ENV and
-   DISPLAY_PAGE_AIR_QUALITY every DISPLAY_PAGE_PERIOD_MS, tracked via the
-   elapsed-tick marker *last_switch_ms. Non-blocking (no sleep/wait call);
-   survives uint32 tick wrap because it uses modular-arithmetic subtraction.
-   Returns the active page (0 or 1). */
+/* Wrap-safe page advance. Cycles *page through PAGE1 -> PAGE2 -> PAGE3 -> PAGE1
+   every DISPLAY_PAGE_PERIOD_MS, tracked via the elapsed-tick marker
+   *last_switch_ms. Non-blocking (no sleep/wait call); survives uint32 tick wrap
+   because it uses modular-arithmetic subtraction. Returns the active page
+   (0..2). */
 uint8_t DisplayPages_Advance(uint32_t now, uint32_t *last_switch_ms, uint8_t current_page);
 
 /* Map the production raw-valid / index-valid flags to a render decision for
@@ -50,6 +51,14 @@ DisplayGasState DisplayPages_GasState(bool index_valid, bool raw_valid);
    Never emits a numeric unless state == DISPLAY_GAS_STATE_NUMERIC. */
 void DisplayPages_FormatGasLine(char *buf, size_t cap, const char *label,
                                 int32_t value, DisplayGasState state);
+
+/* Format the generic barometric pressure for PAGE3, converting Pa -> hPa
+   (hPa = Pa / 100.0) for PRESENTATION only (RoomState stays in Pa).
+     valid   -> "<%.1f> hPa"  e.g. "988.5 hPa"
+     invalid -> "---.- hPa"   (never a fabricated numeric)
+   provider NONE must be passed as valid=false and therefore never renders a
+   numeric pressure (see the invalid/generic contract). */
+void DisplayPages_FormatPressure(char *buf, size_t cap, float pressure_pa, bool valid);
 
 #ifdef __cplusplus
 }

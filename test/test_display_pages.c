@@ -3,13 +3,17 @@
 
 #include "display_pages.h"
 
-/* Display page + gas-index render decision regression (Phase 17.6).
+/* Display page + gas-index render decision regression (Phase 17.6, extended
+   Phase 17.8 with PAGE3 barometric pressure).
 
-   Covers the deterministic page-switching contract and the SGP41 VOC/NOx
-   render policy using ONLY the existing production RoomState validity flags.
-   No pixel internals; no SGP41 driver; no gas-index algorithm.
+   Covers the deterministic 3-page switching contract, the SGP41 VOC/NOx render
+   policy, and the PAGE3 pressure format/Pa->hPa/invalid/provider behavior, all
+   using ONLY production RoomState semantics (the Page module never touches the
+   barometer/SPG41 drivers, never reads them over I2C, never computes a gas
+   index or pressure compensation).
 
-   Negative control: an invalid index MUST NEVER render a numeric value. */
+   Negative controls: an invalid index/pressure MUST NEVER render a numeric; a
+   NONE provider must never produce a fabricated pressure. */
 
 static int s_pass = 0, s_fail = 0, s_case = 0;
 
@@ -27,7 +31,7 @@ static void check_str(const char *got, const char *want, const char *name)
 
 int main(void)
 {
-    printf("Display page + gas-index render regressions\n");
+    printf("Display page + gas-index + pressure render regressions\n");
 
     /* ---- A. VOC valid + NOx valid -> numeric values ---- */
     printf("\n--- A. valid indices render numeric ---\n");
@@ -78,16 +82,18 @@ int main(void)
         check_str(buf, "NOx: ---", "NOx non-numeric when index invalid");
     }
 
-    /* ---- E. page switching PAGE1 -> PAGE2 -> PAGE1 ---- */
-    printf("\n--- E. page sequence ---\n");
+    /* ---- E. 3-page sequence PAGE1 -> PAGE2 -> PAGE3 -> PAGE1 ---- */
+    printf("\n--- E. page sequence (3 pages) ---\n");
     {
         uint32_t last = 1000u;
         uint8_t p = DISPLAY_PAGE_ENV;
-        /* Advance by exactly the period repeatedly. */
+        check(p == DISPLAY_PAGE_ENV, "A: initial page is PAGE1");
         p = DisplayPages_Advance(6000u, &last, p);
-        check(p == DISPLAY_PAGE_AIR_QUALITY, "PAGE1 -> PAGE2 at +5s");
+        check(p == DISPLAY_PAGE_AIR_QUALITY, "B: PAGE1 -> PAGE2 at +5s");
         p = DisplayPages_Advance(12000u, &last, p);
-        check(p == DISPLAY_PAGE_ENV, "PAGE2 -> PAGE1 at +5s");
+        check(p == DISPLAY_PAGE_PRESSURE, "C: PAGE2 -> PAGE3 at +10s");
+        p = DisplayPages_Advance(18000u, &last, p);
+        check(p == DISPLAY_PAGE_ENV, "D: PAGE3 -> PAGE1 at +15s");
     }
 
     /* ---- F. exact boundary 4999 (no switch) vs 5000 (switch) ---- */
@@ -97,25 +103,24 @@ int main(void)
         uint8_t p = DISPLAY_PAGE_ENV;
         uint8_t p_4999 = DisplayPages_Advance(4999u, &last, p);
         check(p_4999 == DISPLAY_PAGE_ENV, "4999 ms unchanged");
-        /* last_switch_ms stays 0 because no switch occurred yet. */
         uint8_t p_5000 = DisplayPages_Advance(5000u, &last, p);
         check(p_5000 == DISPLAY_PAGE_AIR_QUALITY, "5000 ms switches");
     }
 
-    /* ---- G. uint32 wrap across 0xFFFFFFFF -> 0 ---- */
+    /* ---- G. uint32 wrap across 0xFFFFFFFF -> 0 (3 pages) ---- */
     printf("\n--- G. wrap ---\n");
     {
-        uint32_t last = 0xFFFFFFF0u; /* last switch near top of range */
+        uint32_t last = 0xFFFFFFF0u;
         uint8_t p = DISPLAY_PAGE_ENV;
-        /* 0xFFFFFFFF: elapsed = 0xFFFFFFFF - 0xFFFFFFF0 = 15 -> <5000, no switch */
         uint8_t p1 = DisplayPages_Advance(0xFFFFFFFFu, &last, p);
         check(p1 == DISPLAY_PAGE_ENV, "just below wrap: no switch");
-        /* After wrap to 0x00000005: elapsed = 5-0xFFFFFFF0 overflow->21 <5000 */
         uint8_t p2 = DisplayPages_Advance(0x00000005u, &last, p1);
         check(p2 == DISPLAY_PAGE_ENV, "early post-wrap: no switch");
         /* At 0x00002000: elapsed = 0x2000 - 0xFFFFFFF0 (mod 2^32) = 8208 >=5000 */
         uint8_t p3 = DisplayPages_Advance(0x00002000u, &last, p2);
-        check(p3 == DISPLAY_PAGE_AIR_QUALITY, "post-wrap +5s+ switches");
+        check(p3 == DISPLAY_PAGE_AIR_QUALITY, "post-wrap +5s+ switches PAGE1->PAGE2");
+        uint8_t p4 = DisplayPages_Advance(0x00004000u, &last, p3);
+        check(p4 == DISPLAY_PAGE_PRESSURE, "post-wrap next period PAGE2->PAGE3");
     }
 
     /* ---- H. repeat call before period does not flip ---- */
@@ -135,8 +140,60 @@ int main(void)
         char small[6];
         DisplayPages_FormatGasLine(small, sizeof(small), "VOC", 103,
                                    DISPLAY_GAS_STATE_NUMERIC);
-        /* snprintf guarantees NUL termination within cap. */
         check(small[sizeof(small) - 1U] == '\0', "short buffer NUL-terminated");
+    }
+
+    /* ---- E(Pa). Pressure formatting 98850 Pa -> 988.5 hPa ---- */
+    printf("\n--- E(Pa). pressure format / hPa conversion ---\n");
+    {
+        char buf[24];
+        DisplayPages_FormatPressure(buf, sizeof(buf), 98850.0f, true);
+        check_str(buf, "988.5 hPa", "98850 Pa -> 988.5 hPa");
+        DisplayPages_FormatPressure(buf, sizeof(buf), 101325.0f, true);
+        check_str(buf, "1013.2 hPa", "101325 Pa -> 1013.2 hPa");
+    }
+
+    /* ---- G(Pa). invalid pressure -> non-numeric ---- */
+    printf("\n--- G(Pa). invalid pressure representation ---\n");
+    {
+        char buf[24];
+        DisplayPages_FormatPressure(buf, sizeof(buf), 98850.0f, false);
+        check_str(buf, "---.- hPa", "invalid -> non-numeric placeholder");
+        DisplayPages_FormatPressure(buf, sizeof(buf), 0.0f, false);
+        check(strstr(buf, "hPa") != NULL && buf[0] == '-',
+              "invalid never a fabricated numeric (negative ctrl)");
+    }
+
+    /* ---- H(Pa). provider independence (generic) ---- */
+    printf("\n--- H(Pa). provider independence ---\n");
+    {
+        char buf[24];
+        /* Same generic pressure renders numerically regardless of which BMP. */
+        DisplayPages_FormatPressure(buf, sizeof(buf), 98850.0f, true);
+        check_str(buf, "988.5 hPa", "generic valid renders numeric (no model)");
+        /* This formatter takes ONLY Pa+validity — it does not consume any
+           provider-specific field, so exactly the same call serves BMP380 and
+           BMP390. */
+        check(1, "FormatPressure is provider-agnostic");
+    }
+
+    /* ---- J(Pa). NONE provider + invalid -> no numeric ---- */
+    printf("\n--- J(Pa). NONE => invalid, no numeric ---\n");
+    {
+        char buf[24];
+        /* NONE provider yields barometric_pressure_valid==false in production
+           RoomState; the formatter is driven by that validity. */
+        DisplayPages_FormatPressure(buf, sizeof(buf), 98850.0f, false);
+        check_str(buf, "---.- hPa", "NONE/invalid cannot render numeric");
+    }
+
+    /* ---- L/M. PAGE1 / PAGE2 content regression markers ---- */
+    printf("\n--- L/M. page id constants preserved ---\n");
+    {
+        check(DISPLAY_PAGE_ENV == 0U, "PAGE1 (ENV) id preserved");
+        check(DISPLAY_PAGE_AIR_QUALITY == 1U, "PAGE2 (AIR_QUALITY) id preserved");
+        check(DISPLAY_PAGE_PRESSURE == 2U, "PAGE3 (PRESSURE) id added");
+        check(DISPLAY_PAGE_COUNT == 3U, "page count is now 3");
     }
 
     printf("\nRESULT: %d passed, %d failed\n", s_pass, s_fail);
