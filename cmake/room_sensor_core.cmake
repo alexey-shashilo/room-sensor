@@ -6,6 +6,7 @@ set(CORE_SRC
     ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/App/Src/config.c
     ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/App/Src/self_test.c
     ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/App/Src/device_identity.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/App/Src/display_pages.c
     ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/Drivers/veml7700/Src/veml7700.c
     ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/Drivers/display/Src/display.c
     ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/Drivers/scd41/Src/scd41.c

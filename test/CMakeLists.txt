@@ -161,6 +161,7 @@ add_test(NAME test_config_redundancy COMMAND test_config_redundancy)
 add_executable(test_boot_health
     ${CMAKE_CURRENT_SOURCE_DIR}/test_boot_health.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/App/Src/app.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/App/Src/display_pages.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/App/Src/config.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/App/Src/device_identity.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/App/Src/room_state.c
@@ -641,6 +642,20 @@ target_include_directories(test_sgp41 PRIVATE
 target_link_libraries(test_sgp41 m)
 add_test(NAME test_sgp41 COMMAND test_sgp41)
 
+# Phase 17.6 display page + gas-index render decision regression. Compiles the
+# pure display_pages module (page advance + render decisions) with no SGP41
+# driver or gas-index algorithm; asserts the render contract, page boundary,
+# uint32 wrap, and the invalid-index negative control.
+add_executable(test_display_pages
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_display_pages.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/App/Src/display_pages.c
+)
+target_include_directories(test_display_pages PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/App/Inc
+)
+target_link_libraries(test_display_pages m)
+add_test(NAME test_display_pages COMMAND test_display_pages)
+
 # Phase 15 telemetry-from-simulation validation. Runs ~2 min of the production
 # portable core under virtual time and emits every serialized telemetry frame;
 # test_telemetry_sim.py parses each with a real JSON parser.
@@ -648,6 +663,7 @@ add_executable(test_sim_telemetry
     ${CMAKE_CURRENT_SOURCE_DIR}/test_sim_telemetry.c
     ${CMAKE_CURRENT_SOURCE_DIR}/virtual_device.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/App/Src/app.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/App/Src/display_pages.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/App/Src/room_state.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/App/Src/config.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/App/Src/device_identity.c
@@ -723,6 +739,7 @@ add_executable(test_sim_command
     ${CMAKE_CURRENT_SOURCE_DIR}/test_sim_command.c
     ${CMAKE_CURRENT_SOURCE_DIR}/virtual_device.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/App/Src/app.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/App/Src/display_pages.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/App/Src/room_state.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/App/Src/config.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/App/Src/device_identity.c
@@ -800,6 +817,7 @@ add_executable(test_virtual_device
     ${CMAKE_CURRENT_SOURCE_DIR}/test_virtual_device.c
     ${CMAKE_CURRENT_SOURCE_DIR}/virtual_device.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/App/Src/app.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/App/Src/display_pages.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/App/Src/room_state.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/App/Src/config.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/App/Src/device_identity.c
@@ -975,6 +993,7 @@ add_executable(test_network_transport_whole_device
     ${CMAKE_CURRENT_SOURCE_DIR}/virtual_device.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Network/Src/network_transport.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/App/Src/app.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/App/Src/display_pages.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/App/Src/room_state.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/App/Src/config.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/App/Src/device_identity.c
@@ -1122,9 +1141,10 @@ add_executable(test_mqtt_whole_device
     ${CMAKE_CURRENT_SOURCE_DIR}/virtual_device.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Mqtt/Src/mqtt_codec.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Mqtt/Src/mqtt_utf8.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Mqtt/Src/mqtt_client.c
+${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Mqtt/Src/mqtt_client.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Network/Src/network_transport.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/App/Src/app.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/App/Src/display_pages.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/App/Src/room_state.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/App/Src/config.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/App/Src/device_identity.c

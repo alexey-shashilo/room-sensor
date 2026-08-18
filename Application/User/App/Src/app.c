@@ -3,6 +3,7 @@
 #include "config.h"
 #include "veml7700.h"
 #include "display.h"
+#include "display_pages.h"
 #include "scd41.h"
 #include "scd41_runtime.h"
 #include "sht45.h"
@@ -58,6 +59,11 @@ static uint32_t s_last_sht45_ms = 0;
 static uint32_t s_last_bmp390_ms = 0;
 static uint32_t s_last_sgp41_ms = 0;
 static uint32_t s_start_ms = 0;
+/* Display page alternation (Phase 17.6): last tick a page switch was applied
+   and the currently active page (DISPLAY_PAGE_ENV or DISPLAY_PAGE_AIR_QUALITY).
+   Advanced every DISPLAY_PAGE_PERIOD_MS with wrap-safe modular timing. */
+static uint32_t s_display_page_switch_ms = 0U;
+static uint8_t  s_display_page = DISPLAY_PAGE_ENV;
 /* Commit tracker for BMP390 (see s_sht45_room_commit_ms). */
 static uint32_t s_bmp390_room_commit_ms = 0xFFFFFFFFu;
 /* Tick timestamp of the last SHT45 sample actually committed into RoomState, so
@@ -487,7 +493,8 @@ static void App_DoInitDisplay(void)
     }
 }
 
-static void App_DoUpdateDisplay(void)
+/* PAGE 1: existing environmental page (Room Sensor, CO2, RH/T, Light). */
+static void App_RenderDisplayPageEnv(void)
 {
     char buf[22];
     const RoomState *room = RoomState_Get(&s_room);
@@ -554,6 +561,45 @@ static void App_DoUpdateDisplay(void)
     {
         Display_DrawString(&s_display, 0, 48, "Light: N/A");
     }
+}
+
+/* Render one gas-index line (VOC/NOx) from the existing production validity
+   flags. Invalid indices never render a numeric value; the display contract is
+   enforced via DisplayPages_GasState/FormatGasLine. */
+static void App_RenderGasLine(const char *label, bool index_valid, bool raw_valid,
+                              int32_t value, uint8_t line_y)
+{
+    char buf[22];
+    DisplayGasState st = DisplayPages_GasState(index_valid, raw_valid);
+    DisplayPages_FormatGasLine(buf, sizeof(buf), label, value, st);
+    Display_DrawString(&s_display, 0, line_y, buf);
+}
+
+/* PAGE 2: SGP41 VOC/NOx air-quality page. Uses only production RoomState values;
+   never talks to SGP41 over I2C and never computes a gas index itself. */
+static void App_RenderDisplayPageAirQuality(void)
+{
+    const RoomState *room = RoomState_Get(&s_room);
+
+    Display_Clear(&s_display);
+    Display_DrawString(&s_display, 0, 0, "Air Quality");
+
+    App_RenderGasLine("VOC", room->voc_index_valid, room->voc_raw_valid,
+                      (int32_t)room->voc_index, 16);
+    App_RenderGasLine("NOx", room->nox_index_valid, room->nox_raw_valid,
+                      (int32_t)room->nox_index, 32);
+}
+
+static void App_DoUpdateDisplay(void)
+{
+    s_display_page = DisplayPages_Advance(Platform_GetTickMs(),
+                                          &s_display_page_switch_ms,
+                                          s_display_page);
+
+    if (s_display_page == DISPLAY_PAGE_AIR_QUALITY)
+        App_RenderDisplayPageAirQuality();
+    else
+        App_RenderDisplayPageEnv();
 
     DriverStatus status = Display_Update(&s_display);
     if (status == DRIVER_STATUS_OK)
