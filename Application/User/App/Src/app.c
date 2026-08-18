@@ -10,6 +10,8 @@
 #include "sht45_runtime.h"
 #include "bmp390.h"
 #include "bmp390_runtime.h"
+#include "bmp380.h"
+#include "bmp380_runtime.h"
 #include "sgp41.h"
 #include "sgp41_runtime.h"
 #include "platform_time.h"
@@ -35,6 +37,7 @@ static Display_HandleTypeDef  s_display;
 static Scd41Runtime           s_scd41;
 static Sht45Runtime           s_sht45;
 static Bmp390Runtime          s_bmp390;
+static Bmp380Runtime          s_bmp380;
 static Sgp41Runtime           s_sgp41;
 
 static const I2cBus *s_i2c_bus = NULL;
@@ -43,7 +46,9 @@ static DeviceRuntime s_light_rt = { .state = DEVICE_STATE_UNKNOWN };
 static DeviceRuntime s_disp_rt  = { .state = DEVICE_STATE_UNKNOWN };
 static DeviceRuntime s_co2_rt   = { .state = DEVICE_STATE_UNKNOWN };
 static DeviceRuntime s_temp_rt  = { .state = DEVICE_STATE_UNKNOWN };   /* SHT45 */
-static DeviceRuntime s_pres_rt  = { .state = DEVICE_STATE_UNKNOWN };   /* BMP390 */
+static DeviceRuntime s_pres_rt  = { .state = DEVICE_STATE_UNKNOWN };   /* active barometer */
+static DeviceRuntime s_bmp390_rt = { .state = DEVICE_STATE_UNKNOWN };  /* BMP390 diag */
+static DeviceRuntime s_pres_rt_bmp380 = { .state = DEVICE_STATE_UNKNOWN }; /* BMP380 diag */
 static DeviceRuntime s_gas_rt   = { .state = DEVICE_STATE_UNKNOWN };   /* SGP41 */
 
 static uint8_t s_display_addr = 0U;
@@ -57,6 +62,7 @@ static uint32_t s_last_telemetry_ms = 0;
 static uint32_t s_last_scd41_ms = 0;
 static uint32_t s_last_sht45_ms = 0;
 static uint32_t s_last_bmp390_ms = 0;
+static uint32_t s_last_bmp380_ms = 0;
 static uint32_t s_last_sgp41_ms = 0;
 static uint32_t s_start_ms = 0;
 /* Display page alternation (Phase 17.6): last tick a page switch was applied
@@ -332,7 +338,7 @@ static void App_DoPollSht45(void)
 /* Sync the portable BMP390 diagnostic snapshot from the runtime. */
 static void App_RefreshBmp390Diagnostics(void)
 {
-    Bmp390Runtime_GetDiagnostics(&s_bmp390, &s_pres_rt);
+    Bmp390Runtime_GetDiagnostics(&s_bmp390, &s_bmp390_rt);
 }
 
 /* Start BMP390 (identity detect + configure + first forced measurement). */
@@ -373,6 +379,79 @@ static void App_DoPollBmp390(void)
 
     if (s_bmp390.state == DEVICE_STATE_ERROR && had_valid)
         RoomState_InvalidateBmp390(&s_room);
+}
+
+/* ------------------------------------------------------------------ */
+/* BMP380 runtime (Phase 17.7B) — mirrors BMP390 lifecycle + quality.  */
+/* ------------------------------------------------------------------ */
+
+static void App_RefreshBmp380Diagnostics(void)
+{
+    Bmp380Runtime_GetDiagnostics(&s_bmp380, &s_pres_rt_bmp380);
+}
+
+/* Start BMP380 (identity detect + configure + first forced measurement). */
+static bool App_DoStartBmp380(void)
+{
+    DriverStatus s = Bmp380Runtime_Start(&s_bmp380);
+    if (s == DRIVER_STATUS_OK)
+        return true;
+    App_RefreshBmp380Diagnostics();
+    return false;
+}
+
+/* Advance the BMP380 non-blocking state machine. No direct RoomState commit here;
+   the active provider is selected in App_CommitBarometricRoomState. */
+static void App_DoPollBmp380(void)
+{
+    Bmp380Runtime_Poll(&s_bmp380);
+    App_RefreshBmp380Diagnostics();
+}
+
+/* ------------------------------------------------------------------ */
+/* Barometric provider selection (Phase 17.7B).                        */
+/*                                                                    */
+/* Deterministic, exactly ONE active provider:                        */
+/*   BMP390 fresh-valid  -> provider BMP390                           */
+/*   else BMP380 fresh-valid -> provider BMP380                       */
+/*   else provider NONE                                               */
+/* Selection consumes PRODUCTION runtime validity (fresh last-good),   */
+/* not raw device ACK, so a single transient operation does not        */
+/* oscillate the provider while the prior provider still holds a       */
+/* fresh valid last-good sample.                                      */
+/*                                                                    */
+/* RoomState is updated ATOMICALLY (provider + pressure + temperature + */
+/* validity as one coherent snapshot) via RoomState_UpdateBarometric.  */
+/* ------------------------------------------------------------------ */
+static void App_CommitBarometricRoomState(void)
+{
+    /* BMP390 is preferred when it holds a fresh valid last-good sample. */
+    if (Bmp390Runtime_HasValidSample(&s_bmp390))
+    {
+        const Bmp390Sample *m = &s_bmp390.last_sample;
+        RoomState_UpdateBarometric(&s_room,
+                                   BAROMETER_PROVIDER_BMP390,
+                                   m->pressure_pa, true,
+                                   m->temperature_c, true);
+        s_pres_rt = s_bmp390_rt;
+        return;
+    }
+
+    /* Else BMP380 when it holds a fresh valid last-good sample. */
+    if (Bmp380Runtime_HasValidSample(&s_bmp380))
+    {
+        const Bmp380Sample *m = &s_bmp380.last_sample;
+        RoomState_UpdateBarometric(&s_room,
+                                   BAROMETER_PROVIDER_BMP380,
+                                   m->pressure_pa, true,
+                                   m->temperature_c, true);
+        s_pres_rt = s_pres_rt_bmp380;
+        return;
+    }
+
+    /* Neither provider fresh-valid: NONE; no pressure is fabricated. */
+    RoomState_InvalidateBarometric(&s_room);
+    s_pres_rt = s_pres_rt_bmp380.state != DEVICE_STATE_UNKNOWN ? s_pres_rt_bmp380 : s_bmp390_rt;
 }
 
 /* Sync the portable SGP41 diagnostic snapshot from the runtime. */
@@ -643,16 +722,23 @@ void App_DoRetry(void)
         I2cBusHealth_MarkHealth(&s_bus_health, 3U, Sht45Runtime_HasValidSample(&s_sht45));
         I2cBusHealth_MarkHealth(&s_bus_health, 4U, Bmp390Runtime_HasValidSample(&s_bmp390));
         I2cBusHealth_MarkHealth(&s_bus_health, 5U, Sgp41Runtime_HasValidSample(&s_sgp41));
+        /* BMP380 (Phase 17.7B) participates under the SAME rules: MarkHealth only
+           records "was previously healthy" evidence; it never marks an absent
+           sensor healthy. A lone BMP380 failure alone cannot reach the shared-bus
+           recovery criterion (>= 2 distinct previously-healthy devices). */
+        I2cBusHealth_MarkHealth(&s_bus_health, 6U, Bmp380Runtime_HasValidSample(&s_bmp380));
 
         DriverStatus e2 = Scd41Runtime_LastError(&s_scd41);
         DriverStatus e3 = Sht45Runtime_LastError(&s_sht45);
         DriverStatus e4 = Bmp390Runtime_LastError(&s_bmp390);
         DriverStatus e5 = Sgp41Runtime_LastError(&s_sgp41);
+        DriverStatus e6 = Bmp380Runtime_LastError(&s_bmp380);
 
         I2cBusHealth_Report(&s_bus_health, 2U, e2, now);
         I2cBusHealth_Report(&s_bus_health, 3U, e3, now);
         I2cBusHealth_Report(&s_bus_health, 4U, e4, now);
         I2cBusHealth_Report(&s_bus_health, 5U, e5, now);
+        I2cBusHealth_Report(&s_bus_health, 6U, e6, now);
     }
 
     /* --- Shared-bus recovery orchestration (Phase 5/6/7) --- */
@@ -682,6 +768,7 @@ void App_DoRetry(void)
             Sht45Runtime_Recover(&s_sht45);
             Bmp390Runtime_Recover(&s_bmp390);
             Sgp41Runtime_Recover(&s_sgp41);
+            Bmp380Runtime_Recover(&s_bmp380);
             /* Consistent last-good policy after a bus reset (Phase 13): the
                communication substrate was reset. All I2C sensor samples are
                invalidated by their runtimes through the Recover() path above
@@ -699,6 +786,7 @@ void App_DoRetry(void)
         App_RefreshSht45Diagnostics();
         App_RefreshBmp390Diagnostics();
         App_RefreshSgp41Diagnostics();
+        App_RefreshBmp380Diagnostics();
     }
 
     switch (s_light_rt.state)
@@ -803,6 +891,24 @@ void App_DoRetry(void)
             RoomState_InvalidateBmp390(&s_room);
             Bmp390Runtime_Recover(&s_bmp390);
             App_RefreshBmp390Diagnostics();
+            break;
+
+        default:
+            break;
+    }
+
+    /* --- BMP380 forced-mode runtime (Phase 17.7B, bounded recovery) --- */
+    switch (s_bmp380.state)
+    {
+        case DEVICE_STATE_NOT_FOUND:
+        case DEVICE_STATE_RECOVERING:
+            App_DoStartBmp380();
+            break;
+
+        case DEVICE_STATE_ERROR:
+            App_RefreshBmp380Diagnostics();
+            Bmp380Runtime_Recover(&s_bmp380);
+            App_RefreshBmp380Diagnostics();
             break;
 
         default:
@@ -970,6 +1076,14 @@ bool App_Bmp390HealthOk(DeviceState state)
             state == DEVICE_STATE_READY);
 }
 
+/* Barometer health (Phase 17.7B): OK if EITHER BMP390 or BMP380 is acceptable.
+   A missing BMP390 does not degrade barometric health when BMP380 provides the
+   barometric capability. Both absent/errored -> degrades health, never FAULT. */
+bool App_BarometerHealthOk(DeviceState state390, DeviceState state380)
+{
+    return App_Bmp390HealthOk(state390) || App_Bmp390HealthOk(state380);
+}
+
 /* SGP41 SystemHealth contribution: STARTING/WAITING/READY -> acceptable;
    NOT_FOUND/ERROR/RECOVERING -> NOT OK (degrades health, never FAULT). */
 bool App_Sgp41HealthOk(DeviceState state)
@@ -1002,8 +1116,9 @@ static void App_UpdateHealth(void)
        errored SHT45 degrades health but never faults the device. */
     bool sht45_ok = App_Sht45HealthOk(s_sht45.state);
 
-    /* BMP390 SystemHealth contribution (see App_Bmp390HealthOk). */
-    bool bmp390_ok = App_Bmp390HealthOk(s_bmp390.state);
+    /* Barometer SystemHealth contribution (Phase 17.7B): OK if either BMP390 or
+       BMP380 is acceptable (one active barometric provider). */
+    bool barometer_ok = App_BarometerHealthOk(s_bmp390.state, s_bmp380.state);
 
     /* SGP41 SystemHealth contribution (see App_Sgp41HealthOk). */
     bool sgp41_ok = App_Sgp41HealthOk(s_sgp41.state);
@@ -1024,7 +1139,7 @@ static void App_UpdateHealth(void)
 
     /* A non-OK/FAULT state here is DEGRADED: sensing continues (the scheduler is
        never gated on health) and only the reported health reflects the mirror. */
-    if (runtime_ok && persistence_redundant_ok && scd41_ok && sht45_ok && bmp390_ok && sgp41_ok)
+    if (runtime_ok && persistence_redundant_ok && scd41_ok && sht45_ok && barometer_ok && sgp41_ok)
         s_health = SYSTEM_HEALTH_OK;
     else
         s_health = SYSTEM_HEALTH_DEGRADED;
@@ -1048,6 +1163,8 @@ RoomSensor_Status App_Init(void)
     App_RefreshSht45Diagnostics();   /* s_temp_rt mirrors runtime initial state */
     Bmp390Runtime_Init(&s_bmp390, s_i2c_bus);
     App_RefreshBmp390Diagnostics();  /* s_pres_rt mirrors runtime initial state */
+    Bmp380Runtime_Init(&s_bmp380, s_i2c_bus);
+    App_RefreshBmp380Diagnostics();  /* s_pres_rt_bmp380 mirrors BMP380 initial state */
     Sgp41Runtime_Init(&s_sgp41, s_i2c_bus);
     App_RefreshSgp41Diagnostics();   /* s_gas_rt mirrors runtime initial state */
 
@@ -1247,6 +1364,21 @@ void App_Run(void)
             App_DoPollBmp390();
         }
     }
+
+    /* BMP380 runtime (Phase 17.7B): advance mirror non-blocking state machine. */
+    if ((now - s_last_bmp380_ms) >= BMP380_RUNTIME_POLL_INTERVAL_MS)
+    {
+        s_last_bmp380_ms = now;
+        if (s_bmp380.state == DEVICE_STATE_STARTING ||
+            s_bmp380.state == DEVICE_STATE_WAITING ||
+            s_bmp380.state == DEVICE_STATE_READY)
+        {
+            App_DoPollBmp380();
+        }
+    }
+
+    /* Commit the active barometric provider into RoomState (atomic snapshot). */
+    App_CommitBarometricRoomState();
 
     /* SGP41 runtime: advance the non-blocking VOC/NOx state machine. */
     if ((now - s_last_sgp41_ms) >= SGP41_RUNTIME_POLL_INTERVAL_MS)

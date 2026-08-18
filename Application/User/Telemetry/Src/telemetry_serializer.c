@@ -182,9 +182,11 @@ static SerializeStatus AppendSht45Block(char *buf, size_t cap, size_t *pos,
     return SERIALIZE_OK;
 }
 
-/* Serialize the BMP390 channels. Pressure (Pa) is the primary value; BMP390
-    temperature is its internal compensation temperature (not the canonical room
-    T/RH). %.1f gives 0.1 Pa / 0.1 degC. Invalid -> no fake 0. */
+/* Serialize the BMP390 LEGACY compatibility channels. These are populated ONLY
+   when the active barometric provider is BMP390 (from a real BMP390 sample).
+   When the provider is BMP380 (or none), the bmp390_* fields are INVALID — BMP380
+   physical data is NEVER serialized under bmp390 names. %.1f = 0.1 Pa / 0.1 degC;
+   invalid -> no fake 0. */
 static SerializeStatus AppendBmp390Block(char *buf, size_t cap, size_t *pos,
                                          const RoomState *room)
 {
@@ -201,6 +203,53 @@ static SerializeStatus AppendBmp390Block(char *buf, size_t cap, size_t *pos,
         room->bmp390_temperature_valid,
         true);
     if (s != SERIALIZE_OK) return s;
+    return SERIALIZE_OK;
+}
+
+/* Serialize the generic barometric provider + channels (additive, Phase 17.7B).
+   barometric_sensor names the ACTIVE provider. The numeric channels carry the
+   provider runtime's explicit validity; provider NONE emits no numeric value
+   (never a fabricated 0). */
+static SerializeStatus AppendBarometricBlock(char *buf, size_t cap, size_t *pos,
+                                             const RoomState *room)
+{
+    if (room == NULL) return SERIALIZE_INVALID_ARG;
+
+    const char *sensor = "none";
+    switch (room->barometric_provider)
+    {
+        case BAROMETER_PROVIDER_BMP390:
+            sensor = "bmp390";
+            break;
+        case BAROMETER_PROVIDER_BMP380:
+            sensor = "bmp380";
+            break;
+        case BAROMETER_PROVIDER_NONE:
+        default:
+            sensor = "none";
+            break;
+    }
+
+    SerializeStatus s = AppendFieldSeparator(buf, cap, pos, true);
+    if (s != SERIALIZE_OK) return s;
+    s = AppendFormat(buf, cap, pos,
+        "      \"barometric_sensor\": \"%s\"", sensor);
+    if (s != SERIALIZE_OK) return s;
+
+    s = AppendMeasurement(buf, cap, pos,
+        "barometric_pressure_pa",
+        room->barometric_pressure_pa,
+        room->barometric_pressure_valid,
+        true);
+    if (s != SERIALIZE_OK) return s;
+
+    s = AppendMeasurement(buf, cap, pos,
+        "barometric_temperature_c",
+        room->barometric_temperature_c,
+        room->barometric_temperature_valid,
+        true);
+    if (s != SERIALIZE_OK) return s;
+
     return SERIALIZE_OK;
 }
 
@@ -309,7 +358,15 @@ SerializeStatus Telemetry_Serialize(
     s = AppendSht45Block(buf, cap, &pos, &snapshot->room);
     if (s != SERIALIZE_OK) return s;
 
-    /* BMP390-backed barometric pressure and its internal temperature. */
+    /* Generic barometric provider + channels (additive, Phase 17.7B), plus the
+       BMP390 legacy compatibility block. When the provider is BMP390, BOTH the
+       generic and legacy fields are valid; when BMP380, only the generic fields
+       are valid and the legacy bmp390_* fields are INVALID (never BMP380 data
+       under bmp390 names). */
+    s = AppendBarometricBlock(buf, cap, &pos, &snapshot->room);
+    if (s != SERIALIZE_OK) return s;
+
+    /* BMP390-backed barometric pressure and its internal temperature (legacy). */
     s = AppendBmp390Block(buf, cap, &pos, &snapshot->room);
     if (s != SERIALIZE_OK) return s;
 

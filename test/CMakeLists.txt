@@ -174,6 +174,8 @@ add_executable(test_boot_health
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/sht45/Src/sht45_runtime.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/bmp390/Src/bmp390.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/bmp390/Src/bmp390_runtime.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/bmp380/Src/bmp380.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/bmp380/Src/bmp380_runtime.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/sgp41/Src/sgp41.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/sgp41/Src/sgp41_runtime.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/gas_index/Src/gas_index.c
@@ -218,6 +220,7 @@ target_include_directories(test_boot_health PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/scd41/Inc
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/sht45/Inc
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/bmp390/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/bmp380/Inc
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/sgp41/Inc
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/gas_index/Inc
     ${CMAKE_CURRENT_SOURCE_DIR}/../Platform/Host/Inc
@@ -236,6 +239,7 @@ add_executable(test_self_test
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/scd41/Src/scd41.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/sht45/Src/sht45.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/bmp390/Src/bmp390.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/bmp380/Src/bmp380.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/sgp41/Src/sgp41.c
     ${CMAKE_CURRENT_SOURCE_DIR}/fakes/fake_i2c_bus.c
     ${CMAKE_CURRENT_SOURCE_DIR}/fakes/fake_flash.c
@@ -253,6 +257,7 @@ target_include_directories(test_self_test PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/scd41/Inc
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/sht45/Inc
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/bmp390/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/bmp380/Inc
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/sgp41/Inc
 )
 add_test(NAME test_self_test COMMAND test_self_test)
@@ -294,6 +299,8 @@ add_executable(test_command
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/sht45/Src/sht45_runtime.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/bmp390/Src/bmp390.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/bmp390/Src/bmp390_runtime.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/bmp380/Src/bmp380.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/bmp380/Src/bmp380_runtime.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/sgp41/Src/sgp41.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Device/Src/device_manifest.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Device/Src/device_capabilities.c
@@ -323,6 +330,7 @@ target_include_directories(test_command PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/scd41/Inc
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/sht45/Inc
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/bmp390/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/bmp380/Inc
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/sgp41/Inc
 )
 target_include_directories(test_command PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Telemetry/Inc)
@@ -353,6 +361,8 @@ add_executable(test_dispatcher
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/sht45/Src/sht45_runtime.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/bmp390/Src/bmp390.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/bmp390/Src/bmp390_runtime.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/bmp380/Src/bmp380.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/bmp380/Src/bmp380_runtime.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/sgp41/Src/sgp41.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Device/Src/device_manifest.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Device/Src/device_capabilities.c
@@ -382,6 +392,7 @@ target_include_directories(test_dispatcher PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/scd41/Inc
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/sht45/Inc
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/bmp390/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/bmp380/Inc
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/sgp41/Inc
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Telemetry/Inc
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Communication/Inc
@@ -447,6 +458,84 @@ if(Python3_Interpreter_FOUND)
         COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test_telemetry_json.py $<TARGET_FILE:test_telemetry_json>)
 endif()
 
+# Barometric domain integration (Phase 17.7B): RoomState provider selection +
+# atomicity + telemetry source-of-truth. The binary emits serialized schema-v5
+# payloads across provider cases; a Python script parses each with json.loads and
+# asserts generic naming, validity, and the BMP380-never-BMP390 negative control.
+add_executable(test_barometric_domain
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_barometric_domain.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Common/Src/hex64.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/App/Src/room_state.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Telemetry/Src/telemetry.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Telemetry/Src/telemetry_serializer.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/fakes/fake_platform_time.c
+)
+target_include_directories(test_barometric_domain PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/fakes
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/App/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Platform/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Common/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Telemetry/Inc
+)
+target_link_libraries(test_barometric_domain m)
+add_test(NAME test_barometric_domain COMMAND test_barometric_domain)
+if(Python3_Interpreter_FOUND)
+    add_test(NAME test_barometric_domain_parse
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test_barometric_domain.py $<TARGET_FILE:test_barometric_domain>)
+endif()
+
+# Barometric provider fallback (Phase 17.7B): drives the PRODUCTION BMP390+BMP380
+# runtimes against the shared fake_i2c_bus and asserts deterministic provider
+# selection (BMP390-first), atomic RoomState commits, no mixed provider, and the
+# BMP380-never-under-bmp390 negative control end to end.
+add_executable(test_barometer_provider
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_barometer_provider.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/bmp380/Src/bmp380.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/bmp380/Src/bmp380_runtime.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/bmp390/Src/bmp390.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/bmp390/Src/bmp390_runtime.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/App/Src/room_state.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/fakes/fake_i2c_bus.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/fakes/fake_platform_time.c
+)
+target_compile_definitions(test_barometer_provider PRIVATE BMP380_UNIT_TEST=1)
+target_include_directories(test_barometer_provider PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/fakes
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/bmp380/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/bmp390/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/App/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Platform/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Common/Inc
+)
+target_link_libraries(test_barometer_provider m)
+add_test(NAME test_barometer_provider COMMAND test_barometer_provider)
+
+# Barometer 24h provider scenario (Phase 17.7C): >= 86,400,000 ms virtual time
+# with the production runtimes + provider selection across scenarios A-H,
+# asserting no mixing, no double publish, no provider thrash, no stale-valid,
+# legacy gating, no single-barometer shared-bus recovery, and tick-wrap safety.
+add_executable(test_barometer_24h
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_barometer_24h.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/bmp380/Src/bmp380.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/bmp380/Src/bmp380_runtime.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/bmp390/Src/bmp390.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/bmp390/Src/bmp390_runtime.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/App/Src/room_state.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/fakes/fake_i2c_bus.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/fakes/fake_platform_time.c
+)
+target_compile_definitions(test_barometer_24h PRIVATE BMP380_UNIT_TEST=1)
+target_include_directories(test_barometer_24h PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/fakes
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/bmp380/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/bmp390/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/App/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Platform/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Common/Inc
+)
+target_link_libraries(test_barometer_24h m)
+add_test(NAME test_barometer_24h COMMAND test_barometer_24h)
+
 add_executable(test_longrun
     ${CMAKE_CURRENT_SOURCE_DIR}/test_longrun.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Common/Src/hex64.c
@@ -483,6 +572,8 @@ add_executable(test_scd41
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/sht45/Src/sht45_runtime.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/bmp390/Src/bmp390.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/bmp390/Src/bmp390_runtime.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/bmp380/Src/bmp380.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/bmp380/Src/bmp380_runtime.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/sgp41/Src/sgp41.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Common/Src/hex64.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/App/Src/room_state.c
@@ -519,6 +610,7 @@ target_include_directories(test_scd41 PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/scd41/Inc
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/sht45/Inc
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/bmp390/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/bmp380/Inc
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/sgp41/Inc
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/App/Inc
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Platform/Inc
@@ -588,6 +680,7 @@ add_executable(test_bmp390
 target_compile_definitions(test_bmp390 PRIVATE BMP390_UNIT_TEST=1)
 target_include_directories(test_bmp390 PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/bmp390/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/bmp380/Inc
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Platform/Inc
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Common/Inc
 )
@@ -609,12 +702,53 @@ target_compile_definitions(test_bmp390_integration PRIVATE BMP390_UNIT_TEST=1)
 target_include_directories(test_bmp390_integration PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/fakes
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/bmp390/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/bmp380/Inc
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Platform/Inc
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Common/Inc
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/App/Inc
 )
 target_link_libraries(test_bmp390_integration m)
 add_test(NAME test_bmp390_integration COMMAND test_bmp390_integration)
+
+# BMP380 (Phase 17.7) independent driver regression. BMP380 and BMP390 share the
+# official Bosch BMP3_SensorAPI v2.0.6 register/calibration/compensation; the ONLY
+# difference is CHIP_ID (BMP380=0x50 vs BMP390=0x60). This separate driver enforces
+# its OWN identity (0x50) and must reject 0x60. Goldens are frozen Bosch FLOAT-path
+# outputs. No Bosch code linked.
+add_executable(test_bmp380
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_bmp380.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/bmp380/Src/bmp380.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/fakes/fake_i2c_bus.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/fakes/fake_platform_time.c
+)
+target_compile_definitions(test_bmp380 PRIVATE BMP380_UNIT_TEST=1)
+target_include_directories(test_bmp380 PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/fakes
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/bmp380/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Platform/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Common/Inc
+)
+target_link_libraries(test_bmp380 m)
+add_test(NAME test_bmp380 COMMAND test_bmp380)
+
+# BMP380 runtime integration (Phase 17.7). Links production BMP380 driver+runtime
+# with a self-contained address-aware fake; exercises discovery, ERR, calibration,
+# config, runtime states, recovery, NOT_FOUND backoff, long-run and tick wrap.
+add_executable(test_bmp380_integration
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_bmp380_integration.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/bmp380/Src/bmp380.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/bmp380/Src/bmp380_runtime.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/fakes/fake_platform_time.c
+)
+target_compile_definitions(test_bmp380_integration PRIVATE BMP380_UNIT_TEST=1)
+target_include_directories(test_bmp380_integration PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/fakes
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/bmp380/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Platform/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Common/Inc
+)
+target_link_libraries(test_bmp380_integration m)
+add_test(NAME test_bmp380_integration COMMAND test_bmp380_integration)
 
 # SGP41 driver + runtime + gas-index + RoomState + telemetry + capabilities.
 add_executable(test_sgp41
@@ -676,6 +810,8 @@ add_executable(test_sim_telemetry
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/sht45/Src/sht45_runtime.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/bmp390/Src/bmp390.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/bmp390/Src/bmp390_runtime.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/bmp380/Src/bmp380.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/bmp380/Src/bmp380_runtime.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/sgp41/Src/sgp41.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/sgp41/Src/sgp41_runtime.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/gas_index/Src/gas_index.c
@@ -721,6 +857,7 @@ target_include_directories(test_sim_telemetry PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/scd41/Inc
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/sht45/Inc
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/bmp390/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/bmp380/Inc
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/sgp41/Inc
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/gas_index/Inc
     ${CMAKE_CURRENT_SOURCE_DIR}/../Platform/Host/Inc
@@ -752,6 +889,8 @@ add_executable(test_sim_command
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/sht45/Src/sht45_runtime.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/bmp390/Src/bmp390.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/bmp390/Src/bmp390_runtime.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/bmp380/Src/bmp380.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/bmp380/Src/bmp380_runtime.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/sgp41/Src/sgp41.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/sgp41/Src/sgp41_runtime.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/gas_index/Src/gas_index.c
@@ -797,6 +936,7 @@ target_include_directories(test_sim_command PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/scd41/Inc
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/sht45/Inc
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/bmp390/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/bmp380/Inc
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/sgp41/Inc
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/gas_index/Inc
     ${CMAKE_CURRENT_SOURCE_DIR}/../Platform/Host/Inc
@@ -830,6 +970,8 @@ add_executable(test_virtual_device
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/sht45/Src/sht45_runtime.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/bmp390/Src/bmp390.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/bmp390/Src/bmp390_runtime.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/bmp380/Src/bmp380.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/bmp380/Src/bmp380_runtime.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/sgp41/Src/sgp41.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/sgp41/Src/sgp41_runtime.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/gas_index/Src/gas_index.c
@@ -875,6 +1017,7 @@ target_include_directories(test_virtual_device PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/scd41/Inc
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/sht45/Inc
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/bmp390/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/bmp380/Inc
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/sgp41/Inc
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/gas_index/Inc
     ${CMAKE_CURRENT_SOURCE_DIR}/../Platform/Host/Inc
@@ -903,6 +1046,7 @@ target_include_directories(test_recovery PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/sht45/Inc
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/scd41/Inc
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/bmp390/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/bmp380/Inc
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/veml7700/Inc
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/display/Inc
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Platform/Inc
@@ -1006,6 +1150,8 @@ add_executable(test_network_transport_whole_device
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/sht45/Src/sht45_runtime.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/bmp390/Src/bmp390.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/bmp390/Src/bmp390_runtime.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/bmp380/Src/bmp380.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/bmp380/Src/bmp380_runtime.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/sgp41/Src/sgp41.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/sgp41/Src/sgp41_runtime.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/gas_index/Src/gas_index.c
@@ -1053,6 +1199,7 @@ target_include_directories(test_network_transport_whole_device PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/scd41/Inc
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/sht45/Inc
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/bmp390/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/bmp380/Inc
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/sgp41/Inc
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/gas_index/Inc
     ${CMAKE_CURRENT_SOURCE_DIR}/../Platform/Host/Inc
@@ -1157,6 +1304,8 @@ ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Mqtt/Src/mqtt_client.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/sht45/Src/sht45_runtime.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/bmp390/Src/bmp390.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/bmp390/Src/bmp390_runtime.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/bmp380/Src/bmp380.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/bmp380/Src/bmp380_runtime.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/sgp41/Src/sgp41.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/sgp41/Src/sgp41_runtime.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/gas_index/Src/gas_index.c
@@ -1205,6 +1354,7 @@ target_include_directories(test_mqtt_whole_device PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/scd41/Inc
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/sht45/Inc
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/bmp390/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/bmp380/Inc
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/sgp41/Inc
     ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Drivers/gas_index/Inc
     ${CMAKE_CURRENT_SOURCE_DIR}/../Platform/Host/Inc

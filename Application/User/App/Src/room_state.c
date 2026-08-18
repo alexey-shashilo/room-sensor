@@ -95,6 +95,54 @@ void RoomState_InvalidateBmp390(RoomState *state)
     state->timestamp_ms = Platform_GetTickMs();
 }
 
+/* Commit a generic barometric snapshot atomically. The provider + both generic
+   channels + validities are written as one unit (no partial/mixed snapshot).
+   Legacy bmp390_* compatibility fields are populated ONLY when the active
+   provider is BMP390 (so BMP380 data never appears under bmp390 names). */
+void RoomState_UpdateBarometric(RoomState *state,
+                                BarometerProvider provider,
+                                float pressure_pa, bool pressure_valid,
+                                float temperature_c, bool temperature_valid)
+{
+    if (state == NULL) return;
+
+    state->barometric_provider = provider;
+    state->barometric_pressure_pa = pressure_pa;
+    state->barometric_pressure_valid = pressure_valid &&
+                                       (provider != BAROMETER_PROVIDER_NONE);
+    state->barometric_temperature_c = temperature_c;
+    state->barometric_temperature_valid = temperature_valid &&
+                                          (provider != BAROMETER_PROVIDER_NONE);
+
+    /* Legacy BMP390 compatibility fields: valid ONLY for a real BMP390 provider.
+       BMP380 data is never placed under bmp390 names. */
+    if (provider == BAROMETER_PROVIDER_BMP390)
+    {
+        state->bmp390_pressure_pa = pressure_pa;
+        state->bmp390_pressure_valid = pressure_valid && state->barometric_pressure_valid;
+        state->bmp390_temperature_c = temperature_c;
+        state->bmp390_temperature_valid = temperature_valid && state->barometric_temperature_valid;
+    }
+    else
+    {
+        state->bmp390_pressure_valid = false;
+        state->bmp390_temperature_valid = false;
+    }
+
+    state->timestamp_ms = Platform_GetTickMs();
+}
+
+void RoomState_InvalidateBarometric(RoomState *state)
+{
+    if (state == NULL) return;
+    state->barometric_provider = BAROMETER_PROVIDER_NONE;
+    state->barometric_pressure_valid = false;
+    state->barometric_temperature_valid = false;
+    state->bmp390_pressure_valid = false;
+    state->bmp390_temperature_valid = false;
+    state->timestamp_ms = Platform_GetTickMs();
+}
+
 /* Commit a fully-valid SGP41 sample into the room state. Explicit per-channel
    validity; no partial commitment. Invalid/not-ready is handled via
    RoomState_InvalidateSgp41, never by passing valid=false here (which would

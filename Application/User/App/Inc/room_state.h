@@ -3,6 +3,7 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include "room_sensor_types.h"
 
 typedef enum
 {
@@ -44,10 +45,26 @@ typedef struct
     float  sht45_humidity_pct;
     bool   sht45_humidity_valid;
 
-    /* BMP390 barometric pressure (Pa) + its internal temperature (degC). The
-       pressure is the primary measured value; BMP390 temperature exists mainly
-       for pressure compensation and is NOT treated as the canonical room T/RH
-       source (display/ROOM T/RH remain SHT45 primary, SCD41 fallback). */
+    /* Generic barometric domain channels (Phase 17.7B). The active barometric
+       PROVIDER (BAROMETER_PROVIDER_BMP390 or _BMP380) owns these values; validity
+       follows that provider's runtime freshness semantics (no second stale timer
+       here — the provider runtime owns freshness). provider == NONE when no
+       supported barometer has a fresh valid sample; then no valid pressure is
+       published (never fabricate 0 Pa). Exactly ONE provider is authoritative
+       (no fusion, no double publication). */
+    float  barometric_pressure_pa;
+    bool   barometric_pressure_valid;
+
+    float  barometric_temperature_c;
+    bool   barometric_temperature_valid;
+
+    BarometerProvider barometric_provider;
+
+    /* BMP390 LEGACY COMPATIBILITY fields (DEPRECATED w.r.t. the generic
+       barometric channels). Populated ONLY when the selected provider is BMP390
+       (from a real BMP390 sample); NEVER populated by BMP380. BMP380 must never
+       set bmp390_* valid. Kept for backward-compatible telemetry until consumers
+       migrate to the generic barometric_* channels. */
     float  bmp390_pressure_pa;
     bool   bmp390_pressure_valid;
 
@@ -91,6 +108,19 @@ void RoomState_UpdateBmp390(RoomState *state,
                             float pressure_pa, bool pressure_valid,
                             float temperature_c, bool temperature_valid);
 void         RoomState_InvalidateBmp390(RoomState *state);
+
+/* Commit a generic barometric snapshot from the ACTIVE provider, atomically:
+   provider + pressure + temperature + validity update as one coherent unit so a
+   consumer never sees pressure from one sensor and provider/temperature from
+   another. provider must be BMP390 or BMP380; the caller passes the ACTIVE
+   provider's valid last sample. If BMP390 is the provider, the legacy
+   bmp390_* compatibility fields are also populated (only then). For any other
+   provider they are cleared. */
+void RoomState_UpdateBarometric(RoomState *state,
+                                BarometerProvider provider,
+                                float pressure_pa, bool pressure_valid,
+                                float temperature_c, bool temperature_valid);
+void         RoomState_InvalidateBarometric(RoomState *state);
 void         RoomState_UpdateSgp41(RoomState *state,
                                    float voc_raw, bool voc_raw_valid,
                                    float nox_raw, bool nox_raw_valid,

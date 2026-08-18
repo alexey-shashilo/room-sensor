@@ -30,8 +30,11 @@
 | `scd41_humidity_pct` | `object` | SCD41 internal/local RH (secondary source) |
 | `sht45_temperature_c` | `object` | SHT45 temperature (primary room T) |
 | `sht45_humidity_pct` | `object` | SHT45 relative humidity (primary room RH) |
-| `bmp390_pressure_pa` | `object` | BMP390 barometric pressure (Pa) |
-| `bmp390_temperature_c` | `object` | BMP390 internal temperature (secondary source) |
+| `bmp390_pressure_pa` | `object` | DEPRECATED compat: barometric pressure (Pa) — legacy BMP390 name (see Phase 17.7B note) |
+| `bmp390_temperature_c` | `object` | DEPRECATED compat: internal temperature (secondary source) — legacy BMP390 name (see Phase 17.7B note) |
+| `barometric_pressure_pa` | `object` | Barometric pressure (Pa) — generic active-provider (BMP390 or BMP380) |
+| `barometric_temperature_c` | `object` | Internal barometric temperature (secondary source) — generic active provider |
+| `barometric_sensor` | `string` | Active barometric provider: `"bmp390"` | `"bmp380"` | `"none"` |
 | `voc_raw` | `object` | SGP41 raw VOC ticks (gas-index input, not an index) |
 | `nox_raw` | `object` | SGP41 raw NOx ticks (gas-index input, not an index) |
 | `voc_index` | `object` | SGP41 processed VOC Index (1..500; only when out of warm-up) |
@@ -44,6 +47,26 @@ when valid. The raw signals may be `valid` while the corresponding index is
 still `invalid` during warm-up — the firmware never fabricates a valid index for
 a missing sensor, stale sample, algorithm warm-up, failed CRC, or failed
 measurement.
+
+The barometric fields (`barometric_pressure_pa`, `barometric_temperature_c`, and
+`barometric_sensor`) are ADDITIVE OPTIONAL fields added to the `room` object by
+Phase 17.7B without a schema bump (still v5), consistent with the Compatibility
+Policy below which already allows new optional fields without a version change.
+`barometric_sensor` identifies the active provider ("bmp390", "bmp380", or
+"none"), and the generic `barometric_pressure_pa` / `barometric_temperature_c`
+objects (each carrying the standard `value`/`state` sub-fields) represent the
+currently selected provider's barometric data. When the active provider is
+BMP390, data is ALSO serialized under the legacy `bmp390_*` names below; when the
+active provider is BMP380, the BMP380 data is serialized ONLY under the generic
+`barometric_*` names and never under the legacy `bmp390_*` names.
+
+The `bmp390_pressure_pa` and `bmp390_temperature_c` fields are legacy DEPRECATED
+compatibility fields retained for existing consumers. Their valid state reflects
+the selected provider: they are `valid` only when the active provider is BMP390
+(the data is then also present under `barometric_*`), and they are `invalid`
+when the active provider is BMP380. A BMP380-only device emits INVALID `bmp390_*`
+fields (the BMP380 data is never serialized under the `bmp390_*` names) and valid
+generic `barometric_*` fields.
 
 Each measurement object:
 

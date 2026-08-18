@@ -15,6 +15,8 @@ set(CORE_SRC
     ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/Drivers/sht45/Src/sht45_runtime.c
     ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/Drivers/bmp390/Src/bmp390.c
     ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/Drivers/bmp390/Src/bmp390_runtime.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/Drivers/bmp380/Src/bmp380.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/Drivers/bmp380/Src/bmp380_runtime.c
     ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/Drivers/sgp41/Src/sgp41.c
     ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/Drivers/sgp41/Src/sgp41_runtime.c
     ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/Drivers/gas_index/Src/gas_index.c
@@ -48,6 +50,7 @@ set(CORE_INC
     ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/Drivers/scd41/Inc
     ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/Drivers/sht45/Inc
     ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/Drivers/bmp390/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/Drivers/bmp380/Inc
     ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/Drivers/sgp41/Inc
     ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/Drivers/gas_index/Inc
     ${CMAKE_CURRENT_SOURCE_DIR}/Application/User/Platform/Inc

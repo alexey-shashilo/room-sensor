@@ -61,6 +61,17 @@ typedef enum
 
 #define CONSECUTIVE_ERROR_THRESHOLD 3U
 
+/* Active barometric provider (Phase 17.7B). Exactly ONE barometric sensor is the
+   authoritative pressure/temperature source at any instant. RoomState carries
+   the provider + generic barometric values as DOMAIN state; it never owns driver
+   pointers. Priority: BMP390 valid/present, else BMP380 valid/present, else NONE. */
+typedef enum
+{
+    BAROMETER_PROVIDER_NONE = 0,
+    BAROMETER_PROVIDER_BMP390,
+    BAROMETER_PROVIDER_BMP380
+} BarometerProvider;
+
 typedef struct
 {
     DeviceState state;

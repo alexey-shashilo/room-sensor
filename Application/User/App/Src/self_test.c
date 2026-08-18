@@ -4,6 +4,7 @@
 #include "scd41.h"
 #include "sht45.h"
 #include "bmp390.h"
+#include "bmp380.h"
 #include "sgp41.h"
 #include "storage.h"
 #include "config.h"
@@ -94,15 +95,25 @@ void SelfTest_Run(SelfTestReport *report, const I2cBus *bus)
            mode (the runtime uses high-precision measure; a probe is a plain I2C
            address ACK check). */
         report->temp_humidity_sensor = ProbeToResult(SHT45_Probe(bus) == DRIVER_STATUS_OK);
-        /* BMP390: strong identity check (I2C comm + CHIP_ID == 0x60). No
-           destructive config/reset, no measurement — strictly observational. */
+/* Barometer: PASS if ANY supported barometer identity is detected (BMP390
+            first, then BMP380 — mirrors the provider support priority). Strong
+            identity check (I2C ACK + CHIP_ID). No destructive config/reset, no
+            measurement — strictly observational. Exactly one active provider at
+            runtime; here we only report that a barometric sensor is present. */
         {
-            Bmp390 bmp;
-            int ok = 0;
-            if (BMP390_Init(&bmp, bus) == DRIVER_STATUS_OK &&
-                BMP390_Detect(&bmp) == DRIVER_STATUS_OK)
-                ok = 1;
-            report->pressure_sensor = ProbeToResult(ok != 0);
+            Bmp390 b390;
+            int ok390 = 0;
+            if (BMP390_Init(&b390, bus) == DRIVER_STATUS_OK &&
+                BMP390_Detect(&b390) == DRIVER_STATUS_OK)
+                ok390 = 1;
+
+            int ok380 = 0;
+            Bmp380 b380;
+            if (BMP380_Init(&b380, bus) == DRIVER_STATUS_OK &&
+                BMP380_Detect(&b380) == DRIVER_STATUS_OK)
+                ok380 = 1;
+
+            report->pressure_sensor = ProbeToResult((ok390 != 0) || (ok380 != 0));
         }
         /* SGP41: observational address probe only. We deliberately do NOT run
            the 320 ms execute_self_test command here — that long device self-test

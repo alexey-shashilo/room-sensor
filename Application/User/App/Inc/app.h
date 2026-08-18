@@ -19,7 +19,7 @@ typedef struct
     DeviceRuntime display;
     DeviceRuntime co2_sensor;
     DeviceRuntime temp_humidity_sensor;   /* SHT45 */
-    DeviceRuntime pressure_sensor;        /* BMP390 */
+    DeviceRuntime pressure_sensor;        /* active barometer (BMP390 or BMP380) */
     DeviceRuntime gas_sensor;             /* SGP41 VOC/NOx */
 
     SystemHealthState health;
@@ -75,6 +75,10 @@ bool App_Sht45HealthOk(DeviceState state);
 /* BMP390 SystemHealth contribution: true only when STARTING/WAITING/READY.
     NOT_FOUND/ERROR/RECOVERING -> false (degrades health, never FAULT). */
 bool App_Bmp390HealthOk(DeviceState state);
+/* Barometer health: OK if EITHER supported barometer is acceptable
+   (STARTING/WAITING/READY). A missing BMP390 does not degrade barometric health
+   when a BMP380 provides the barometric capability (one active provider). */
+bool App_BarometerHealthOk(DeviceState state390, DeviceState state380);
 
 /* SGP41 SystemHealth contribution: true only when STARTING/WAITING/READY.
     NOT_FOUND/ERROR/RECOVERING -> false (degrades health, never FAULT). */
