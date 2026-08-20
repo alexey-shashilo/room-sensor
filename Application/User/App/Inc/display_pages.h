@@ -5,15 +5,15 @@
 #include <stddef.h>
 #include <stdint.h>
 
-/* Display page contract (Phase 17.6): App alternates two pages on the SSD1306.
-   This module owns ONLY the page-selection and gas-index render DECISIONS so
-   they are deterministic and host-testable without pixel internals. App owns the
-   actual rendering via the existing Display_ abstraction. No SGP41 driver or
-   gas-index algorithm is used here. */
+/* Display page contract (Phase 17.6, extended Phase 17.8a): App alternates
+   three pages on the SSD1306. This module owns ONLY the page-selection and
+   render DECISIONS so they are deterministic and host-testable without pixel
+   internals. App owns the actual rendering via the existing Display_
+   abstraction. No SGP41 driver or gas-index algorithm is used here. */
 
 #define DISPLAY_PAGE_ENV            0U  /* PAGE 1: existing environmental page */
 #define DISPLAY_PAGE_AIR_QUALITY    1U  /* PAGE 2: SGP41 VOC/NOx air-quality page */
-#define DISPLAY_PAGE_PRESSURE       2U  /* PAGE 3: barometric pressure (hPa) */
+#define DISPLAY_PAGE_PRESSURE       2U  /* PAGE 3: barometric pressure (mmHg) */
 #define DISPLAY_PAGE_COUNT          3U
 
 /* PAGE1 -> PAGE2 -> PAGE3 -> PAGE1 alternation period. */
@@ -52,12 +52,14 @@ DisplayGasState DisplayPages_GasState(bool index_valid, bool raw_valid);
 void DisplayPages_FormatGasLine(char *buf, size_t cap, const char *label,
                                 int32_t value, DisplayGasState state);
 
-/* Format the generic barometric pressure for PAGE3, converting Pa -> hPa
-   (hPa = Pa / 100.0) for PRESENTATION only (RoomState stays in Pa).
-     valid   -> "<%.1f> hPa"  e.g. "988.5 hPa"
-     invalid -> "---.- hPa"   (never a fabricated numeric)
+/* Format the generic barometric pressure for PAGE3, converting Pa -> mmHg
+   (mmHg = Pa / 133.322387415) for PRESENTATION only (RoomState stays in Pa).
+   Rounds to the nearest whole mmHg for readability.
+     valid   -> "<round(mmHg)> mmHg"  e.g. "742 mmHg"
+     invalid -> "--- mmHg"            (never a fabricated numeric)
    provider NONE must be passed as valid=false and therefore never renders a
-   numeric pressure (see the invalid/generic contract). */
+   numeric pressure (see the invalid/generic contract). Provider-agnostic: the
+   same Pa+validity call serves BMP380 and BMP390 identically. */
 void DisplayPages_FormatPressure(char *buf, size_t cap, float pressure_pa, bool valid);
 
 #ifdef __cplusplus

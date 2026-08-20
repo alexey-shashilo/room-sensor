@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <string.h>
+#include <math.h>
 
 #include "display_pages.h"
 
@@ -143,48 +144,80 @@ int main(void)
         check(small[sizeof(small) - 1U] == '\0', "short buffer NUL-terminated");
     }
 
-    /* ---- E(Pa). Pressure formatting 98850 Pa -> 988.5 hPa ---- */
-    printf("\n--- E(Pa). pressure format / hPa conversion ---\n");
+    /* ---- J(Pa). Pressure formatting Pa -> mmHg (Phase 17.8A) ---- */
+    printf("\n--- J(Pa). pressure format / mmHg conversion (17.8A) ---\n");
     {
         char buf[24];
-        DisplayPages_FormatPressure(buf, sizeof(buf), 98850.0f, true);
-        check_str(buf, "988.5 hPa", "98850 Pa -> 988.5 hPa");
+        /* A. 98950 Pa -> 98950/133.322387415 = 742.18 -> rounds to 742 mmHg. */
+        DisplayPages_FormatPressure(buf, sizeof(buf), 98950.0f, true);
+        check_str(buf, "742 mmHg", "98950 Pa -> 742 mmHg");
+        /* B. 101325 Pa -> 759.99 -> 760 mmHg (standard atmosphere reference). */
         DisplayPages_FormatPressure(buf, sizeof(buf), 101325.0f, true);
-        check_str(buf, "1013.2 hPa", "101325 Pa -> 1013.2 hPa");
+        check_str(buf, "760 mmHg", "101325 Pa -> 760 mmHg");
+        /* C. 100000 Pa -> 750.02 -> 750 mmHg. */
+        DisplayPages_FormatPressure(buf, sizeof(buf), 100000.0f, true);
+        check_str(buf, "750 mmHg", "100000 Pa -> 750 mmHg");
+        /* D. Valid numeric renders mmHg (never hPa). */
+        DisplayPages_FormatPressure(buf, sizeof(buf), 100000.0f, true);
+        check(strstr(buf, " hPa") == NULL && strstr(buf, " mmHg") != NULL,
+              "valid renders mmHg, never hPa");
     }
 
-    /* ---- G(Pa). invalid pressure -> non-numeric ---- */
-    printf("\n--- G(Pa). invalid pressure representation ---\n");
+    /* ---- K(Pa). invalid pressure -> non-numeric ---- */
+    printf("\n--- K(Pa). invalid pressure representation ---\n");
     {
         char buf[24];
-        DisplayPages_FormatPressure(buf, sizeof(buf), 98850.0f, false);
-        check_str(buf, "---.- hPa", "invalid -> non-numeric placeholder");
+        DisplayPages_FormatPressure(buf, sizeof(buf), 98950.0f, false);
+        check_str(buf, "--- mmHg", "invalid -> non-numeric placeholder");
         DisplayPages_FormatPressure(buf, sizeof(buf), 0.0f, false);
-        check(strstr(buf, "hPa") != NULL && buf[0] == '-',
+        check(strstr(buf, "mmHg") != NULL && buf[0] == '-',
               "invalid never a fabricated numeric (negative ctrl)");
+        /* E. NaN -> never numeric. */
+        DisplayPages_FormatPressure(buf, sizeof(buf), NAN, true);
+        check(strstr(buf, "mmHg") != NULL && buf[0] == '-',
+              "NaN -> non-numeric, never numeric");
+        /* F. +/-Inf -> never numeric. */
+        DisplayPages_FormatPressure(buf, sizeof(buf), INFINITY, true);
+        check(strstr(buf, "mmHg") != NULL && buf[0] == '-',
+              "+Inf -> non-numeric, never numeric");
+        DisplayPages_FormatPressure(buf, sizeof(buf), -INFINITY, true);
+        check(strstr(buf, "mmHg") != NULL && buf[0] == '-',
+              "-Inf -> non-numeric, never numeric");
     }
 
-    /* ---- H(Pa). provider independence (generic) ---- */
-    printf("\n--- H(Pa). provider independence ---\n");
+    /* ---- L(Pa). provider independence (generic) ---- */
+    printf("\n--- L(Pa). provider independence ---\n");
     {
-        char buf[24];
-        /* Same generic pressure renders numerically regardless of which BMP. */
-        DisplayPages_FormatPressure(buf, sizeof(buf), 98850.0f, true);
-        check_str(buf, "988.5 hPa", "generic valid renders numeric (no model)");
-        /* This formatter takes ONLY Pa+validity — it does not consume any
-           provider-specific field, so exactly the same call serves BMP380 and
-           BMP390. */
+        char buf[24], buf2[24];
+        /* G. Identical generic Pa+validity must yield the IDENTICAL mmHg string
+           for both barometric providers: the formatter consumes only Pa+validity,
+           never a provider-specific field. */
+        DisplayPages_FormatPressure(buf, sizeof(buf), 98950.0f, true);
+        DisplayPages_FormatPressure(buf2, sizeof(buf2), 98950.0f, true);
+        check_str(buf, buf2, "identical Pa -> identical mmHg (provider-agnostic)");
+        check_str(buf, "742 mmHg", "generic 98950 Pa -> 742 mmHg (no model)");
         check(1, "FormatPressure is provider-agnostic");
     }
 
-    /* ---- J(Pa). NONE provider + invalid -> no numeric ---- */
-    printf("\n--- J(Pa). NONE => invalid, no numeric ---\n");
+    /* ---- M(Pa). NONE + invalid -> no numeric ---- */
+    printf("\n--- M(Pa). NONE => invalid, no numeric ---\n");
     {
         char buf[24];
         /* NONE provider yields barometric_pressure_valid==false in production
            RoomState; the formatter is driven by that validity. */
-        DisplayPages_FormatPressure(buf, sizeof(buf), 98850.0f, false);
-        check_str(buf, "---.- hPa", "NONE/invalid cannot render numeric");
+        DisplayPages_FormatPressure(buf, sizeof(buf), 98950.0f, false);
+        check_str(buf, "--- mmHg", "NONE/invalid cannot render numeric");
+    }
+
+    /* ---- I(Pa). buffer truncation safety (no overflow) ---- */
+    printf("\n--- I(Pa). pressure buffer bounds ---\n");
+    {
+        char small[7];
+        DisplayPages_FormatPressure(small, sizeof(small), 98950.0f, true);
+        check(small[sizeof(small) - 1U] == '\0', "short mmHg buffer NUL-terminated");
+        char invalid[7];
+        DisplayPages_FormatPressure(invalid, sizeof(invalid), 98950.0f, false);
+        check(invalid[sizeof(invalid) - 1U] == '\0', "short invalid buffer NUL-terminated");
     }
 
     /* ---- L/M. PAGE1 / PAGE2 content regression markers ---- */

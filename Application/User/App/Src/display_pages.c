@@ -1,5 +1,12 @@
 #include "display_pages.h"
 #include <stdio.h>
+#include <math.h>
+
+/* mmHg <- Pa PRESENTATION-ONLY conversion (Phase 17.8A). Canonical internal
+   unit stays Pa (RoomState + telemetry); only the PAGE3 display string uses
+   mmHg. Exact physical definition: 1 mmHg = 133.322387415 Pa, i.e.
+   mmHg = Pa / 133.322387415. */
+#define PA_PER_MMHG 133.322387415
 
 uint8_t DisplayPages_Advance(uint32_t now, uint32_t *last_switch_ms, uint8_t current_page)
 {
@@ -60,19 +67,23 @@ void DisplayPages_FormatGasLine(char *buf, size_t cap, const char *label,
     }
 }
 
-/* PAGE3 pressure formatter. Pa -> hPa (Pa / 100.0) for presentation only; the
-   generic RoomState stays in Pa. Invalid/provider-NONE never renders a numeric,
-   so no fabricated pressure is shown. */
+/* PAGE3 pressure formatter. Pa -> mmHg (Pa / 133.322387415) for PRESENTATION
+   only; the generic RoomState stays in Pa. Rounds to the nearest whole mmHg
+   ("742 mmHg") for readability on the small SSD1306 — no decimal needed for
+   ordinary atmospheric pressure. Invalid/provider-NONE/non-finite never renders
+   a numeric, so no fabricated pressure is shown. Provider-agnostic: it consumes
+   only the generic Pa + validity, identical for BMP380 and BMP390. */
 void DisplayPages_FormatPressure(char *buf, size_t cap, float pressure_pa, bool valid)
 {
     if (buf == NULL || cap == 0U)
         return;
 
-    if (!valid || !(pressure_pa == pressure_pa))   /* non-finite also invalid */
+    if (!valid || !isfinite((double)pressure_pa))   /* non-finite also invalid */
     {
-        (void)snprintf(buf, cap, "---.- hPa");
+        (void)snprintf(buf, cap, "--- mmHg");
         return;
     }
 
-    (void)snprintf(buf, cap, "%.1f hPa", (double)(pressure_pa / 100.0f));
+    (void)snprintf(buf, cap, "%.0f mmHg",
+                   (double)(pressure_pa / (float)PA_PER_MMHG));
 }
