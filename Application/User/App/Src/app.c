@@ -19,11 +19,13 @@
 #include "storage.h"
 #include "device_identity.h"
 #include "telemetry.h"
+#include "telemetry_serializer.h"
 #include "boot_session.h"
 #include "device_lifecycle.h"
 #include "communication.h"
 #include "communication_debug.h"
 #include "command.h"
+#include "mqtt_app.h"
 #include "provisioning.h"
 #include "recovery_policy.h"
 #include "i2c_bus_health.h"
@@ -70,6 +72,17 @@ static uint32_t s_start_ms = 0;
    PRESSURE). Advanced every DISPLAY_PAGE_PERIOD_MS with wrap-safe modular timing. */
 static uint32_t s_display_page_switch_ms = 0U;
 static uint8_t  s_display_page = DISPLAY_PAGE_ENV;
+/* MQTT App integration (Phase 18): owns connect/reconnect policy + telemetry/
+   command bridge over the portable MQTT client + NetworkTransport. With no
+   physical network adapter registered it stays SAFE_DISABLED (never connects). */
+static MqttApp s_mqtt_app;
+/* MQTT command-response sink registered on the production Command layer so
+   Command_Run responses are routed to the MQTT response topic (dropped when the
+   MQTT link is offline). The single slot is intentionally shared: Command has
+   exactly one response sink; MQTT is authoritative when configured. */
+static CommunicationPort s_mqtt_cmd_port;
+/* Telemetry publish buffer, sized to the canonical serialized-frame bound. */
+static uint8_t s_mqtt_tx_buffer[TELEMETRY_SERIALIZED_MAX_SIZE];
 /* Commit tracker for BMP390 (see s_sht45_room_commit_ms). */
 static uint32_t s_bmp390_room_commit_ms = 0xFFFFFFFFu;
 /* Tick timestamp of the last SHT45 sample actually committed into RoomState, so
@@ -1232,6 +1245,24 @@ RoomSensor_Status App_Init(void)
         Command_Init(&cmd_svc);
     }
 
+    /* MQTT App integration: register a network adapter here once a physical one
+       becomes available (Phase 18 has none -> SAFE_DISABLED, never connects). */
+    MqttApp_Init(&s_mqtt_app, NULL, NULL, &s_device_id);
+
+    /* Route production Command responses to the MQTT response topic via the
+       MqttApp CommunicationPort bridge. Gate on an actual network adapter being
+       configured: with none present MqttApp is SAFE_DISABLED (never connects) and
+       another response sink (e.g. UART in sim harnesses) must remain authoritative.
+       MqttApp_PortReady gates is_ready() so Command never treats an offline MQTT
+       link as a routable response sink. */
+    if (s_mqtt_app.adapter != NULL)
+    {
+        s_mqtt_cmd_port.context = &s_mqtt_app;
+        s_mqtt_cmd_port.send = MqttApp_PortSend;
+        s_mqtt_cmd_port.is_ready = MqttApp_PortReady;
+        Command_SetPort(&s_mqtt_cmd_port);
+    }
+
     /* Return ROOM_SENSOR_OK because the runtime started and can sense, even if
        Storage_Init() degraded (boot-level) or provisioning is currently in a
        CORRUPT/IO_ERROR state (recoverable at runtime). Health is exposed via
@@ -1521,9 +1552,24 @@ void App_Run(void)
 
             TelemetrySnapshot snap;
             if (Telemetry_CreateSnapshot(&snap, &input))
+            {
                 Communication_SubmitSnapshot(&snap);
+
+                /* MQTT telemetry: publish the SAME production serialized snapshot
+                   (Telemetry_Serialize) to the MQTT telemetry topic. This reuses
+                   the authoritative serializer — MqttApp never rebuilds telemetry
+                   JSON. Published at telemetry_period_ms cadence; dropped when the
+                   MQTT link is offline/unconfigured. Pressure stays in Pa. */
+                size_t written = 0U;
+                SerializeStatus ss = Telemetry_Serialize(
+                    &snap, s_mqtt_tx_buffer, sizeof(s_mqtt_tx_buffer), &written);
+                if (ss == SERIALIZE_OK)
+                    MqttApp_PublishTelemetry(&s_mqtt_app, s_mqtt_tx_buffer, written);
+            }
         }
     }
+
+    MqttApp_Run(&s_mqtt_app);
 
     Communication_Run();
     App_FillCommandRuntimeStatus();   /* keep CommandRuntimeStatus current for GET_STATUS */

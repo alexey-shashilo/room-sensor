@@ -11,6 +11,7 @@
 #include "self_test.h"
 #include "platform_reset.h"
 #include "command_runtime_status.h"
+#include "communication_port.h"
 
 #define COMMAND_SCHEMA_VERSION       1U
 #define COMMAND_RESPONSE_MAX_SIZE    1024U
@@ -146,5 +147,10 @@ bool Command_ProcessBuffer(const uint8_t *data, size_t size);
 bool Command_ProcessInput(const CommandInput *input);
 CommandSecurityClass Command_GetSecurityClass(CommandType type);
 bool CommandAuthorization_IsAllowed(CommandType type, CommandSourceTrust trust);
+
+/* Route command response bytes to a sink (CommunicationPort). Used by App to
+   deliver responses to a transport (e.g. MQTT response topic) or the debug
+   port. When NULL the response is dropped (still consumed internally). */
+void Command_SetPort(const CommunicationPort *port);
 
 #endif
