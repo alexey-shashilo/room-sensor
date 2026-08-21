@@ -72,6 +72,19 @@ typedef enum
     BAROMETER_PROVIDER_BMP380
 } BarometerProvider;
 
+/* Active room-environment provider (Phase 20). Exactly ONE environmental sensor
+   is the authoritative room temperature/humidity source at any instant. RoomState
+   carries the provider + generic environmental values as DOMAIN state; it never
+   owns driver pointers. Priority: SHT45 fresh-valid, else SCD41 fresh-valid,
+   else NONE. temperature + humidity + provider form ONE coherent snapshot (a
+   consumer never sees T from one provider and RH from another). */
+typedef enum
+{
+    ENVIRONMENT_PROVIDER_NONE = 0,
+    ENVIRONMENT_PROVIDER_SHT45,
+    ENVIRONMENT_PROVIDER_SCD41
+} EnvironmentProvider;
+
 typedef struct
 {
     DeviceState state;

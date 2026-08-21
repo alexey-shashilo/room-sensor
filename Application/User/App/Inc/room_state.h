@@ -45,6 +45,21 @@ typedef struct
     float  sht45_humidity_pct;
     bool   sht45_humidity_valid;
 
+    /* Generic room-environment channels (Phase 20). The active environmental
+       PROVIDER (ENVIRONMENT_PROVIDER_SHT45 or _SCD41) owns these values; the
+       provider is selected from PRODUCTION sample freshness/validity (a fresh
+       valid last-good sample), not raw device ACK. temperature + humidity +
+       provider form ONE coherent snapshot — a consumer never sees T from one
+       provider and RH from another. provider == NONE when neither source has a
+       fresh valid sample; then no generic T/RH is published (never fabricate). */
+    float  environment_temperature_c;
+    bool   environment_temperature_valid;
+
+    float  environment_humidity_pct;
+    bool   environment_humidity_valid;
+
+    EnvironmentProvider environment_provider;
+
     /* Generic barometric domain channels (Phase 17.7B). The active barometric
        PROVIDER (BAROMETER_PROVIDER_BMP390 or _BMP380) owns these values; validity
        follows that provider's runtime freshness semantics (no second stale timer
@@ -104,6 +119,18 @@ void         RoomState_UpdateSht45(RoomState *state,
                                    float temperature_c, bool temperature_valid,
                                    float humidity_pct, bool humidity_valid);
 void         RoomState_InvalidateSht45(RoomState *state);
+
+/* Commit a generic room-environment snapshot from the ACTIVE provider, atomically:
+   provider + temperature + humidity + validity as ONE coherent unit so a consumer
+   never sees temperature from one sensor and humidity from another. provider must
+   be SHT45 or SCD41; the caller passes the ACTIVE provider's valid fresh sample.
+   provider == NONE invalidates (never fabricates T/RH). */
+void RoomState_UpdateEnvironment(RoomState *state,
+                                 EnvironmentProvider provider,
+                                 float temperature_c, bool temperature_valid,
+                                 float humidity_pct, bool humidity_valid);
+void         RoomState_InvalidateEnvironment(RoomState *state);
+
 void RoomState_UpdateBmp390(RoomState *state,
                             float pressure_pa, bool pressure_valid,
                             float temperature_c, bool temperature_valid);

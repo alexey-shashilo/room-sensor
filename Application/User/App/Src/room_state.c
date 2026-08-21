@@ -75,6 +75,37 @@ void RoomState_InvalidateSht45(RoomState *state)
     state->timestamp_ms = Platform_GetTickMs();
 }
 
+/* Commit a generic room-environment snapshot atomically. The provider + both
+   generic channels + validities are written as one coherent unit (no partial or
+   mixed-provider snapshot). provider must be SHT45 or SCD41; NONE clears. The
+   numeric generic values are retained for diagnostics on invalidate; validity is
+   gated on BOTH the passed validities AND a non-NONE provider. */
+void RoomState_UpdateEnvironment(RoomState *state,
+                                 EnvironmentProvider provider,
+                                 float temperature_c, bool temperature_valid,
+                                 float humidity_pct, bool humidity_valid)
+{
+    if (state == NULL) return;
+
+    bool valid = (provider != ENVIRONMENT_PROVIDER_NONE);
+
+    state->environment_provider = provider;
+    state->environment_temperature_c = temperature_c;
+    state->environment_temperature_valid = temperature_valid && valid;
+    state->environment_humidity_pct = humidity_pct;
+    state->environment_humidity_valid = humidity_valid && valid;
+    state->timestamp_ms = Platform_GetTickMs();
+}
+
+void RoomState_InvalidateEnvironment(RoomState *state)
+{
+    if (state == NULL) return;
+    state->environment_provider = ENVIRONMENT_PROVIDER_NONE;
+    state->environment_temperature_valid = false;
+    state->environment_humidity_valid = false;
+    state->timestamp_ms = Platform_GetTickMs();
+}
+
 /* Commit a fully-valid BMP390 sample (pressure Pa + sensor-internal temp). */
 void RoomState_UpdateBmp390(RoomState *state, float pressure_pa, bool pressure_valid,
                             float temperature_c, bool temperature_valid)

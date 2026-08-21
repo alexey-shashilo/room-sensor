@@ -467,6 +467,50 @@ static void App_CommitBarometricRoomState(void)
     s_pres_rt = s_pres_rt_bmp380.state != DEVICE_STATE_UNKNOWN ? s_pres_rt_bmp380 : s_bmp390_rt;
 }
 
+/* ------------------------------------------------------------------ */
+/* Room-environment provider selection (Phase 20).                    */
+/*                                                                    */
+/* Deterministic, exactly ONE active provider:                        */
+/*   SHT45 fresh-valid  -> provider SHT45                             */
+/*   else SCD41 fresh-valid -> provider SCD41                         */
+/*   else provider NONE                                               */
+/* Selection consumes PRODUCTION runtime validity (fresh valid        */
+/* last-good sample), not raw device ACK, so a single transient        */
+/* operation does not oscillate the provider while the prior provider  */
+/* still holds a fresh valid last-good sample.                        */
+/*                                                                    */
+/* RoomState is updated ATOMICALLY (provider + temperature + humidity +*/
+/* validity as one coherent snapshot) via RoomState_UpdateEnvironment, */
+/* so a consumer never sees T from one provider and RH from another.   */
+/* Model-specific sht45_* / scd41_* fields are untouched.              */
+/* ------------------------------------------------------------------ */
+static void App_CommitEnvironmentRoomState(void)
+{
+    /* SHT45 is preferred when it holds a fresh valid last-good sample. The
+       generic snapshot uses ONLY the SHT45 T+RH pair (never mixed with SCD41). */
+    if (s_room.sht45_temperature_valid && s_room.sht45_humidity_valid)
+    {
+        RoomState_UpdateEnvironment(&s_room,
+                                    ENVIRONMENT_PROVIDER_SHT45,
+                                    s_room.sht45_temperature_c, true,
+                                    s_room.sht45_humidity_pct, true);
+        return;
+    }
+
+    /* Else SCD41 when it holds a fresh valid last-good sample. */
+    if (s_room.scd41_temperature_valid && s_room.scd41_humidity_valid)
+    {
+        RoomState_UpdateEnvironment(&s_room,
+                                    ENVIRONMENT_PROVIDER_SCD41,
+                                    s_room.scd41_temperature_c, true,
+                                    s_room.scd41_humidity_pct, true);
+        return;
+    }
+
+    /* Neither source fresh-valid: NONE; no generic T/RH is fabricated. */
+    RoomState_InvalidateEnvironment(&s_room);
+}
+
 /* Sync the portable SGP41 diagnostic snapshot from the runtime. */
 static void App_RefreshSgp41Diagnostics(void)
 {
@@ -497,12 +541,17 @@ static void App_DoPollSgp41(void)
     Sgp41Compensation comp;
     memset(&comp, 0, sizeof(comp));
     comp.valid = false;
-    if (s_sht45.state == DEVICE_STATE_READY &&
-        s_room.sht45_temperature_valid && s_room.sht45_humidity_valid)
+    /* Compensation consumes the SAME generic room-environment snapshot that
+       PAGE1 uses (Phase 20, App_CommitEnvironmentRoomState). provider is
+       SHT45 when it is fresh-valid, else SCD41, else NONE. The T+RH pair always
+       comes from ONE provider (never mixed). When NONE, SGP41 uses its own
+       production default-compensation semantics (comp.valid = false). */
+    if (s_room.environment_provider != ENVIRONMENT_PROVIDER_NONE &&
+        s_room.environment_temperature_valid && s_room.environment_humidity_valid)
     {
         comp.valid = true;
-        comp.temperature_c = s_room.sht45_temperature_c;
-        comp.relative_humidity_pct = s_room.sht45_humidity_pct;
+        comp.temperature_c = s_room.environment_temperature_c;
+        comp.relative_humidity_pct = s_room.environment_humidity_pct;
     }
     Sgp41Runtime_SetCompensation(&s_sgp41, &comp);
 
@@ -606,22 +655,19 @@ static void App_RenderDisplayPageEnv(void)
         Display_DrawString(&s_display, 0, 16, "CO2: -- ppm");
     }
 
-    /* SHT45 is the preferred environmental T/RH source; fall back to SCD41
-       local/internal T/RH only when SHT45 is invalid. Both stay separately
-       observable in telemetry. */
+    /* PAGE1 consumes the GENERIC room-environment snapshot (Phase 20). The active
+       provider (SHT45 primary / SCD41 fallback / NONE) is selected once by
+       App_CommitEnvironmentRoomState; the display never reads a sensor driver or
+       model-specific field directly. provider != NONE guarantees a coherent fresh
+       valid T+RH pair from ONE source. */
     double disp_t = 0.0, disp_rh = 0.0;
-    bool disp_valid = false;
-    if (room->sht45_temperature_valid && room->sht45_humidity_valid)
+    bool disp_valid = (room->environment_provider != ENVIRONMENT_PROVIDER_NONE) &&
+                      room->environment_temperature_valid &&
+                      room->environment_humidity_valid;
+    if (disp_valid)
     {
-        disp_t = (double)room->sht45_temperature_c;
-        disp_rh = (double)room->sht45_humidity_pct;
-        disp_valid = true;
-    }
-    else if (room->scd41_temperature_valid && room->scd41_humidity_valid)
-    {
-        disp_t = (double)room->scd41_temperature_c;
-        disp_rh = (double)room->scd41_humidity_pct;
-        disp_valid = true;
+        disp_t = (double)room->environment_temperature_c;
+        disp_rh = (double)room->environment_humidity_pct;
     }
 
     if (disp_valid)
@@ -1446,6 +1492,12 @@ void App_Run(void)
 
     /* Commit the active barometric provider into RoomState (atomic snapshot). */
     App_CommitBarometricRoomState();
+
+    /* Commit the active room-environment provider into RoomState (atomic snapshot).
+       Runs AFTER the SHT45/SCD41 polls (model-specific RoomState is current) and
+       BEFORE the SGP41 poll, so SGP41 compensation and display consume the same
+       generic environment snapshot within this tick. */
+    App_CommitEnvironmentRoomState();
 
     /* SGP41 runtime: advance the non-blocking VOC/NOx state machine. */
     if ((now - s_last_sgp41_ms) >= SGP41_RUNTIME_POLL_INTERVAL_MS)

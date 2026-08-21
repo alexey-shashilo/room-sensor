@@ -1373,6 +1373,37 @@ target_link_libraries(test_mqtt_app m)
 add_test(NAME test_mqtt_app COMMAND test_mqtt_app)
 
 
+# Phase 20 — Generic room-environment provider policy (RoomState_UpdateEnvironment).
+add_executable(test_environment_provider
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_environment_provider.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/App/Src/room_state.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/fakes/fake_platform_time.c
+)
+target_include_directories(test_environment_provider PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/fakes
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/App/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Common/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Platform/Inc
+)
+target_link_libraries(test_environment_provider m)
+add_test(NAME test_environment_provider COMMAND test_environment_provider)
+
+# Phase 20 — 24h deterministic provider long-run (>= 86,400,000 ms virtual).
+add_executable(test_environment_provider_longrun
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_environment_provider_longrun.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/App/Src/room_state.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/fakes/fake_platform_time.c
+)
+target_include_directories(test_environment_provider_longrun PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/fakes
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/App/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Common/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../Application/User/Platform/Inc
+)
+target_link_libraries(test_environment_provider_longrun m)
+add_test(NAME test_environment_provider_longrun COMMAND test_environment_provider_longrun)
+
+
 # Phase 18.1 MQTT App WIRE acceptance: drives the full production pipeline
 # (RoomState->serializer->MqttApp->MqttClient->NetworkTransport->wire) and emits
 # the actual MQTT PUBLISH payloads; the companion .py parses them with json.loads.
